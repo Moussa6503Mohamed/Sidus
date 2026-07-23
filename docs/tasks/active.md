@@ -2,9 +2,9 @@
 
 ## T-0001 — Content rights/provenance gate
 
-**Status:** ready  
-**Owner:** Unassigned  
-**Priority:** P0  
+**Status:** ready
+**Owner:** Unassigned
+**Priority:** P0
 **Scope:** Add local PostgreSQL, rights/provenance schema, immutable reviews, shared contracts, core API checks, AI ingestion rejection, official-syllabus metadata seeds, tests, setup docs.
 
 ### Acceptance checks
