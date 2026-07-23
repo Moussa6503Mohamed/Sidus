@@ -16,3 +16,5 @@ Repository stores metadata, source links, hashes, rights decisions, independentl
 Before ingestion or publication, record: owner, licence/permission, source URI, file hash, permitted transformation, permitted audience, expiry, reviewer, approval date.
 
 Status now: no source material approved for ingestion. Build original content from editor-reviewed learning objectives only.
+
+This gate is now enforced in code (T-0001): the `content_sources` / `content_source_reviews` tables in `services/core` hold this same information, approval is blocked until all rights fields above are present, and `services/ai` rejects ingestion for every source that is not `approved`. CAM-0610-2026 and CAM-5090-2026 are seeded as `pending` metadata rows with owner/hash/licence-reference/allowed-audience left unset, matching "Stored locally: No" above — they cannot be approved until a reviewer supplies and confirms those fields.
