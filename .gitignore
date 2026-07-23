@@ -1,0 +1,19 @@
+# Dependencies and build outputs
+node_modules/
+.next/
+*.tsbuildinfo
+dist/
+coverage/
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+
+# Copyrighted source material must never enter this repository.
+*.pdf
+*.epub
+*.mobi
+content-source/
+extracted-content/
