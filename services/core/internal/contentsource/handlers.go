@@ -50,10 +50,23 @@ type createRequest struct {
 	SyllabusCode     *string `json:"syllabusCode"`
 }
 
+// decodeStrict decodes the JSON request body into dst, rejecting any unknown field. Legacy
+// caller-controlled identity fields (e.g. actorId, reviewerId) — and any other unrecognized
+// field — therefore fail with a stable 400 invalid_json response rather than being silently
+// ignored. Returns false (and writes the error) on any decode failure.
+func decodeStrict(w http.ResponseWriter, r *http.Request, dst any) bool {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
+		return false
+	}
+	return true
+}
+
 func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	var req createRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+	if !decodeStrict(w, r, &req) {
 		return
 	}
 
@@ -132,8 +145,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req updateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+	if !decodeStrict(w, r, &req) {
 		return
 	}
 
@@ -260,8 +272,7 @@ func (h *handler) approve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req reviewRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+	if !decodeStrict(w, r, &req) {
 		return
 	}
 	decisionDate, err := req.decisionDate()
@@ -304,8 +315,7 @@ func (h *handler) reject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req reviewRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+	if !decodeStrict(w, r, &req) {
 		return
 	}
 

@@ -68,6 +68,21 @@ Clerk session subject.
 
 - Recorded here if a missing answer changes scope, data model, security, rights, or cost.
 
+### Review follow-up (fail-open hardening)
+
+Fixed four fail-open gaps found in review; all now fail closed (details in the handoff):
+
+- Core issuer mandatory — content-source routes do not mount without `CLERK_JWT_ISSUER`.
+- Authorized parties never silently unrestricted — absent → dev-default local origin only;
+  present-but-blank → invalid (Core routes unmounted; AI protected routes → 503). Production
+  must set explicit non-local origins.
+- AI issuer mandatory — a configured JWKS URL cannot bypass issuer validation; unconfigured
+  auth fails closed with a generic 503.
+- Content-source bodies parsed strictly — unknown fields (incl. legacy `actorId`/`reviewerId`)
+  return `400 invalid_json`; audit actor/reviewer stay the verified `sub` only.
+
+All D-0006 decisions preserved. Full validation suite re-run green. Status stays **review**.
+
 ### Handoff
 
 `docs/handoffs/T-0003.md`

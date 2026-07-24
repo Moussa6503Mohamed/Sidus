@@ -1008,3 +1008,105 @@ func TestReject_ReviewerFromVerifiedSubject(t *testing.T) {
 		t.Fatalf("reviewerId = %q, want %q (verified subject)", store.reviews[0].ReviewerID, reviewerSubject)
 	}
 }
+
+// --- Legacy caller-identity fields must be rejected (T-0003 hardening) ---
+
+// TestUpdate_RejectsUnknownActorId proves a body carrying the legacy `actorId` field is
+// rejected with a stable 400 invalid_json, cannot influence the audited actor, and produces
+// no event. Identity comes only from the verified subject.
+func TestUpdate_RejectsUnknownActorId(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/actorid-reject"})
+
+	resp := doJSONAs(t, http.MethodPatch, srv.URL+"/content-sources/"+src.ID, editorToken, map[string]any{
+		"owner":   "CAIE",
+		"actorId": "attacker-supplied",
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "invalid_json" {
+		t.Fatalf("error = %v, want invalid_json", body["error"])
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("events = %d, want 0 (rejected body must not audit)", len(store.events))
+	}
+}
+
+// TestApprove_RejectsUnknownReviewerId proves a body carrying the legacy `reviewerId` field is
+// rejected with 400 invalid_json before any state change; the reviewer can never be spoofed.
+func TestApprove_RejectsUnknownReviewerId(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{
+		Title:            "Bio",
+		SourceURL:        "https://example.org/reviewerid-approve",
+		Owner:            strPtr("CAIE"),
+		SourceHash:       strPtr("sha256:abc"),
+		LicenceReference: strPtr("REF"),
+		PermittedUse:     strPtr("metadata only"),
+		AllowedAudience:  strPtr("internal"),
+	})
+
+	resp := doJSONAs(t, http.MethodPost, srv.URL+"/content-sources/"+src.ID+"/approve", adminToken, map[string]any{
+		"reviewerId": "attacker-supplied",
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "invalid_json" {
+		t.Fatalf("error = %v, want invalid_json", body["error"])
+	}
+	if len(store.reviews) != 0 {
+		t.Fatalf("reviews = %d, want 0 (rejected body must not record a review)", len(store.reviews))
+	}
+	got := decodeJSON[Source](t, doJSONAs(t, http.MethodGet, srv.URL+"/content-sources/"+src.ID, adminToken, nil))
+	if got.Status != StatusPending {
+		t.Fatalf("status = %q, want still pending (approve was rejected)", got.Status)
+	}
+}
+
+// TestReject_RejectsUnknownReviewerId mirrors the approve case for the reject endpoint.
+func TestReject_RejectsUnknownReviewerId(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/reviewerid-reject"})
+
+	resp := doJSONAs(t, http.MethodPost, srv.URL+"/content-sources/"+src.ID+"/reject", reviewerToken, map[string]any{
+		"reason":     "licence unclear",
+		"reviewerId": "attacker-supplied",
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "invalid_json" {
+		t.Fatalf("error = %v, want invalid_json", body["error"])
+	}
+	if len(store.reviews) != 0 {
+		t.Fatalf("reviews = %d, want 0 (rejected body must not record a review)", len(store.reviews))
+	}
+}
+
+// TestCreate_RejectsUnknownField proves the create endpoint also rejects unknown fields, so no
+// caller-controlled identity or stray field can slip through.
+func TestCreate_RejectsUnknownField(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	resp := doJSONAs(t, http.MethodPost, srv.URL+"/content-sources", adminToken, map[string]any{
+		"title":     "Bio",
+		"sourceUrl": "https://example.org/create-unknown",
+		"actorId":   "attacker-supplied",
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "invalid_json" {
+		t.Fatalf("error = %v, want invalid_json", body["error"])
+	}
+}

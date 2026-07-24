@@ -13,7 +13,15 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
-from app.auth import ClerkAuthenticator, ClerkAuthError, get_authenticator, require_clerk_session
+from app.auth import (
+    DEV_DEFAULT_AZP,
+    ClerkAuthenticator,
+    ClerkAuthError,
+    ClerkConfigError,
+    _authorized_parties_from_env,
+    get_authenticator,
+    require_clerk_session,
+)
 from app.main import app
 
 ISSUER = "https://example.clerk.accounts.dev"
@@ -114,3 +122,81 @@ def test_protected_route_requires_token(rsa_key: rsa.RSAPrivateKey) -> None:
         assert ok.json() == {"status": "authenticated", "subject": "user_ok", "role": "editor"}
     finally:
         app.dependency_overrides.clear()
+
+
+# --- Fail-closed configuration behavior (T-0003 hardening) ---
+
+
+def test_authenticator_requires_issuer() -> None:
+    """A configured JWKS URL must never bypass issuer validation: no issuer -> ValueError."""
+    with pytest.raises(ValueError):
+        ClerkAuthenticator(
+            issuer=None,
+            jwks_url="https://x.clerk.accounts.dev/.well-known/jwks.json",
+        )
+    with pytest.raises(ValueError):
+        ClerkAuthenticator(issuer="   ", jwks_url="https://x/.well-known/jwks.json")
+
+
+def test_authorized_parties_absent_defaults_to_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Absent CLERK_AUTHORIZED_PARTIES -> local dev origin only (never unrestricted)."""
+    monkeypatch.delenv("CLERK_AUTHORIZED_PARTIES", raising=False)
+    assert _authorized_parties_from_env() == [DEV_DEFAULT_AZP]
+
+
+def test_authorized_parties_blank_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Present-but-blank CLERK_AUTHORIZED_PARTIES -> ClerkConfigError (never unrestricted)."""
+    for blank in ("", "   ", " , , ", ","):
+        monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES", blank)
+        with pytest.raises(ClerkConfigError):
+            _authorized_parties_from_env()
+
+
+def _clear_authenticator_cache() -> None:
+    get_authenticator.cache_clear()
+
+
+def test_get_authenticator_none_without_issuer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Missing/blank issuer -> no authenticator (protected routes will fail closed)."""
+    monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES", DEV_DEFAULT_AZP)
+    for value, present in ((None, False), ("", True), ("   ", True)):
+        if present:
+            monkeypatch.setenv("CLERK_JWT_ISSUER", value)  # type: ignore[arg-type]
+        else:
+            monkeypatch.delenv("CLERK_JWT_ISSUER", raising=False)
+        _clear_authenticator_cache()
+        assert get_authenticator() is None
+    _clear_authenticator_cache()
+
+
+def test_get_authenticator_none_with_blank_authorized_parties(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicitly blank authorized parties -> no authenticator (fail closed)."""
+    monkeypatch.setenv("CLERK_JWT_ISSUER", ISSUER)
+    monkeypatch.setenv("CLERK_JWKS_URL", ISSUER + "/.well-known/jwks.json")
+    monkeypatch.setenv("CLERK_AUTHORIZED_PARTIES", "   ")
+    _clear_authenticator_cache()
+    try:
+        assert get_authenticator() is None
+    finally:
+        _clear_authenticator_cache()
+
+
+def test_protected_route_503_when_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With auth unconfigured (no issuer), the protected route fails closed with a generic 503.
+
+    The response must not leak configuration details or secrets.
+    """
+    monkeypatch.delenv("CLERK_JWT_ISSUER", raising=False)
+    _clear_authenticator_cache()
+    app.dependency_overrides.clear()
+    try:
+        client = TestClient(app)
+        resp = client.get(
+            "/ingestion/status", headers={"Authorization": "Bearer whatever"}
+        )
+        assert resp.status_code == 503
+        assert resp.json() == {"detail": "authentication is not configured"}
+    finally:
+        _clear_authenticator_cache()

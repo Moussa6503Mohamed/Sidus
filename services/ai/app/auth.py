@@ -39,6 +39,19 @@ class ClerkAuthError(Exception):
     """Raised when a bearer token is missing, malformed, expired, or otherwise invalid."""
 
 
+class ClerkConfigError(Exception):
+    """Raised when the Clerk auth configuration is missing or unsafe.
+
+    Signals a fail-closed condition (e.g. no issuer, or an explicitly blank authorized-parties
+    list). The FastAPI layer turns this into a generic 503 without exposing details.
+    """
+
+
+# DEV_DEFAULT_AZP is the only `azp` origin accepted when CLERK_AUTHORIZED_PARTIES is absent:
+# the local Sidus web origin. Production must set the env explicitly to non-local origin(s).
+DEV_DEFAULT_AZP = "http://localhost:3000"
+
+
 # KeyResolver resolves the verification key for a token. Production uses Clerk's JWKS; tests
 # inject a resolver returning a local public key so verification runs offline.
 KeyResolver = Callable[[str], Any]
@@ -65,6 +78,9 @@ class ClerkAuthenticator:
         key_resolver: Optional[KeyResolver] = None,
     ) -> None:
         self._issuer = (issuer or "").strip() or None
+        if self._issuer is None:
+            # Issuer is mandatory: a configured JWKS URL must never bypass issuer validation.
+            raise ValueError("issuer is required for Clerk verification")
         self._authorized_parties = [p for p in (authorized_parties or []) if p.strip()]
         if key_resolver is not None:
             self._key_resolver: KeyResolver = key_resolver
@@ -87,7 +103,9 @@ class ClerkAuthenticator:
         except Exception as exc:  # noqa: BLE001 - any resolver failure is an auth failure
             raise ClerkAuthError(f"could not resolve signing key: {exc}") from exc
 
-        options = {"require": ["exp", "sub"], "verify_iss": self._issuer is not None}
+        # Issuer is always set (enforced in __init__), so issuer validation is always on — a
+        # configured JWKS URL cannot bypass it.
+        options = {"require": ["exp", "sub", "iss"], "verify_iss": True}
         try:
             payload = jwt.decode(
                 token,
@@ -115,17 +133,42 @@ def _split_env_list(raw: str) -> list[str]:
     return [part.strip() for part in raw.split(",") if part.strip()]
 
 
+def _authorized_parties_from_env() -> list[str]:
+    """Resolve accepted `azp` origins from CLERK_AUTHORIZED_PARTIES.
+
+    Absent → the local dev default only. Present but resolving to zero valid origins after
+    trimming → ``ClerkConfigError`` (fail closed): an explicitly blank value must never yield
+    an unrestricted azp check.
+    """
+    raw = os.getenv("CLERK_AUTHORIZED_PARTIES")
+    if raw is None:
+        return [DEV_DEFAULT_AZP]
+    parties = _split_env_list(raw)
+    if not parties:
+        raise ClerkConfigError("CLERK_AUTHORIZED_PARTIES is set but empty")
+    return parties
+
+
 @lru_cache
-def get_authenticator() -> ClerkAuthenticator:
+def get_authenticator() -> Optional[ClerkAuthenticator]:
     """Build the process-wide authenticator from the environment.
 
-    Overridable in tests via ``app.dependency_overrides[get_authenticator]``.
+    Returns ``None`` when the configuration is missing or unsafe (issuer absent/blank, or an
+    explicitly blank authorized-parties list) so protected routes fail closed with a generic
+    503. Overridable in tests via ``app.dependency_overrides[get_authenticator]``.
     """
-    return ClerkAuthenticator(
-        issuer=os.getenv("CLERK_JWT_ISSUER"),
-        authorized_parties=_split_env_list(os.getenv("CLERK_AUTHORIZED_PARTIES", "")),
-        jwks_url=os.getenv("CLERK_JWKS_URL") or None,
-    )
+    issuer = os.getenv("CLERK_JWT_ISSUER")
+    if not issuer or not issuer.strip():
+        return None
+    try:
+        parties = _authorized_parties_from_env()
+        return ClerkAuthenticator(
+            issuer=issuer,
+            authorized_parties=parties,
+            jwks_url=os.getenv("CLERK_JWKS_URL") or None,
+        )
+    except (ClerkConfigError, ValueError):
+        return None
 
 
 _bearer_scheme = HTTPBearer(auto_error=False)
@@ -133,12 +176,19 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 
 def require_clerk_session(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
-    authenticator: ClerkAuthenticator = Depends(get_authenticator),
+    authenticator: Optional[ClerkAuthenticator] = Depends(get_authenticator),
 ) -> Principal:
     """FastAPI dependency that requires a valid Clerk session bearer token.
 
-    Returns the verified Principal, or raises 401 for a missing/invalid token.
+    Returns the verified Principal. Fails closed with a generic 503 when auth is not safely
+    configured, and 401 for a missing/invalid token. Neither response exposes configuration
+    details or secrets.
     """
+    if authenticator is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="authentication is not configured",
+        )
     if credentials is None or not credentials.credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -2,7 +2,9 @@
 
 Clerk owns authentication. Sidus Core owns authorization. No endpoint trusts a
 caller-supplied `actorId`/`reviewerId`; the audit actor and review reviewer are always the
-verified Clerk session **subject**.
+verified Clerk session **subject**. Content-source request bodies are parsed **strictly** —
+any unknown field, including a legacy `actorId` or `reviewerId`, is rejected with a stable
+`400 invalid_json`, so caller-supplied identity can never reach the audit trail.
 
 ## Secrets rule
 
@@ -36,9 +38,35 @@ verified Clerk session **subject**.
    `{"sidus_role": "admin"}`. Every other user defaults to no content-source access until an
    admin/reviewer flow grants a role.
 5. **Production origins / domains.** In the Clerk Dashboard configure your production domain
-   and allowed origins. In Sidus Core set `CLERK_AUTHORIZED_PARTIES` to the exact production
-   web origin(s) (comma-separated) and `CLERK_JWT_ISSUER` to your production Frontend API
-   URL. Development defaults to `http://localhost:3000` only.
+   and allowed origins. In Sidus Core **and** AI you MUST set:
+   - `CLERK_JWT_ISSUER` to your production Frontend API URL. This is **mandatory** — see
+     "Fail-closed configuration" below.
+   - `CLERK_AUTHORIZED_PARTIES` to the exact production web origin(s) (comma-separated,
+     explicit non-local origins). Development defaults to `http://localhost:3000` only when
+     the variable is absent; production must not rely on that default.
+
+## Fail-closed configuration (mandatory)
+
+The backends never fail open. If auth is misconfigured they refuse protected traffic rather
+than silently accepting it:
+
+| Condition | Core (`services/core`) | AI (`services/ai`) |
+| --- | --- | --- |
+| `CLERK_SECRET_KEY` missing/blank | content-source routes not mounted | n/a |
+| `CLERK_JWT_ISSUER` missing/blank (**mandatory**) | content-source routes not mounted | protected routes → **503** |
+| `CLERK_AUTHORIZED_PARTIES` absent | dev default `http://localhost:3000` only | dev default `http://localhost:3000` only |
+| `CLERK_AUTHORIZED_PARTIES` present but blank / whitespace / commas-only | content-source routes not mounted | protected routes → **503** |
+
+Notes:
+
+- **Issuer is mandatory.** A configured JWKS URL (`CLERK_JWKS_URL`) never bypasses issuer
+  validation; a token whose `iss` does not match `CLERK_JWT_ISSUER` is rejected.
+- **The `azp` allow-list never becomes unrestricted.** An explicitly blank value is a
+  configuration error, not "allow all origins".
+- **Startup logs name only the offending variable** (e.g. `CLERK_JWT_ISSUER`), never a secret
+  value. The AI 503 response body is a generic `authentication is not configured` and leaks no
+  configuration detail.
+- **`/healthz` (both services) stays public** regardless of auth configuration.
 
 ## Local setup
 
@@ -50,9 +78,13 @@ verified Clerk session **subject**.
 2. Run the web app: `cd apps/web && npm install && npm run dev` → http://localhost:3000.
    - Signed-out home shows **Sign in** / **Sign up**. Signed-in home shows the user menu and
      a **Dashboard** link. `/dashboard` is protected by the Clerk proxy (`apps/web/proxy.ts`).
-3. Run Core with Clerk configured (content-source routes only mount when **both**
-   `DATABASE_URL` and `CLERK_SECRET_KEY` are set — fail closed otherwise).
+3. Run Core with Clerk configured. Content-source routes mount **only** when `DATABASE_URL`
+   is set **and** Clerk is safely configured — `CLERK_SECRET_KEY` and `CLERK_JWT_ISSUER`
+   present and non-blank, and `CLERK_AUTHORIZED_PARTIES` either absent (dev default) or with
+   at least one valid origin. Otherwise the routes stay disabled (fail closed).
 4. Run AI (`services/ai`); `/ingestion/status` requires a valid session, `/healthz` is public.
+   If issuer is missing/blank or authorized parties are explicitly blank, the protected route
+   returns **503** (fail closed) instead of authenticating.
 
 ## Token flow
 

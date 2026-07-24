@@ -19,8 +19,12 @@ docker run --rm --network sidus_default -v "$(pwd)/services/core:/app" -w /app \
 ```
 
 See `infra/README.md` for details. `services/core` mounts the `/content-sources` endpoints
-only when **both** `DATABASE_URL` and `CLERK_SECRET_KEY` are set (fail closed — no
-unauthenticated content access).
+only when `DATABASE_URL` is set **and** Clerk is safely configured — `CLERK_SECRET_KEY` and
+`CLERK_JWT_ISSUER` present and non-blank, and `CLERK_AUTHORIZED_PARTIES` either absent (dev
+default `http://localhost:3000`) or with at least one valid origin. A missing issuer or an
+explicitly blank authorized-parties list keeps the routes disabled (fail closed — no
+unauthenticated or unrestricted content access). The AI service's protected routes return
+`503` under the same misconfiguration. See `docs/auth-setup.md` → "Fail-closed configuration".
 
 ## Authentication (Clerk)
 
