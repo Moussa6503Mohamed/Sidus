@@ -138,24 +138,26 @@ func (p *PostgresStore) Approve(ctx context.Context, id string, in ApproveInput)
 	return source, nil, nil
 }
 
-// updateColumn pairs a JSON field name with its database column and the supplied value.
+// updateColumn pairs a JSON field name with its database column, the supplied value, and
+// the currently stored value (nil means currently unset) so Update can detect real changes.
 type updateColumn struct {
-	field  string
-	column string
-	value  *string
+	field   string
+	column  string
+	value   *string
+	current *string
 }
 
-func (in UpdateInput) columns() []updateColumn {
+func (in UpdateInput) columns(current Source) []updateColumn {
 	// Order mirrors UpdatableFields so changed-field names and SQL are deterministic.
 	return []updateColumn{
-		{"title", "title", in.Title},
-		{"owner", "owner", in.Owner},
-		{"sourceUrl", "source_url", in.SourceURL},
-		{"sourceHash", "source_hash", in.SourceHash},
-		{"licenceReference", "licence_reference", in.LicenceReference},
-		{"permittedUse", "permitted_use", in.PermittedUse},
-		{"allowedAudience", "allowed_audience", in.AllowedAudience},
-		{"syllabusCode", "syllabus_code", in.SyllabusCode},
+		{"title", "title", in.Title, &current.Title},
+		{"owner", "owner", in.Owner, current.Owner},
+		{"sourceUrl", "source_url", in.SourceURL, &current.SourceURL},
+		{"sourceHash", "source_hash", in.SourceHash, current.SourceHash},
+		{"licenceReference", "licence_reference", in.LicenceReference, current.LicenceReference},
+		{"permittedUse", "permitted_use", in.PermittedUse, current.PermittedUse},
+		{"allowedAudience", "allowed_audience", in.AllowedAudience, current.AllowedAudience},
+		{"syllabusCode", "syllabus_code", in.SyllabusCode, current.SyllabusCode},
 	}
 }
 
@@ -182,16 +184,24 @@ func (p *PostgresStore) Update(ctx context.Context, id string, in UpdateInput) (
 	var setClauses []string
 	var args []any
 	var changed []string
-	for _, c := range in.columns() {
+	suppliedCount := 0
+	for _, c := range in.columns(source) {
 		if c.value == nil {
 			continue
+		}
+		suppliedCount++
+		if c.current != nil && *c.current == *c.value {
+			continue // supplied value matches what is already stored: not a real change
 		}
 		args = append(args, *c.value)
 		setClauses = append(setClauses, c.column+" = $"+strconv.Itoa(len(args)))
 		changed = append(changed, c.field)
 	}
-	if len(changed) == 0 {
+	if suppliedCount == 0 {
 		return Source{}, nil, ErrNoUpdatableFields
+	}
+	if len(changed) == 0 {
+		return Source{}, nil, ErrNoChanges
 	}
 
 	setClauses = append(setClauses, "updated_at = now()")

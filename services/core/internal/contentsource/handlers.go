@@ -188,6 +188,9 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrNoUpdatableFields):
 		writeError(w, http.StatusBadRequest, "no_updatable_fields", "supply at least one field to update")
 		return
+	case errors.Is(err, ErrNoChanges):
+		writeError(w, http.StatusBadRequest, "no_changes", "supplied values match the current stored values; nothing to update")
+		return
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return

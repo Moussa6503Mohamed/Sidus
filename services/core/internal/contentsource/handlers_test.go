@@ -115,23 +115,29 @@ func (m *memoryStore) Update(_ context.Context, id string, in UpdateInput) (Sour
 	}
 
 	cols := []struct {
-		field string
-		value *string
-		apply func(v string)
+		field   string
+		value   *string
+		current *string
+		apply   func(v string)
 	}{
-		{"title", in.Title, func(v string) { s.Title = v }},
-		{"owner", in.Owner, func(v string) { s.Owner = strPtr(v) }},
-		{"sourceUrl", in.SourceURL, func(v string) { s.SourceURL = v }},
-		{"sourceHash", in.SourceHash, func(v string) { s.SourceHash = strPtr(v) }},
-		{"licenceReference", in.LicenceReference, func(v string) { s.LicenceReference = strPtr(v) }},
-		{"permittedUse", in.PermittedUse, func(v string) { s.PermittedUse = strPtr(v) }},
-		{"allowedAudience", in.AllowedAudience, func(v string) { s.AllowedAudience = strPtr(v) }},
-		{"syllabusCode", in.SyllabusCode, func(v string) { s.SyllabusCode = strPtr(v) }},
+		{"title", in.Title, &s.Title, func(v string) { s.Title = v }},
+		{"owner", in.Owner, s.Owner, func(v string) { s.Owner = strPtr(v) }},
+		{"sourceUrl", in.SourceURL, &s.SourceURL, func(v string) { s.SourceURL = v }},
+		{"sourceHash", in.SourceHash, s.SourceHash, func(v string) { s.SourceHash = strPtr(v) }},
+		{"licenceReference", in.LicenceReference, s.LicenceReference, func(v string) { s.LicenceReference = strPtr(v) }},
+		{"permittedUse", in.PermittedUse, s.PermittedUse, func(v string) { s.PermittedUse = strPtr(v) }},
+		{"allowedAudience", in.AllowedAudience, s.AllowedAudience, func(v string) { s.AllowedAudience = strPtr(v) }},
+		{"syllabusCode", in.SyllabusCode, s.SyllabusCode, func(v string) { s.SyllabusCode = strPtr(v) }},
 	}
 	var changed []string
+	suppliedCount := 0
 	for _, c := range cols {
 		if c.value == nil {
 			continue
+		}
+		suppliedCount++
+		if c.current != nil && *c.current == *c.value {
+			continue // supplied value matches what is already stored: not a real change
 		}
 		if in.SourceURL != nil && c.field == "sourceUrl" {
 			for oid, other := range m.sources {
@@ -143,8 +149,11 @@ func (m *memoryStore) Update(_ context.Context, id string, in UpdateInput) (Sour
 		c.apply(*c.value)
 		changed = append(changed, c.field)
 	}
-	if len(changed) == 0 {
+	if suppliedCount == 0 {
 		return Source{}, nil, ErrNoUpdatableFields
+	}
+	if len(changed) == 0 {
+		return Source{}, nil, ErrNoChanges
 	}
 
 	s.UpdatedAt = time.Now().UTC()
@@ -658,6 +667,108 @@ func TestUpdate_MissingActorID_Returns400(t *testing.T) {
 	}
 	if len(store.events) != 0 {
 		t.Fatalf("events = %d, want 0", len(store.events))
+	}
+}
+
+func TestUpdate_MixedSameAndNewValues_RecordsOnlyChangedFields(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{
+		Title:     "Bio syllabus",
+		SourceURL: "https://example.org/upd-mixed",
+		Owner:     strPtr("Cambridge Assessment International Education"),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		ActorID:          strPtr("curator-1"),
+		Owner:            strPtr("Cambridge Assessment International Education"), // same as stored
+		LicenceReference: strPtr("CAIE-PUBLIC-SYLLABUS-2026"),                    // new
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if len(store.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(store.events))
+	}
+	want := []string{"licenceReference"}
+	got := store.events[0].ChangedFields
+	if len(got) != len(want) {
+		t.Fatalf("changedFields = %v, want %v", got, want)
+	}
+	for i, f := range want {
+		if got[i] != f {
+			t.Fatalf("changedFields[%d] = %q, want %q", i, got[i], f)
+		}
+	}
+}
+
+func TestUpdate_AllSameValues_Returns400NoChanges(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{
+		Title:     "Bio syllabus",
+		SourceURL: "https://example.org/upd-nochange",
+		Owner:     strPtr("Cambridge Assessment International Education"),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		ActorID: strPtr("curator-1"),
+		Title:   strPtr("Bio syllabus"),
+		Owner:   strPtr("Cambridge Assessment International Education"),
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "no_changes" {
+		t.Fatalf("error = %v", body["error"])
+	}
+}
+
+func TestUpdate_NoChangeRequest_NoEventAndNoUpdatedAtChange(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{
+		Title:     "Bio syllabus",
+		SourceURL: "https://example.org/upd-noop",
+		Owner:     strPtr("Cambridge Assessment International Education"),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	before, err := store.Get(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		ActorID: strPtr("curator-1"),
+		Owner:   strPtr("Cambridge Assessment International Education"),
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("events = %d, want 0 (no-change request must not audit)", len(store.events))
+	}
+	after, err := store.Get(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatalf("updatedAt changed: before=%v after=%v, want unchanged", before.UpdatedAt, after.UpdatedAt)
 	}
 }
 

@@ -19,6 +19,10 @@ var ErrDuplicateSourceURL = errors.New("content source with this sourceUrl alrea
 // ErrNoUpdatableFields is returned when an update supplies no updatable field.
 var ErrNoUpdatableFields = errors.New("no updatable fields supplied")
 
+// ErrNoChanges is returned when every supplied field's value matches the currently stored
+// value: nothing would actually change, so no update or audit event is recorded.
+var ErrNoChanges = errors.New("supplied fields match current values")
+
 // ApproveInput is the payload for approving a Source.
 type ApproveInput struct {
 	ReviewerID   string
@@ -46,9 +50,12 @@ type Store interface {
 	// Reject transitions a source to rejected and records the reason.
 	Reject(ctx context.Context, id string, in RejectInput) (Source, error)
 
-	// Update applies supplied metadata fields to a pending source, bumps updated_at, and
-	// appends an immutable metadata_updated event listing the changed field names. It
-	// returns ErrInvalidTransition if the source is not pending and ErrDuplicateSourceURL
-	// if the new sourceUrl collides. changed lists the names of fields actually applied.
+	// Update compares every supplied field against its current stored value and applies
+	// only the fields that actually differ, bumping updated_at and appending an immutable
+	// metadata_updated event listing only the changed field names. It returns
+	// ErrInvalidTransition if the source is not pending, ErrDuplicateSourceURL if the new
+	// sourceUrl collides, ErrNoUpdatableFields if no field was supplied at all, and
+	// ErrNoChanges if fields were supplied but every one matches the current stored value
+	// (no write, no event). changed lists the names of fields actually applied.
 	Update(ctx context.Context, id string, in UpdateInput) (source Source, changed []string, err error)
 }

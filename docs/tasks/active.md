@@ -46,13 +46,20 @@ event trail for every successful update.
 
 ### Assumptions / decisions
 
-- **Changed field names = fields supplied in the request that passed validation** (the
-  curator addressed them), not a value-diff, since values are never stored. Guarantees a
-  non-empty, deterministic audit record.
+- **Superseded by review finding 1:** changed field names are now a real value-diff.
+  `Update` fetches the current row, compares each supplied field against its stored value,
+  and only applies/records fields that actually differ. A request where every supplied
+  field matches the current value returns `400 no_changes` (no write, no event, `updated_at`
+  untouched). A request with no updatable field supplied at all still returns
+  `400 no_updatable_fields` (unchanged).
 - Updatable fields use pointer/optional JSON so absent vs. present-null both mean "no
   change"; a present field set to `""`/whitespace is a validation error, not a clear.
-- At least one updatable field must be supplied, else `400 no_updatable_fields`.
 - `actorId` is a free-text identifier (no auth system yet — mirrors T-0001 `reviewerId`).
+- **Review finding 2:** integration tests against `content_source_events` /
+  `content_source_reviews` can never clean up (both immutable at the DB level). Removed the
+  silent-failure DELETE cleanup attempts; added `docker-compose.test.yml` (disposable
+  `postgres-test` service, tmpfs-backed, separate from the dev `postgres` service/volume) and
+  documented that `TEST_DATABASE_URL` must point at it, never at dev/prod.
 
 ### Acceptance checks
 
@@ -63,9 +70,16 @@ event trail for every successful update.
 - Duplicate URL returns `409`. — met (`TestUpdate_DuplicateURL_Returns409`)
 - Non-pending source update returns `409`. — met (`TestUpdate_NonPending_Returns409`)
 - Missing actor ID returns `400`. — met (`TestUpdate_MissingActorID_Returns400`)
-- Successful update creates an immutable event. — met (`TestUpdate_CreatesImmutableEvent` + live `TestPostgresStore_Integration_UpdateEventImmutability`)
-- Existing T-0001 tests remain green. — met (24 unit tests pass)
-- Live PostgreSQL event-immutability integration test passes. — met (`-run Integration`, both integration tests pass)
+- Successful update creates an immutable event, listing only actually-changed fields. — met
+  (`TestUpdate_CreatesImmutableEvent`, `TestUpdate_MixedSameAndNewValues_RecordsOnlyChangedFields`,
+  live `TestPostgresStore_Integration_UpdateOnlyChangedFields`)
+- All-same-value update returns `400 no_changes`, no event, `updated_at` unchanged. — met
+  (`TestUpdate_AllSameValues_Returns400NoChanges`, `TestUpdate_NoChangeRequest_NoEventAndNoUpdatedAtChange`,
+  live `TestPostgresStore_Integration_UpdateOnlyChangedFields`)
+- Existing T-0001 tests remain green. — met
+- Live PostgreSQL event-immutability integration test passes against a disposable DB. — met
+  (`-run Integration`, all 3 integration tests pass against `docker-compose.test.yml`, DB
+  destroyed after)
 
 ### Constraints
 
