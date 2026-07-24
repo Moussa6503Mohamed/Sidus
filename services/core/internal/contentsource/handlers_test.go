@@ -1110,3 +1110,131 @@ func TestCreate_RejectsUnknownField(t *testing.T) {
 		t.Fatalf("error = %v, want invalid_json", body["error"])
 	}
 }
+
+// --- decodeStrict must accept exactly one JSON value (T-0003 final hardening) ---
+
+// doRaw issues a request with a raw, pre-serialized body so tests can send malformed or
+// multi-value payloads that json.Marshal could never produce.
+func doRaw(t *testing.T, method, url, token, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, url, bytes.NewReader([]byte(body)))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	return resp
+}
+
+// TestCreate_RejectsTrailingJSONValue proves a body consisting of a valid JSON object followed
+// by a second valid JSON value is rejected: json.Decoder.Decode alone happily reads just the
+// first value and silently ignores the rest.
+func TestCreate_RejectsTrailingJSONValue(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	body := `{"title":"Bio","sourceUrl":"https://example.org/trailing-json"}{"actorId":"attacker-supplied"}`
+	resp := doRaw(t, http.MethodPost, srv.URL+"/content-sources", adminToken, body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	got := decodeJSON[map[string]any](t, resp)
+	if got["error"] != "invalid_json" {
+		t.Fatalf("error = %v, want invalid_json", got["error"])
+	}
+	if len(store.sources) != 0 {
+		t.Fatalf("sources = %d, want 0 (trailing JSON must not create a source)", len(store.sources))
+	}
+}
+
+// TestUpdate_RejectsTrailingJunk proves a body with valid JSON followed by non-whitespace junk
+// (not even valid JSON) is rejected and produces no audit event.
+func TestUpdate_RejectsTrailingJunk(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/trailing-junk"})
+
+	body := `{"owner":"CAIE"}garbage`
+	resp := doRaw(t, http.MethodPatch, srv.URL+"/content-sources/"+src.ID, editorToken, body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	got := decodeJSON[map[string]any](t, resp)
+	if got["error"] != "invalid_json" {
+		t.Fatalf("error = %v, want invalid_json", got["error"])
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("events = %d, want 0 (rejected trailing-body request must not audit)", len(store.events))
+	}
+}
+
+// TestReject_RejectsTrailingJSONValue mirrors the trailing-value case for the reject endpoint,
+// proving no review is recorded when the body carries a second JSON value.
+func TestReject_RejectsTrailingJSONValue(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/trailing-reject"})
+
+	body := `{"reason":"licence unclear"} {"reviewerId":"attacker-supplied"}`
+	resp := doRaw(t, http.MethodPost, srv.URL+"/content-sources/"+src.ID+"/reject", reviewerToken, body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	got := decodeJSON[map[string]any](t, resp)
+	if got["error"] != "invalid_json" {
+		t.Fatalf("error = %v, want invalid_json", got["error"])
+	}
+	if len(store.reviews) != 0 {
+		t.Fatalf("reviews = %d, want 0 (trailing JSON must not record a review)", len(store.reviews))
+	}
+}
+
+// TestApprove_TrailingWhitespace_Accepted proves trailing whitespace after the single JSON
+// value is accepted (this is not "trailing data" — only non-whitespace/extra-value bytes are).
+func TestApprove_TrailingWhitespace_Accepted(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{
+		Title:            "Bio",
+		SourceURL:        "https://example.org/trailing-whitespace",
+		Owner:            strPtr("CAIE"),
+		SourceHash:       strPtr("sha256:abc"),
+		LicenceReference: strPtr("REF"),
+		PermittedUse:     strPtr("metadata only"),
+		AllowedAudience:  strPtr("internal"),
+	})
+
+	body := "{}\n\t \n"
+	resp := doRaw(t, http.MethodPost, srv.URL+"/content-sources/"+src.ID+"/approve", adminToken, body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestUpdate_RejectsUnknownActorId_WithTrailingWhitespace proves whitespace-only trailing bytes
+// after an otherwise-rejected body still surface the original unknown-field error, not a
+// different failure mode.
+func TestUpdate_RejectsUnknownActorId_WithTrailingWhitespace(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/actorid-ws"})
+
+	body := `{"owner":"CAIE","actorId":"attacker-supplied"}` + "\n"
+	resp := doRaw(t, http.MethodPatch, srv.URL+"/content-sources/"+src.ID, editorToken, body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	got := decodeJSON[map[string]any](t, resp)
+	if got["error"] != "invalid_json" {
+		t.Fatalf("error = %v, want invalid_json", got["error"])
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("events = %d, want 0", len(store.events))
+	}
+}

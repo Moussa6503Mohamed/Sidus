@@ -3,6 +3,7 @@ package contentsource
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -53,11 +54,18 @@ type createRequest struct {
 // decodeStrict decodes the JSON request body into dst, rejecting any unknown field. Legacy
 // caller-controlled identity fields (e.g. actorId, reviewerId) — and any other unrecognized
 // field — therefore fail with a stable 400 invalid_json response rather than being silently
-// ignored. Returns false (and writes the error) on any decode failure.
+// ignored. It also requires the body to contain exactly one JSON value: json.Decoder.Decode
+// alone accepts a valid value followed by more valid JSON (e.g. two concatenated objects), so
+// a second decode call must hit io.EOF or the request is rejected. Returns false (and writes
+// the error) on any decode failure or trailing data.
 func decodeStrict(w http.ResponseWriter, r *http.Request, dst any) bool {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
+		return false
+	}
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
 		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
 		return false
 	}
