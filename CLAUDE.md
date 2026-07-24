@@ -52,4 +52,7 @@ cd services/ai && python -m pytest
 
 - Foundation commit: `e7e2179`.
 - Biology syllabus/provenance commit: `4cfb5d3`.
-- Active task: `T-0001` rights/provenance gate. See `docs/tasks/active.md`.
+- Curriculum catalogue (multi-subject) added in T-0004. Core owns the metadata-only
+  `subjects`/`syllabuses` registry; see `docs/curriculum-catalogue.md` and D-0007.
+- Active task: `T-0004` multi-subject syllabus catalogue (status: review). See
+  `docs/tasks/active.md`.

@@ -1,6 +1,7 @@
 package contentsource
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,12 +13,22 @@ import (
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/auth"
 )
 
+// SyllabusResolver resolves a supplied syllabus code to a registered catalogue syllabus. It
+// backs registry-based validation (T-0004): a code is accepted only when it resolves to
+// exactly one active catalogue syllabus. found is false for an unknown, inactive, or
+// ambiguous code; err is reserved for infrastructure failures. Deliberately a boolean rather
+// than an error type so the catalogue package's error values do not leak across this boundary.
+type SyllabusResolver interface {
+	ResolveActiveSyllabusByCode(ctx context.Context, code string) (id string, found bool, err error)
+}
+
 // Register mounts the content source HTTP endpoints on mux. Every endpoint requires a valid
 // Clerk session (verified by v) and the role permission listed against it; there is no
 // unauthenticated content-source access. The authenticated Clerk subject — never a
-// request-body field — is used as the audit actor/reviewer.
-func Register(mux *http.ServeMux, store Store, v auth.Verifier) {
-	h := &handler{store: store}
+// request-body field — is used as the audit actor/reviewer. A supplied syllabus code is
+// validated against the catalogue registry (resolver), not a hard-coded list.
+func Register(mux *http.ServeMux, store Store, resolver SyllabusResolver, v auth.Verifier) {
+	h := &handler{store: store, resolver: resolver}
 	mux.HandleFunc("POST /content-sources", auth.Protect(v, auth.PermCreateSource, h.create))
 	mux.HandleFunc("GET /content-sources", auth.Protect(v, auth.PermReadSource, h.list))
 	mux.HandleFunc("GET /content-sources/{id}", auth.Protect(v, auth.PermReadSource, h.get))
@@ -37,7 +48,28 @@ func actorFromContext(r *http.Request) (string, bool) {
 }
 
 type handler struct {
-	store Store
+	store    Store
+	resolver SyllabusResolver
+}
+
+// resolveSyllabus resolves a supplied syllabus code against the catalogue registry. It writes
+// a stable client error and returns ok=false when the code is unknown/inactive/ambiguous, or
+// a 500 on infrastructure failure. On success it returns the catalogue syllabus id. A nil
+// code (none supplied) resolves to (nil, true): omitted association is always allowed.
+func (h *handler) resolveSyllabus(w http.ResponseWriter, r *http.Request, code *string) (*string, bool) {
+	if code == nil {
+		return nil, true
+	}
+	id, found, err := h.resolver.ResolveActiveSyllabusByCode(r.Context(), *code)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "could not validate syllabus association")
+		return nil, false
+	}
+	if !found {
+		writeError(w, http.StatusBadRequest, "unknown_syllabus", "syllabusCode does not resolve to a registered active catalogue syllabus")
+		return nil, false
+	}
+	return &id, true
 }
 
 type createRequest struct {
@@ -89,20 +121,21 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		writeMissingFields(w, http.StatusBadRequest, missing)
 		return
 	}
-	if req.SyllabusCode != nil && !isValidSyllabusCode(*req.SyllabusCode) {
-		writeError(w, http.StatusBadRequest, "invalid_syllabus_code", "syllabusCode must be one of: 0610, 5090")
+	catalogueID, ok := h.resolveSyllabus(w, r, req.SyllabusCode)
+	if !ok {
 		return
 	}
 
 	source, err := h.store.Create(r.Context(), CreateInput{
-		Title:            req.Title,
-		SourceURL:        req.SourceURL,
-		Owner:            req.Owner,
-		SourceHash:       req.SourceHash,
-		LicenceReference: req.LicenceReference,
-		PermittedUse:     req.PermittedUse,
-		AllowedAudience:  req.AllowedAudience,
-		SyllabusCode:     req.SyllabusCode,
+		Title:               req.Title,
+		SourceURL:           req.SourceURL,
+		Owner:               req.Owner,
+		SourceHash:          req.SourceHash,
+		LicenceReference:    req.LicenceReference,
+		PermittedUse:        req.PermittedUse,
+		AllowedAudience:     req.AllowedAudience,
+		SyllabusCode:        req.SyllabusCode,
+		CatalogueSyllabusID: catalogueID,
 	})
 	if errors.Is(err, ErrDuplicateSourceURL) {
 		writeError(w, http.StatusConflict, "duplicate_source_url", err.Error())
@@ -192,25 +225,26 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.SyllabusCode != nil && !isValidSyllabusCode(*req.SyllabusCode) {
-		writeError(w, http.StatusBadRequest, "invalid_syllabus_code", "syllabusCode must be one of: 0610, 5090")
-		return
-	}
 	if req.SourceURL != nil && !isValidHTTPURL(*req.SourceURL) {
 		writeError(w, http.StatusBadRequest, "invalid_source_url", "sourceUrl must be an absolute http or https URL")
 		return
 	}
+	catalogueID, ok := h.resolveSyllabus(w, r, req.SyllabusCode)
+	if !ok {
+		return
+	}
 
 	source, _, err := h.store.Update(r.Context(), id, UpdateInput{
-		ActorID:          actor,
-		Title:            req.Title,
-		Owner:            req.Owner,
-		SourceURL:        req.SourceURL,
-		SourceHash:       req.SourceHash,
-		LicenceReference: req.LicenceReference,
-		PermittedUse:     req.PermittedUse,
-		AllowedAudience:  req.AllowedAudience,
-		SyllabusCode:     req.SyllabusCode,
+		ActorID:             actor,
+		Title:               req.Title,
+		Owner:               req.Owner,
+		SourceURL:           req.SourceURL,
+		SourceHash:          req.SourceHash,
+		LicenceReference:    req.LicenceReference,
+		PermittedUse:        req.PermittedUse,
+		AllowedAudience:     req.AllowedAudience,
+		SyllabusCode:        req.SyllabusCode,
+		CatalogueSyllabusID: catalogueID,
 	})
 	switch {
 	case errors.Is(err, ErrNotFound):
@@ -365,10 +399,6 @@ func isValidStatus(s Status) bool {
 	default:
 		return false
 	}
-}
-
-func isValidSyllabusCode(code string) bool {
-	return code == "0610" || code == "5090"
 }
 
 // isValidHTTPURL reports whether s is an absolute URL with an http/https scheme and a host.

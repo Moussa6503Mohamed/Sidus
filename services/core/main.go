@@ -11,6 +11,7 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/auth"
+	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/catalogue"
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/contentsource"
 )
 
@@ -108,7 +109,11 @@ func main() {
 			log.Fatalf("open database: %v", err)
 		}
 		defer db.Close()
-		contentsource.Register(mux, contentsource.NewPostgresStore(db), verifier)
+		catalogueStore := catalogue.NewPostgresStore(db)
+		catalogue.Register(mux, catalogueStore, verifier)
+		// The catalogue store is the single authority for valid syllabuses: it also backs
+		// registry-based syllabus validation for content sources.
+		contentsource.Register(mux, contentsource.NewPostgresStore(db), catalogueStore, verifier)
 	}
 
 	_ = http.ListenAndServe(":8080", mux)

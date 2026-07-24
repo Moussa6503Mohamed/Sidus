@@ -72,18 +72,19 @@ func (m *memoryStore) Create(_ context.Context, in CreateInput) (Source, error) 
 	}
 	now := time.Now().UTC()
 	source := Source{
-		ID:               m.newID(),
-		Title:            in.Title,
-		Owner:            in.Owner,
-		SourceURL:        in.SourceURL,
-		SourceHash:       in.SourceHash,
-		LicenceReference: in.LicenceReference,
-		PermittedUse:     in.PermittedUse,
-		AllowedAudience:  in.AllowedAudience,
-		SyllabusCode:     in.SyllabusCode,
-		Status:           StatusPending,
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		ID:                  m.newID(),
+		Title:               in.Title,
+		Owner:               in.Owner,
+		SourceURL:           in.SourceURL,
+		SourceHash:          in.SourceHash,
+		LicenceReference:    in.LicenceReference,
+		PermittedUse:        in.PermittedUse,
+		AllowedAudience:     in.AllowedAudience,
+		SyllabusCode:        in.SyllabusCode,
+		CatalogueSyllabusID: in.CatalogueSyllabusID,
+		Status:              StatusPending,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 	m.sources[source.ID] = source
 	return source, nil
@@ -163,7 +164,7 @@ func (m *memoryStore) Update(_ context.Context, id string, in UpdateInput) (Sour
 		{"licenceReference", in.LicenceReference, s.LicenceReference, func(v string) { s.LicenceReference = strPtr(v) }},
 		{"permittedUse", in.PermittedUse, s.PermittedUse, func(v string) { s.PermittedUse = strPtr(v) }},
 		{"allowedAudience", in.AllowedAudience, s.AllowedAudience, func(v string) { s.AllowedAudience = strPtr(v) }},
-		{"syllabusCode", in.SyllabusCode, s.SyllabusCode, func(v string) { s.SyllabusCode = strPtr(v) }},
+		{"syllabusCode", in.SyllabusCode, s.SyllabusCode, func(v string) { s.SyllabusCode = strPtr(v); s.CatalogueSyllabusID = in.CatalogueSyllabusID }},
 	}
 	var changed []string
 	suppliedCount := 0
@@ -198,10 +199,37 @@ func (m *memoryStore) Update(_ context.Context, id string, in UpdateInput) (Sour
 	return s, changed, nil
 }
 
+// fakeResolver mirrors the catalogue registry for handler tests: the two seeded biology
+// codes resolve to stable ids; every other code is unknown. Any code in ambiguous is treated
+// as ambiguous (resolves to found=false, like multiple active matches).
+type fakeResolver struct {
+	known     map[string]string
+	ambiguous map[string]bool
+	err       error
+}
+
+func newFakeResolver() fakeResolver {
+	return fakeResolver{
+		known:     map[string]string{"0610": "syl-0610", "5090": "syl-5090"},
+		ambiguous: map[string]bool{},
+	}
+}
+
+func (f fakeResolver) ResolveActiveSyllabusByCode(_ context.Context, code string) (string, bool, error) {
+	if f.err != nil {
+		return "", false, f.err
+	}
+	if f.ambiguous[code] {
+		return "", false, nil
+	}
+	id, ok := f.known[code]
+	return id, ok, nil
+}
+
 func newTestServer() (*httptest.Server, *memoryStore) {
 	store := newMemoryStore()
 	mux := http.NewServeMux()
-	Register(mux, store, fakeVerifier{})
+	Register(mux, store, newFakeResolver(), fakeVerifier{})
 	return httptest.NewServer(mux), store
 }
 
@@ -492,8 +520,10 @@ func TestList_ValidStatus_Returns200(t *testing.T) {
 	}
 }
 
-func TestCreate_InvalidSyllabusCode_Returns400(t *testing.T) {
-	srv, _ := newTestServer()
+// A syllabus code that does not resolve to a registered active catalogue syllabus is
+// rejected with a stable 400 before any store write (registry-backed validation, T-0004).
+func TestCreate_UnknownSyllabusCode_Returns400BeforeWrite(t *testing.T) {
+	srv, store := newTestServer()
 	defer srv.Close()
 
 	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources", createRequest{
@@ -505,16 +535,20 @@ func TestCreate_InvalidSyllabusCode_Returns400(t *testing.T) {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
 	}
 	body := decodeJSON[map[string]any](t, resp)
-	if body["error"] != "invalid_syllabus_code" {
-		t.Fatalf("error = %v", body["error"])
+	if body["error"] != "unknown_syllabus" {
+		t.Fatalf("error = %v, want unknown_syllabus", body["error"])
+	}
+	if len(store.sources) != 0 {
+		t.Fatalf("store has %d sources, want 0 (rejected before write)", len(store.sources))
 	}
 }
 
-func TestCreate_ValidSyllabusCode_Returns201(t *testing.T) {
+// A registered active code resolves and its catalogue syllabus id is stored on the source.
+func TestCreate_RegisteredSyllabusCode_Returns201AndLinksCatalogue(t *testing.T) {
 	srv, _ := newTestServer()
 	defer srv.Close()
 
-	for _, code := range []string{"0610", "5090"} {
+	for code, wantID := range map[string]string{"0610": "syl-0610", "5090": "syl-5090"} {
 		resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources", createRequest{
 			Title:        "Bio syllabus " + code,
 			SourceURL:    "https://example.org/bio-" + code,
@@ -523,6 +557,51 @@ func TestCreate_ValidSyllabusCode_Returns201(t *testing.T) {
 		if resp.StatusCode != http.StatusCreated {
 			t.Fatalf("syllabusCode=%q: got %d, want %d", code, resp.StatusCode, http.StatusCreated)
 		}
+		source := decodeJSON[Source](t, resp)
+		if source.CatalogueSyllabusID == nil || *source.CatalogueSyllabusID != wantID {
+			t.Fatalf("syllabusCode=%q: catalogueSyllabusId = %v, want %q", code, source.CatalogueSyllabusID, wantID)
+		}
+	}
+}
+
+// Omitting a syllabus code is always allowed (pending source metadata) — no catalogue link.
+func TestCreate_OmittedSyllabusCode_Allowed(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources", createRequest{
+		Title:     "Pending source, no syllabus yet",
+		SourceURL: "https://example.org/no-syllabus",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	source := decodeJSON[Source](t, resp)
+	if source.CatalogueSyllabusID != nil {
+		t.Fatalf("catalogueSyllabusId = %v, want nil", *source.CatalogueSyllabusID)
+	}
+}
+
+// An ambiguous code (multiple active catalogue matches) is treated as unknown, rejected 400.
+func TestUpdate_UnknownSyllabusCode_Returns400(t *testing.T) {
+	store := newMemoryStore()
+	mux := http.NewServeMux()
+	Register(mux, store, newFakeResolver(), fakeVerifier{})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, _ := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-bad"})
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		SyllabusCode: strPtr("9999"),
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "unknown_syllabus" {
+		t.Fatalf("error = %v, want unknown_syllabus", body["error"])
 	}
 }
 
@@ -606,25 +685,6 @@ func TestUpdate_WhitespaceOnlyValue_Returns400(t *testing.T) {
 	}
 	if len(store.events) != 0 {
 		t.Fatalf("events = %d, want 0 (rejected update must not audit)", len(store.events))
-	}
-}
-
-func TestUpdate_InvalidSyllabusCode_Returns400(t *testing.T) {
-	srv, store := newTestServer()
-	defer srv.Close()
-
-	ctx := context.Background()
-	source, _ := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-syl"})
-
-	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
-		SyllabusCode: strPtr("9999"),
-	})
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
-	}
-	body := decodeJSON[map[string]any](t, resp)
-	if body["error"] != "invalid_syllabus_code" {
-		t.Fatalf("error = %v", body["error"])
 	}
 }
 

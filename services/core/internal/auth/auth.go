@@ -44,6 +44,10 @@ const (
 	PermUpdateSource Permission = "content_source:update"
 	// PermReviewSource covers approving and rejecting a content source.
 	PermReviewSource Permission = "content_source:review"
+	// PermReadCatalogue covers listing/getting active curriculum-catalogue subjects and syllabuses.
+	PermReadCatalogue Permission = "content_catalogue:read"
+	// PermManageCatalogue covers creating and changing curriculum-catalogue metadata (admin only).
+	PermManageCatalogue Permission = "content_catalogue:manage"
 )
 
 // rolePermissions is the least-privilege matrix. A role absent from this map, or the
@@ -51,21 +55,25 @@ const (
 var rolePermissions = map[Role]map[Permission]bool{
 	RoleLearner: {},
 	RoleEditor: {
-		PermReadSource:   true,
-		PermCreateSource: true,
-		PermUpdateSource: true,
+		PermReadSource:    true,
+		PermCreateSource:  true,
+		PermUpdateSource:  true,
+		PermReadCatalogue: true,
 	},
 	RoleReviewer: {
-		PermReadSource:   true,
-		PermCreateSource: true,
-		PermUpdateSource: true,
-		PermReviewSource: true,
+		PermReadSource:    true,
+		PermCreateSource:  true,
+		PermUpdateSource:  true,
+		PermReviewSource:  true,
+		PermReadCatalogue: true,
 	},
 	RoleAdmin: {
-		PermReadSource:   true,
-		PermCreateSource: true,
-		PermUpdateSource: true,
-		PermReviewSource: true,
+		PermReadSource:      true,
+		PermCreateSource:    true,
+		PermUpdateSource:    true,
+		PermReviewSource:    true,
+		PermReadCatalogue:   true,
+		PermManageCatalogue: true,
 	},
 }
 

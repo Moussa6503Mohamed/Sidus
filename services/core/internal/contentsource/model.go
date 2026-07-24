@@ -21,18 +21,22 @@ const (
 // Source is a rights/provenance record for external material considered for ingestion.
 // It never stores the source material itself, only metadata about it.
 type Source struct {
-	ID               string    `json:"id"`
-	Title            string    `json:"title"`
-	Owner            *string   `json:"owner"`
-	SourceURL        string    `json:"sourceUrl"`
-	SourceHash       *string   `json:"sourceHash"`
-	LicenceReference *string   `json:"licenceReference"`
-	PermittedUse     *string   `json:"permittedUse"`
-	AllowedAudience  *string   `json:"allowedAudience"`
-	SyllabusCode     *string   `json:"syllabusCode"`
-	Status           Status    `json:"status"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	ID               string  `json:"id"`
+	Title            string  `json:"title"`
+	Owner            *string `json:"owner"`
+	SourceURL        string  `json:"sourceUrl"`
+	SourceHash       *string `json:"sourceHash"`
+	LicenceReference *string `json:"licenceReference"`
+	PermittedUse     *string `json:"permittedUse"`
+	AllowedAudience  *string `json:"allowedAudience"`
+	SyllabusCode     *string `json:"syllabusCode"`
+	// CatalogueSyllabusID links this source to a curriculum-catalogue syllabus (T-0004). It is
+	// resolved server-side from the supplied syllabusCode against the registry; null when no
+	// code is associated or for legacy rows not yet linked to the catalogue.
+	CatalogueSyllabusID *string   `json:"catalogueSyllabusId"`
+	Status              Status    `json:"status"`
+	CreatedAt           time.Time `json:"createdAt"`
+	UpdatedAt           time.Time `json:"updatedAt"`
 }
 
 // Review is an immutable record of an approve/reject decision on a Source.
@@ -77,6 +81,9 @@ type CreateInput struct {
 	PermittedUse     *string
 	AllowedAudience  *string
 	SyllabusCode     *string
+	// CatalogueSyllabusID is the registry-resolved catalogue syllabus ID for SyllabusCode.
+	// Set by the handler after resolving the code; nil when no code is supplied.
+	CatalogueSyllabusID *string
 }
 
 // UpdateInput is the payload for updating a pending Source's metadata. Every field is an
@@ -93,6 +100,10 @@ type UpdateInput struct {
 	PermittedUse     *string
 	AllowedAudience  *string
 	SyllabusCode     *string
+	// CatalogueSyllabusID is the registry-resolved catalogue syllabus ID for SyllabusCode.
+	// The store writes it alongside syllabus_code whenever the code actually changes; nil when
+	// SyllabusCode is not supplied.
+	CatalogueSyllabusID *string
 }
 
 // UpdatableFields lists the JSON field names a PATCH may change, in a stable order used

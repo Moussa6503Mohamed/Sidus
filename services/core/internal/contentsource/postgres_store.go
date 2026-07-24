@@ -21,23 +21,24 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
-const sourceColumns = `id, title, owner, source_url, source_hash, licence_reference, permitted_use, allowed_audience, syllabus_code, status, created_at, updated_at`
+const sourceColumns = `id, title, owner, source_url, source_hash, licence_reference, permitted_use, allowed_audience, syllabus_code, catalogue_syllabus_id, status, created_at, updated_at`
 
 func scanSource(row interface{ Scan(...any) error }) (Source, error) {
 	var s Source
 	err := row.Scan(
 		&s.ID, &s.Title, &s.Owner, &s.SourceURL, &s.SourceHash, &s.LicenceReference,
-		&s.PermittedUse, &s.AllowedAudience, &s.SyllabusCode, &s.Status, &s.CreatedAt, &s.UpdatedAt,
+		&s.PermittedUse, &s.AllowedAudience, &s.SyllabusCode, &s.CatalogueSyllabusID,
+		&s.Status, &s.CreatedAt, &s.UpdatedAt,
 	)
 	return s, err
 }
 
 func (p *PostgresStore) Create(ctx context.Context, in CreateInput) (Source, error) {
 	row := p.db.QueryRowContext(ctx, `
-		INSERT INTO content_sources (title, owner, source_url, source_hash, licence_reference, permitted_use, allowed_audience, syllabus_code)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO content_sources (title, owner, source_url, source_hash, licence_reference, permitted_use, allowed_audience, syllabus_code, catalogue_syllabus_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING `+sourceColumns,
-		in.Title, in.Owner, in.SourceURL, in.SourceHash, in.LicenceReference, in.PermittedUse, in.AllowedAudience, in.SyllabusCode,
+		in.Title, in.Owner, in.SourceURL, in.SourceHash, in.LicenceReference, in.PermittedUse, in.AllowedAudience, in.SyllabusCode, in.CatalogueSyllabusID,
 	)
 
 	source, err := scanSource(row)
@@ -196,6 +197,13 @@ func (p *PostgresStore) Update(ctx context.Context, id string, in UpdateInput) (
 		args = append(args, *c.value)
 		setClauses = append(setClauses, c.column+" = $"+strconv.Itoa(len(args)))
 		changed = append(changed, c.field)
+		// When the syllabus code actually changes, keep the catalogue FK in sync with the
+		// registry-resolved id the handler supplied. Not recorded as a separate changed field:
+		// it is a derived column of syllabusCode, not a user-facing field.
+		if c.field == "syllabusCode" {
+			args = append(args, in.CatalogueSyllabusID)
+			setClauses = append(setClauses, "catalogue_syllabus_id = $"+strconv.Itoa(len(args)))
+		}
 	}
 	if suppliedCount == 0 {
 		return Source{}, nil, ErrNoUpdatableFields

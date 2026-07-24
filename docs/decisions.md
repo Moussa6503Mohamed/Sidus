@@ -50,6 +50,39 @@ audit surface); calling the Clerk Backend API per request (rejected: latency/cos
 trusting body-supplied actor identity (rejected: spoofable, breaks audit integrity).
 **Owner/date:** Claude Code agent, 2026-07-24 (T-0003).
 
+## D-0007 — Curriculum catalogue authority
+
+**Status:** Approved
+**Decision:** Sidus Core owns a metadata-only curriculum catalogue: normalized `subjects` and
+`syllabuses` tables (plus an immutable `syllabus_events` audit trail) are the single authority
+for which syllabuses exist. A syllabus record carries board, syllabus code, subject relation,
+qualification/level, optional track (e.g. Extended), display name, optional curriculum
+year/edition (stored only when explicitly known — never inferred), lifecycle status
+(`draft`/`active`/`retired`), and timestamps. Safe uniqueness is `(board, syllabus_code,
+COALESCE(track,''))` — a syllabus code is never assumed globally unique, and different boards
+may reuse a code. Content sources gain a nullable FK (`catalogue_syllabus_id`) to the
+catalogue, added non-destructively; the hard-coded `0610`/`5090` request/enum validation is
+replaced by registry-backed validation: a supplied code must resolve to exactly one **active**
+catalogue syllabus (unknown/inactive/ambiguous → stable `400` before any DB write), while an
+omitted code stays allowed for pending source metadata. Catalogue reads (list/get **active**
+syllabuses and subjects) require `content_catalogue:read` (editor/reviewer/admin); create/change
+require `content_catalogue:manage` (admin only). Learner and unknown roles are denied. Catalogue
+mutations are audited with the verified Clerk subject and names-only (non-content) changed-field
+lists. Only the two D-0004 biology syllabuses are seeded (`active`); no curriculum is inferred
+from the copyrighted inventory, and no source material is stored. This is the all-subject beta
+path: future approved Cambridge syllabuses are onboarded as data (an admin API call), not code.
+**Reason:** All-subject beta needs syllabus onboarding without code changes; the copyright gate
+(D-0005) forbids inferring curricula or storing source material; least-privilege access and an
+immutable audit trail protect the catalogue surface; safe uniqueness avoids collapsing distinct
+syllabuses or trusting a non-unique code.
+**Alternatives:** Keep the two-code union and add codes by editing code (rejected: does not
+scale to all subjects, contradicts beta goal); make `syllabus_code` globally unique (rejected:
+codes are only unique per board, and track distinguishes offerings); auto-map the existing
+seeded 0610/5090 content_sources rows to catalogue syllabuses in the migration (rejected:
+silent mapping of ambiguous rights records — a human links them later); let the AI service hold
+catalogue authority (rejected: Core is the single authority; AI adds no content ingestion).
+**Owner/date:** Claude Code agent, 2026-07-24 (T-0004).
+
 ## Decision template
 
 ```md
