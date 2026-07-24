@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/lib/pq"
 )
@@ -134,6 +136,92 @@ func (p *PostgresStore) Approve(ctx context.Context, id string, in ApproveInput)
 	}
 
 	return source, nil, nil
+}
+
+// updateColumn pairs a JSON field name with its database column and the supplied value.
+type updateColumn struct {
+	field  string
+	column string
+	value  *string
+}
+
+func (in UpdateInput) columns() []updateColumn {
+	// Order mirrors UpdatableFields so changed-field names and SQL are deterministic.
+	return []updateColumn{
+		{"title", "title", in.Title},
+		{"owner", "owner", in.Owner},
+		{"sourceUrl", "source_url", in.SourceURL},
+		{"sourceHash", "source_hash", in.SourceHash},
+		{"licenceReference", "licence_reference", in.LicenceReference},
+		{"permittedUse", "permitted_use", in.PermittedUse},
+		{"allowedAudience", "allowed_audience", in.AllowedAudience},
+		{"syllabusCode", "syllabus_code", in.SyllabusCode},
+	}
+}
+
+func (p *PostgresStore) Update(ctx context.Context, id string, in UpdateInput) (Source, []string, error) {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Source{}, nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	row := tx.QueryRowContext(ctx, `SELECT `+sourceColumns+` FROM content_sources WHERE id = $1 FOR UPDATE`, id)
+	source, err := scanSource(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Source{}, nil, ErrNotFound
+	}
+	if err != nil {
+		return Source{}, nil, fmt.Errorf("lock content source: %w", err)
+	}
+
+	if source.Status != StatusPending {
+		return Source{}, nil, ErrInvalidTransition
+	}
+
+	var setClauses []string
+	var args []any
+	var changed []string
+	for _, c := range in.columns() {
+		if c.value == nil {
+			continue
+		}
+		args = append(args, *c.value)
+		setClauses = append(setClauses, c.column+" = $"+strconv.Itoa(len(args)))
+		changed = append(changed, c.field)
+	}
+	if len(changed) == 0 {
+		return Source{}, nil, ErrNoUpdatableFields
+	}
+
+	setClauses = append(setClauses, "updated_at = now()")
+	args = append(args, id)
+	query := `UPDATE content_sources SET ` + strings.Join(setClauses, ", ") +
+		` WHERE id = $` + strconv.Itoa(len(args)) + ` RETURNING ` + sourceColumns
+
+	row = tx.QueryRowContext(ctx, query, args...)
+	source, err = scanSource(row)
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return Source{}, nil, ErrDuplicateSourceURL
+		}
+		return Source{}, nil, fmt.Errorf("update content source: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO content_source_events (content_source_id, event_type, actor_id, changed_fields)
+		VALUES ($1, $2, $3, $4)`,
+		id, EventMetadataUpdated, in.ActorID, pq.Array(changed),
+	); err != nil {
+		return Source{}, nil, fmt.Errorf("insert event: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Source{}, nil, fmt.Errorf("commit: %w", err)
+	}
+
+	return source, changed, nil
 }
 
 func (p *PostgresStore) Reject(ctx context.Context, id string, in RejectInput) (Source, error) {

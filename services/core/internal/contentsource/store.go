@@ -16,6 +16,9 @@ var ErrInvalidTransition = errors.New("content source is not pending")
 // ErrDuplicateSourceURL is returned when creating a Source whose sourceUrl already exists.
 var ErrDuplicateSourceURL = errors.New("content source with this sourceUrl already exists")
 
+// ErrNoUpdatableFields is returned when an update supplies no updatable field.
+var ErrNoUpdatableFields = errors.New("no updatable fields supplied")
+
 // ApproveInput is the payload for approving a Source.
 type ApproveInput struct {
 	ReviewerID   string
@@ -42,4 +45,10 @@ type Store interface {
 
 	// Reject transitions a source to rejected and records the reason.
 	Reject(ctx context.Context, id string, in RejectInput) (Source, error)
+
+	// Update applies supplied metadata fields to a pending source, bumps updated_at, and
+	// appends an immutable metadata_updated event listing the changed field names. It
+	// returns ErrInvalidTransition if the source is not pending and ErrDuplicateSourceURL
+	// if the new sourceUrl collides. changed lists the names of fields actually applied.
+	Update(ctx context.Context, id string, in UpdateInput) (source Source, changed []string, err error)
 }

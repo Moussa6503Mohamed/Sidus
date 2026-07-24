@@ -82,3 +82,54 @@ export interface MissingApprovalFieldsError {
   error: "missing_required_fields";
   missing: RequiredApprovalField[];
 }
+
+// --- Pending source metadata update + audit (T-0002) ---
+// PATCH /content-sources/{id} lets a curator complete metadata on a pending source.
+// It never approves and never stores source material or field values in the audit trail.
+
+/** Fields a PATCH may change on a pending ContentSource. */
+export const UPDATABLE_CONTENT_SOURCE_FIELDS = [
+  "title",
+  "owner",
+  "sourceUrl",
+  "sourceHash",
+  "licenceReference",
+  "permittedUse",
+  "allowedAudience",
+  "syllabusCode",
+] as const;
+
+export type UpdatableContentSourceField =
+  (typeof UPDATABLE_CONTENT_SOURCE_FIELDS)[number];
+
+/**
+ * Update a pending content source. `actorId` is required. At least one updatable field
+ * must be supplied; supplied fields must be non-empty. Only pending sources may be updated.
+ */
+export interface UpdateContentSourceRequest {
+  actorId: string;
+  title?: string;
+  owner?: string;
+  sourceUrl?: string;
+  sourceHash?: string;
+  licenceReference?: string;
+  permittedUse?: string;
+  allowedAudience?: string;
+  syllabusCode?: SyllabusCode;
+}
+
+export type ContentSourceEventType = "metadata_updated";
+
+/**
+ * Immutable audit record of a metadata change. Records which fields changed (names only)
+ * and who changed them — never the field values, and never any source material.
+ */
+export interface ContentSourceEvent {
+  id: string;
+  contentSourceId: string;
+  eventType: ContentSourceEventType;
+  actorId: string;
+  eventTime: string;
+  changedFields: UpdatableContentSourceField[];
+  createdAt: string;
+}

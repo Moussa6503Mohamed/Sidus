@@ -46,6 +46,25 @@ type Review struct {
 	CreatedAt       time.Time `json:"createdAt"`
 }
 
+// EventType is the kind of change recorded in a source event.
+type EventType string
+
+// EventMetadataUpdated records a successful update of a pending source's metadata.
+const EventMetadataUpdated EventType = "metadata_updated"
+
+// Event is an immutable audit record of a metadata change to a Source. It records which
+// fields changed (names only) and who changed them — never the field values themselves,
+// and never any source material.
+type Event struct {
+	ID              string    `json:"id"`
+	ContentSourceID string    `json:"contentSourceId"`
+	EventType       EventType `json:"eventType"`
+	ActorID         string    `json:"actorId"`
+	EventTime       time.Time `json:"eventTime"`
+	ChangedFields   []string  `json:"changedFields"`
+	CreatedAt       time.Time `json:"createdAt"`
+}
+
 // CreateInput is the payload for creating a new pending Source. All rights fields are
 // optional at creation time; there is no separate update endpoint in this task's scope,
 // so any field required for approval must be supplied here.
@@ -58,6 +77,35 @@ type CreateInput struct {
 	PermittedUse     *string
 	AllowedAudience  *string
 	SyllabusCode     *string
+}
+
+// UpdateInput is the payload for updating a pending Source's metadata. Every field is an
+// optional pointer: a nil pointer means "leave unchanged", a non-nil pointer means the
+// caller supplied that field and it should be applied. ActorID identifies who made the
+// change and is required. Values are applied but never stored in the audit trail.
+type UpdateInput struct {
+	ActorID          string
+	Title            *string
+	Owner            *string
+	SourceURL        *string
+	SourceHash       *string
+	LicenceReference *string
+	PermittedUse     *string
+	AllowedAudience  *string
+	SyllabusCode     *string
+}
+
+// UpdatableFields lists the JSON field names a PATCH may change, in a stable order used
+// for building SQL and for recording changed-field names in audit events.
+var UpdatableFields = []string{
+	"title",
+	"owner",
+	"sourceUrl",
+	"sourceHash",
+	"licenceReference",
+	"permittedUse",
+	"allowedAudience",
+	"syllabusCode",
 }
 
 // RequiredApprovalFields lists the field names checked before a source may be approved.

@@ -15,6 +15,7 @@ import (
 type memoryStore struct {
 	sources map[string]Source
 	reviews []Review
+	events  []Event
 	nextID  int
 }
 
@@ -102,6 +103,54 @@ func (m *memoryStore) Reject(_ context.Context, id string, in RejectInput) (Sour
 	reason := in.Reason
 	m.reviews = append(m.reviews, Review{ContentSourceID: id, Decision: StatusRejected, ReviewerID: in.ReviewerID, DecisionDate: in.DecisionDate, Reason: &reason})
 	return s, nil
+}
+
+func (m *memoryStore) Update(_ context.Context, id string, in UpdateInput) (Source, []string, error) {
+	s, ok := m.sources[id]
+	if !ok {
+		return Source{}, nil, ErrNotFound
+	}
+	if s.Status != StatusPending {
+		return Source{}, nil, ErrInvalidTransition
+	}
+
+	cols := []struct {
+		field string
+		value *string
+		apply func(v string)
+	}{
+		{"title", in.Title, func(v string) { s.Title = v }},
+		{"owner", in.Owner, func(v string) { s.Owner = strPtr(v) }},
+		{"sourceUrl", in.SourceURL, func(v string) { s.SourceURL = v }},
+		{"sourceHash", in.SourceHash, func(v string) { s.SourceHash = strPtr(v) }},
+		{"licenceReference", in.LicenceReference, func(v string) { s.LicenceReference = strPtr(v) }},
+		{"permittedUse", in.PermittedUse, func(v string) { s.PermittedUse = strPtr(v) }},
+		{"allowedAudience", in.AllowedAudience, func(v string) { s.AllowedAudience = strPtr(v) }},
+		{"syllabusCode", in.SyllabusCode, func(v string) { s.SyllabusCode = strPtr(v) }},
+	}
+	var changed []string
+	for _, c := range cols {
+		if c.value == nil {
+			continue
+		}
+		if in.SourceURL != nil && c.field == "sourceUrl" {
+			for oid, other := range m.sources {
+				if oid != id && other.SourceURL == *in.SourceURL {
+					return Source{}, nil, ErrDuplicateSourceURL
+				}
+			}
+		}
+		c.apply(*c.value)
+		changed = append(changed, c.field)
+	}
+	if len(changed) == 0 {
+		return Source{}, nil, ErrNoUpdatableFields
+	}
+
+	s.UpdatedAt = time.Now().UTC()
+	m.sources[id] = s
+	m.events = append(m.events, Event{ContentSourceID: id, EventType: EventMetadataUpdated, ActorID: in.ActorID, ChangedFields: changed, EventTime: s.UpdatedAt})
+	return s, changed, nil
 }
 
 func newTestServer() (*httptest.Server, *memoryStore) {
@@ -416,6 +465,218 @@ func TestCreate_ValidSyllabusCode_Returns201(t *testing.T) {
 		if resp.StatusCode != http.StatusCreated {
 			t.Fatalf("syllabusCode=%q: got %d, want %d", code, resp.StatusCode, http.StatusCreated)
 		}
+	}
+}
+
+func TestUpdate_Success(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{Title: "Bio syllabus", SourceURL: "https://example.org/upd-1"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		ActorID:          strPtr("curator-1"),
+		Owner:            strPtr("Cambridge Assessment International Education"),
+		LicenceReference: strPtr("CAIE-PUBLIC-SYLLABUS-2026"),
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	updated := decodeJSON[Source](t, resp)
+	if updated.Owner == nil || *updated.Owner != "Cambridge Assessment International Education" {
+		t.Fatalf("owner = %v, want set", updated.Owner)
+	}
+	if updated.Status != StatusPending {
+		t.Fatalf("status = %q, want still pending (PATCH never approves)", updated.Status)
+	}
+}
+
+func TestUpdate_CreatesImmutableEvent(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{Title: "Bio syllabus", SourceURL: "https://example.org/upd-event"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		ActorID: strPtr("curator-1"),
+		Owner:   strPtr("CAIE"),
+		Title:   strPtr("Cambridge IGCSE Biology 0610 syllabus"),
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if len(store.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(store.events))
+	}
+	ev := store.events[0]
+	if ev.EventType != EventMetadataUpdated {
+		t.Fatalf("eventType = %q, want %q", ev.EventType, EventMetadataUpdated)
+	}
+	if ev.ActorID != "curator-1" {
+		t.Fatalf("actorId = %q, want curator-1", ev.ActorID)
+	}
+	want := []string{"title", "owner"}
+	if len(ev.ChangedFields) != len(want) {
+		t.Fatalf("changedFields = %v, want %v", ev.ChangedFields, want)
+	}
+	for i, f := range want {
+		if ev.ChangedFields[i] != f {
+			t.Fatalf("changedFields[%d] = %q, want %q", i, ev.ChangedFields[i], f)
+		}
+	}
+}
+
+func TestUpdate_WhitespaceOnlyValue_Returns400(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, _ := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-ws"})
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		ActorID: strPtr("curator-1"),
+		Owner:   strPtr("   "),
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("events = %d, want 0 (rejected update must not audit)", len(store.events))
+	}
+}
+
+func TestUpdate_InvalidSyllabusCode_Returns400(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, _ := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-syl"})
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		ActorID:      strPtr("curator-1"),
+		SyllabusCode: strPtr("9999"),
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "invalid_syllabus_code" {
+		t.Fatalf("error = %v", body["error"])
+	}
+}
+
+func TestUpdate_InvalidSourceURL_Returns400(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, _ := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-url"})
+
+	for _, bad := range []string{"not-a-url", "ftp://example.org/x", "//example.org/x", "example.org/x"} {
+		resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+			ActorID:   strPtr("curator-1"),
+			SourceURL: strPtr(bad),
+		})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("sourceUrl=%q: status = %d, want %d", bad, resp.StatusCode, http.StatusBadRequest)
+		}
+		body := decodeJSON[map[string]any](t, resp)
+		if body["error"] != "invalid_source_url" {
+			t.Fatalf("sourceUrl=%q: error = %v", bad, body["error"])
+		}
+	}
+}
+
+func TestUpdate_DuplicateURL_Returns409(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	_, _ = store.Create(ctx, CreateInput{Title: "A", SourceURL: "https://example.org/dup-a"})
+	target, _ := store.Create(ctx, CreateInput{Title: "B", SourceURL: "https://example.org/dup-b"})
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+target.ID, updateRequest{
+		ActorID:   strPtr("curator-1"),
+		SourceURL: strPtr("https://example.org/dup-a"),
+	})
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusConflict)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "duplicate_source_url" {
+		t.Fatalf("error = %v", body["error"])
+	}
+}
+
+func TestUpdate_NonPending_Returns409(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, _ := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-np"})
+	if _, err := store.Reject(ctx, source.ID, RejectInput{ReviewerID: "r1", Reason: "no licence", DecisionDate: time.Now()}); err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		ActorID: strPtr("curator-1"),
+		Owner:   strPtr("CAIE"),
+	})
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusConflict)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "invalid_status_transition" {
+		t.Fatalf("error = %v", body["error"])
+	}
+}
+
+func TestUpdate_MissingActorID_Returns400(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, _ := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-actor"})
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		Owner: strPtr("CAIE"),
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "missing_required_fields" {
+		t.Fatalf("error = %v", body["error"])
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("events = %d, want 0", len(store.events))
+	}
+}
+
+func TestUpdate_NoUpdatableFields_Returns400(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, _ := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-empty"})
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		ActorID: strPtr("curator-1"),
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "no_updatable_fields" {
+		t.Fatalf("error = %v", body["error"])
 	}
 }
 

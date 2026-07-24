@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -14,6 +15,7 @@ func Register(mux *http.ServeMux, store Store) {
 	mux.HandleFunc("POST /content-sources", h.create)
 	mux.HandleFunc("GET /content-sources", h.list)
 	mux.HandleFunc("GET /content-sources/{id}", h.get)
+	mux.HandleFunc("PATCH /content-sources/{id}", h.update)
 	mux.HandleFunc("POST /content-sources/{id}/approve", h.approve)
 	mux.HandleFunc("POST /content-sources/{id}/reject", h.reject)
 }
@@ -89,6 +91,108 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, source)
+}
+
+type updateRequest struct {
+	ActorID          *string `json:"actorId"`
+	Title            *string `json:"title"`
+	Owner            *string `json:"owner"`
+	SourceURL        *string `json:"sourceUrl"`
+	SourceHash       *string `json:"sourceHash"`
+	LicenceReference *string `json:"licenceReference"`
+	PermittedUse     *string `json:"permittedUse"`
+	AllowedAudience  *string `json:"allowedAudience"`
+	SyllabusCode     *string `json:"syllabusCode"`
+}
+
+func (h *handler) update(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var req updateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+
+	if req.ActorID == nil || strings.TrimSpace(*req.ActorID) == "" {
+		writeMissingFields(w, http.StatusBadRequest, []string{"actorId"})
+		return
+	}
+
+	// Reject empty/whitespace-only values on any supplied field: a PATCH never clears a
+	// rights field, it only fills one in.
+	supplied := []struct {
+		name  string
+		value *string
+	}{
+		{"title", req.Title},
+		{"owner", req.Owner},
+		{"sourceUrl", req.SourceURL},
+		{"sourceHash", req.SourceHash},
+		{"licenceReference", req.LicenceReference},
+		{"permittedUse", req.PermittedUse},
+		{"allowedAudience", req.AllowedAudience},
+		{"syllabusCode", req.SyllabusCode},
+	}
+	var blank []string
+	suppliedCount := 0
+	for _, f := range supplied {
+		if f.value == nil {
+			continue
+		}
+		suppliedCount++
+		if strings.TrimSpace(*f.value) == "" {
+			blank = append(blank, f.name)
+		}
+	}
+	if len(blank) > 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "blank_fields", "fields": blank})
+		return
+	}
+	if suppliedCount == 0 {
+		writeError(w, http.StatusBadRequest, "no_updatable_fields", "supply at least one field to update")
+		return
+	}
+
+	if req.SyllabusCode != nil && !isValidSyllabusCode(*req.SyllabusCode) {
+		writeError(w, http.StatusBadRequest, "invalid_syllabus_code", "syllabusCode must be one of: 0610, 5090")
+		return
+	}
+	if req.SourceURL != nil && !isValidHTTPURL(*req.SourceURL) {
+		writeError(w, http.StatusBadRequest, "invalid_source_url", "sourceUrl must be an absolute http or https URL")
+		return
+	}
+
+	source, _, err := h.store.Update(r.Context(), id, UpdateInput{
+		ActorID:          strings.TrimSpace(*req.ActorID),
+		Title:            req.Title,
+		Owner:            req.Owner,
+		SourceURL:        req.SourceURL,
+		SourceHash:       req.SourceHash,
+		LicenceReference: req.LicenceReference,
+		PermittedUse:     req.PermittedUse,
+		AllowedAudience:  req.AllowedAudience,
+		SyllabusCode:     req.SyllabusCode,
+	})
+	switch {
+	case errors.Is(err, ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "content source not found")
+		return
+	case errors.Is(err, ErrInvalidTransition):
+		writeError(w, http.StatusConflict, "invalid_status_transition", "content source is not pending")
+		return
+	case errors.Is(err, ErrDuplicateSourceURL):
+		writeError(w, http.StatusConflict, "duplicate_source_url", err.Error())
+		return
+	case errors.Is(err, ErrNoUpdatableFields):
+		writeError(w, http.StatusBadRequest, "no_updatable_fields", "supply at least one field to update")
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+
 	writeJSON(w, http.StatusOK, source)
 }
 
@@ -225,6 +329,18 @@ func isValidStatus(s Status) bool {
 
 func isValidSyllabusCode(code string) bool {
 	return code == "0610" || code == "5090"
+}
+
+// isValidHTTPURL reports whether s is an absolute URL with an http/https scheme and a host.
+func isValidHTTPURL(s string) bool {
+	u, err := url.Parse(strings.TrimSpace(s))
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	return u.Host != ""
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
