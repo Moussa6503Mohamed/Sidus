@@ -6,11 +6,25 @@
 # docker-compose.yml — always use this disposable service instead, and destroy it after the
 # test run.
 #
+# Explicit `name: sidus-test` below keeps this project's containers, network, and volumes
+# fully separate from the dev project (`name: sidus` in docker-compose.yml). Without it,
+# both files run from the same repo root and Compose would derive the same default project
+# name from the directory, causing `down -v` here to touch dev resources too.
+#
+# There is no Compose "migrate" service — migrations run via the Go migrate command
+# (services/core/cmd/migrate), executed through the golang Docker image (no host Go
+# toolchain required). See docs/local-setup.md and the commands below.
+#
 # Usage:
 #   docker compose -f docker-compose.test.yml up -d
-#   docker compose -f docker-compose.test.yml run --rm migrate
-#   # run go tests with TEST_DATABASE_URL pointed at postgres-test
-#   docker compose -f docker-compose.test.yml down -v   # destroys container + volume
+#   docker compose -f docker-compose.test.yml exec -T postgres-test pg_isready -U sidus_test -d sidus_test
+#   docker run --rm --network sidus-test_default -v "$(pwd)/services/core:/app" -w /app \
+#     -e DATABASE_URL="postgres://sidus_test:sidus_test_password@postgres-test:5432/sidus_test?sslmode=disable" \
+#     golang:1.22-alpine go run ./cmd/migrate
+#   cd services/core && TEST_DATABASE_URL="postgres://sidus_test:sidus_test_password@localhost:${TEST_POSTGRES_PORT:-55432}/sidus_test?sslmode=disable" go test ./... -run Integration -v
+#   docker compose -f docker-compose.test.yml down -v   # destroys ONLY sidus-test project resources
+name: sidus-test
+
 services:
   postgres-test:
     image: postgres:16-alpine

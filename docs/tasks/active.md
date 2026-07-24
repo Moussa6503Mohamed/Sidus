@@ -60,6 +60,14 @@ event trail for every successful update.
   silent-failure DELETE cleanup attempts; added `docker-compose.test.yml` (disposable
   `postgres-test` service, tmpfs-backed, separate from the dev `postgres` service/volume) and
   documented that `TEST_DATABASE_URL` must point at it, never at dev/prod.
+- **Test-environment isolation fix.** `docker-compose.test.yml` had no explicit Compose
+  project name, so it defaulted to the same project (`sidus`) as `docker-compose.yml`,
+  risking `down -v` on the test file removing dev resources. Fixed: added `name: sidus-test`
+  (and `name: sidus` to the dev file) so containers/networks/volumes are fully distinct;
+  verified by running both stacks simultaneously and tearing down only the test one. Also
+  corrected the file's header comment, which referenced a nonexistent Compose `migrate`
+  service — migrations run via `go run ./cmd/migrate` through the `golang:1.22-alpine`
+  image. See `docs/handoffs/T-0002.md` for exact commands.
 
 ### Acceptance checks
 
