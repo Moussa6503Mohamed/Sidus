@@ -298,6 +298,127 @@ func TestReject_RequiresReasonAndReviewer(t *testing.T) {
 	}
 }
 
+func TestApprove_WhitespaceOnlyRightsFieldsCannotPass(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{
+		Title:            "Bio syllabus",
+		SourceURL:        "https://example.org/bio-whitespace",
+		Owner:            strPtr(" "),
+		SourceHash:       strPtr(" "),
+		LicenceReference: strPtr(" "),
+		PermittedUse:     strPtr(" "),
+		AllowedAudience:  strPtr(" "),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources/"+source.ID+"/approve", reviewRequest{ReviewerID: "reviewer-1"})
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUnprocessableEntity)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	missing, ok := body["missing"].([]any)
+	if !ok {
+		t.Fatalf("missing = %v, want list", body["missing"])
+	}
+	wantMissing := []string{"owner", "sourceHash", "licenceReference", "permittedUse", "allowedAudience"}
+	if len(missing) != len(wantMissing) {
+		t.Fatalf("missing = %v, want %v", missing, wantMissing)
+	}
+	for i, field := range wantMissing {
+		if missing[i] != field {
+			t.Fatalf("missing[%d] = %v, want %q", i, missing[i], field)
+		}
+	}
+}
+
+func TestMissingApprovalFields_RejectsWhitespaceOnlyValues(t *testing.T) {
+	blank := " "
+	source := Source{
+		Title:            blank,
+		SourceURL:        blank,
+		Owner:            &blank,
+		SourceHash:       &blank,
+		LicenceReference: &blank,
+		PermittedUse:     &blank,
+		AllowedAudience:  &blank,
+	}
+	missing := MissingApprovalFields(source)
+	want := []string{"owner", "title", "sourceUrl", "sourceHash", "licenceReference", "permittedUse", "allowedAudience"}
+	if len(missing) != len(want) {
+		t.Fatalf("missing = %v, want %v", missing, want)
+	}
+	for i, field := range want {
+		if missing[i] != field {
+			t.Fatalf("missing[%d] = %v, want %q", i, missing[i], field)
+		}
+	}
+}
+
+func TestList_InvalidStatus_Returns400(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	resp := doJSON(t, http.MethodGet, srv.URL+"/content-sources?status=bogus", nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "invalid_status" {
+		t.Fatalf("error = %v", body["error"])
+	}
+}
+
+func TestList_ValidStatus_Returns200(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	for _, status := range []string{"pending", "approved", "rejected", "expired"} {
+		resp := doJSON(t, http.MethodGet, srv.URL+"/content-sources?status="+status, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%q: got %d, want %d", status, resp.StatusCode, http.StatusOK)
+		}
+	}
+}
+
+func TestCreate_InvalidSyllabusCode_Returns400(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources", createRequest{
+		Title:        "Bio syllabus",
+		SourceURL:    "https://example.org/bio-bad-syllabus",
+		SyllabusCode: strPtr("9999"),
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "invalid_syllabus_code" {
+		t.Fatalf("error = %v", body["error"])
+	}
+}
+
+func TestCreate_ValidSyllabusCode_Returns201(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	for _, code := range []string{"0610", "5090"} {
+		resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources", createRequest{
+			Title:        "Bio syllabus " + code,
+			SourceURL:    "https://example.org/bio-" + code,
+			SyllabusCode: strPtr(code),
+		})
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("syllabusCode=%q: got %d, want %d", code, resp.StatusCode, http.StatusCreated)
+		}
+	}
+}
+
 func TestReject_Success(t *testing.T) {
 	srv, store := newTestServer()
 	defer srv.Close()

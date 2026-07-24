@@ -3,7 +3,10 @@
 // every approve/reject decision is recorded as an immutable review.
 package contentsource
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Status is the lifecycle state of a content source.
 type Status string
@@ -72,26 +75,31 @@ var RequiredApprovalFields = []string{
 // required rights field that is absent or empty on s.
 func MissingApprovalFields(s Source) []string {
 	var missing []string
-	if s.Owner == nil || *s.Owner == "" {
+	if isBlank(s.Owner) {
 		missing = append(missing, "owner")
 	}
-	if s.Title == "" {
+	if strings.TrimSpace(s.Title) == "" {
 		missing = append(missing, "title")
 	}
-	if s.SourceURL == "" {
+	if strings.TrimSpace(s.SourceURL) == "" {
 		missing = append(missing, "sourceUrl")
 	}
-	if s.SourceHash == nil || *s.SourceHash == "" {
+	if isBlank(s.SourceHash) {
 		missing = append(missing, "sourceHash")
 	}
-	if s.LicenceReference == nil || *s.LicenceReference == "" {
+	if isBlank(s.LicenceReference) {
 		missing = append(missing, "licenceReference")
 	}
-	if s.PermittedUse == nil || *s.PermittedUse == "" {
+	if isBlank(s.PermittedUse) {
 		missing = append(missing, "permittedUse")
 	}
-	if s.AllowedAudience == nil || *s.AllowedAudience == "" {
+	if isBlank(s.AllowedAudience) {
 		missing = append(missing, "allowedAudience")
 	}
 	return missing
+}
+
+// isBlank reports whether an optional string field is nil or contains only whitespace.
+func isBlank(v *string) bool {
+	return v == nil || strings.TrimSpace(*v) == ""
 }

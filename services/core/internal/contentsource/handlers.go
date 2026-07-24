@@ -51,6 +51,10 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		writeMissingFields(w, http.StatusBadRequest, missing)
 		return
 	}
+	if req.SyllabusCode != nil && !isValidSyllabusCode(*req.SyllabusCode) {
+		writeError(w, http.StatusBadRequest, "invalid_syllabus_code", "syllabusCode must be one of: 0610, 5090")
+		return
+	}
 
 	source, err := h.store.Create(r.Context(), CreateInput{
 		Title:            req.Title,
@@ -92,6 +96,10 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	var status *Status
 	if v := r.URL.Query().Get("status"); v != "" {
 		s := Status(v)
+		if !isValidStatus(s) {
+			writeError(w, http.StatusBadRequest, "invalid_status", "status must be one of: pending, approved, rejected, expired")
+			return
+		}
 		status = &s
 	}
 
@@ -204,6 +212,19 @@ func (h *handler) reject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, source)
+}
+
+func isValidStatus(s Status) bool {
+	switch s {
+	case StatusPending, StatusApproved, StatusRejected, StatusExpired:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidSyllabusCode(code string) bool {
+	return code == "0610" || code == "5090"
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
