@@ -44,7 +44,7 @@ Build Sidus: academic preparation platform. First vertical slice: Cambridge IGCS
 ```sh
 npm --prefix apps/web run typecheck
 npm --prefix apps/web run build
-cd services/core && go test ./...
+docker run --rm -v "$(pwd)/services/core:/app" -w /app golang:1.22-alpine go test ./...
 cd services/ai && python -m pytest
 ```
 
