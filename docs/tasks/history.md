@@ -153,3 +153,99 @@ event trail for every successful update.
 ### Handoff
 
 `docs/handoffs/T-0002.md`
+
+## T-0003 — Clerk authentication and roles foundation
+
+**Status:** done / released
+**Owner:** Claude Code agent
+**Priority:** P0
+**Depends on:** T-0001 (done), T-0002 (done)
+
+### Goal
+
+Clerk owns authentication; Sidus Core owns authorization. No user-controlled `actorId` or
+`reviewerId`. Audit identity (event actor, review reviewer) derives only from the verified
+Clerk session subject.
+
+### Scope
+
+**Web (`apps/web`, Next.js 16 / React 19):** `@clerk/nextjs@^7.6.0`, `ClerkProvider`,
+`proxy.ts` middleware protecting `/dashboard(.*)`, Clerk sign-in/sign-up routes, protected
+dashboard placeholder, signed-in/out home page.
+
+**Core (`services/core`, Go):** `internal/auth` package (role/permission matrix,
+`ParseRole` deny-by-default, `Protect` middleware — 401 missing/invalid token, 403 valid
+token lacking permission) backed by the official `clerk-sdk-go/v2` (pinned v2.5.0 for Go
+1.22 compatibility) with JWKS TTL caching (no Backend API call per request). Content-source
+routes wrapped with required permissions; `actorId`/`reviewerId` removed from request
+bodies — audit actor/reviewer come only from the verified subject. Routes mount only when
+DB + Clerk are fully configured (fail closed).
+
+**AI (`services/ai`, FastAPI):** `ClerkAuthenticator` (PyJWT `PyJWKClient`, RS256) +
+`require_clerk_session` dependency; protected `/ingestion/status` foundation only — no
+OCR/ingestion added; rights gate unchanged.
+
+**Contracts/docs:** `packages/shared/src/contracts.ts` — actor/reviewer fields removed,
+`SIDUS_ROLES`/`SidusRole`/`SIDUS_ROLE_CLAIM` added. New `docs/auth-setup.md`. `.env.example`
+Clerk placeholders only. `docs/decisions.md` D-0006.
+
+### Review follow-up (fail-open hardening)
+
+Closed four fail-open gaps, all now fail closed:
+
+- Core issuer mandatory — content-source routes do not mount without `CLERK_JWT_ISSUER`.
+- Authorized parties never silently unrestricted — absent → dev-default local origin only;
+  present-but-blank → invalid (Core routes unmounted; AI protected routes → 503).
+- AI issuer mandatory — a configured JWKS URL cannot bypass issuer validation; unconfigured
+  auth fails closed with a generic 503.
+- Content-source bodies parsed strictly (`DisallowUnknownFields` + reject trailing JSON
+  values after the first decoded value) — unknown fields (incl. legacy
+  `actorId`/`reviewerId`) or a second concatenated JSON value return `400 invalid_json`;
+  audit actor/reviewer stay the verified `sub` only.
+
+### Acceptance checks
+
+- Clerk authenticates; Core/AI verify JWT offline via JWKS, no per-request Backend API
+  call. — met
+- Role authorization from verified `sidus_role` claim; missing/unknown role denied. — met
+- `401` missing/invalid token, `403` valid token lacking permission. — met
+- `actorId`/`reviewerId` cannot be supplied in request bodies; audit actor/reviewer =
+  verified subject. — met
+- Content-source routes fail closed without full Clerk/DB configuration. — met
+- No real Clerk keys committed/staged; `.env.example` placeholders only. — met
+- Relevant tests pass. — met, see release validation below
+
+### Constraints
+
+- Never stage/alter/move/delete: `DB.jpeg`, `arch.jpeg`, `Sidus.xlsx`,
+  `Sidus_Roadmap_and_Cost_Model(1).xlsx`, `Sidus_Final_MVP_Technical_Cost_Model*.xlsx`,
+  `.claude/`, `.claude-flow/`, root `.env.local`.
+- No Clerk Dashboard actions performed by the agent (manual human steps below).
+
+### Open questions / blockers
+
+- None blocking. Manual Clerk Dashboard steps (human, before beta): create the Clerk app
+  and store real keys only in gitignored `.env.local` files; add session claim
+  `sidus_role`; manually set the first admin (`public_metadata.sidus_role = "admin"`);
+  configure production domain/origins and set real `CLERK_JWT_ISSUER` /
+  `CLERK_AUTHORIZED_PARTIES` / `CLERK_JWKS_URL`. Full detail in `docs/auth-setup.md`.
+
+### Release validation (final pass)
+
+| Command | Result |
+| --- | --- |
+| `npm --prefix apps/web run typecheck` | Pass |
+| `npm --prefix apps/web run build` | Pass — Proxy (Middleware) detected; `/api/health` present |
+| `go build ./... && go vet ./... && go test ./... -v` (Docker `golang:1.22-alpine`) | Pass — all unit tests green, 3 integration tests skipped (no `TEST_DATABASE_URL`) |
+| `docker compose -f docker-compose.test.yml config` / `-f docker-compose.yml config` | Pass / Pass |
+| `docker compose -f docker-compose.test.yml up -d` + health wait | Pass — `postgres-test` healthy |
+| `go run ./cmd/migrate` against disposable `sidus-test` postgres | Pass — 4 migrations applied |
+| `go test ./... -run Integration -v` against `sidus-test` | Pass — 3 immutable-audit integration tests |
+| `docker compose -f docker-compose.test.yml down -v` | Pass — `sidus-test` destroyed only; dev untouched |
+| `python -m pytest -q` (services/ai) | Pass — 18 tests |
+| `npx -p typescript tsc --noEmit --strict packages/shared/src/contracts.ts` | Pass |
+| `git diff --check` | Clean |
+
+### Handoff
+
+`docs/handoffs/T-0003.md`
