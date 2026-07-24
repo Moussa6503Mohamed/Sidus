@@ -48,6 +48,19 @@ Append-only trail of catalogue mutations: `syllabus_id`, `event_type`
 `event_time`, `changed_fields` (names only). A `BEFORE UPDATE OR DELETE` trigger rejects any
 mutation. Never stores field values or source material.
 
+### `subject_events` (immutable audit)
+
+Append-only trail of subject creation: `subject_id`, `event_type` (`subject_created`),
+`actor_id` (the **verified Clerk subject**), `event_time`, `changed_fields` (names only, e.g.
+`["name"]` — never the submitted value). A `BEFORE UPDATE OR DELETE` trigger rejects any
+mutation. Subject creation and its audit event are written in one transaction: if the audit
+insert fails, the subject creation rolls back (migration 0009).
+
+**Seed exception:** the `Biology` subject seeded by migration 0007 is inserted with a plain SQL
+`INSERT`, not through the `CreateSubject` application path used by the API. It is bootstrap
+metadata for the D-0004 first vertical slice, not a human actor's action, so it intentionally
+carries **no** `subject_events` row and no invented actor id.
+
 ### `content_sources.catalogue_syllabus_id`
 
 Nullable FK → `syllabuses(id)`, added non-destructively (`ADD COLUMN IF NOT EXISTS`). Links a
@@ -74,6 +87,12 @@ All endpoints require a Clerk session bearer token (see [auth-setup.md](auth-set
 (`duplicate_subject`, `duplicate_syllabus`); `404` not found. The audit actor is the verified
 Clerk subject only — request bodies carry no actor field (strict decoder rejects unknown
 fields).
+
+`500 internal_error` (database, scan, transaction, or other infrastructure failure) always
+returns the same stable, generic message. Raw driver/Go error text is never forwarded to a
+client; only the safe, static domain-error messages above (`duplicate_subject`,
+`duplicate_syllabus`, `unknown_subject`, `not_found`, `invalid_status`, `no_changes`, …) carry
+any descriptive text.
 
 ## Roles
 

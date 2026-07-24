@@ -96,6 +96,16 @@ No invented year/edition, objective, assessment rule, rights claim, or extra syl
 - None blocking. Linking the two seeded `pending` content_sources rows to catalogue
   syllabuses is deferred to a future task (requires human provenance confirmation).
 
+### Review-fix pass (status stays `review`)
+
+- Fixed: subject creation now writes an immutable `subject_events` audit row (migration 0009,
+  `subject_id`/`event_type`/`actor_id`/`event_time`/`changed_fields`), same transaction as the
+  subject insert, append-only via trigger. Migration-seeded Biology subject is documented as an
+  explicit bootstrap exception (no event, no invented actor).
+- Fixed: catalogue HTTP handlers no longer return raw `err.Error()` for infrastructure failures;
+  all map to one stable `internal_error` message. Safe domain errors unchanged.
+- See `docs/handoffs/T-0004.md` "Review fixes (this pass)" for full detail and test list.
+
 ### Handoff
 
 `docs/handoffs/T-0004.md` (on completion).

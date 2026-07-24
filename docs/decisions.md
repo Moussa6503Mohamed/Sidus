@@ -68,9 +68,16 @@ omitted code stays allowed for pending source metadata. Catalogue reads (list/ge
 syllabuses and subjects) require `content_catalogue:read` (editor/reviewer/admin); create/change
 require `content_catalogue:manage` (admin only). Learner and unknown roles are denied. Catalogue
 mutations are audited with the verified Clerk subject and names-only (non-content) changed-field
-lists. Only the two D-0004 biology syllabuses are seeded (`active`); no curriculum is inferred
-from the copyrighted inventory, and no source material is stored. This is the all-subject beta
-path: future approved Cambridge syllabuses are onboarded as data (an admin API call), not code.
+lists — including subject creation, via an immutable `subject_events` trail (migration 0009)
+written in the same transaction as the subject row, so a failed audit insert rolls back the
+subject. The seeded Biology subject (migration 0007) is bootstrap data inserted outside the
+application path and intentionally carries no `subject_events` row (no invented actor id).
+Catalogue HTTP endpoints never return raw database/scan/transaction error text: infrastructure
+failures map to one stable `internal_error` message; only static, non-sensitive domain errors
+(duplicate/unknown/not-found/invalid-status/no-changes) carry descriptive text. Only the two
+D-0004 biology syllabuses are seeded (`active`); no curriculum is inferred from the copyrighted
+inventory, and no source material is stored. This is the all-subject beta path: future approved
+Cambridge syllabuses are onboarded as data (an admin API call), not code.
 **Reason:** All-subject beta needs syllabus onboarding without code changes; the copyright gate
 (D-0005) forbids inferring curricula or storing source material; least-privilege access and an
 immutable audit trail protect the catalogue surface; safe uniqueness avoids collapsing distinct

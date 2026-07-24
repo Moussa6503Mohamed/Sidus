@@ -55,6 +55,27 @@ const (
 	EventSyllabusUpdated EventType = "syllabus_updated"
 )
 
+// SubjectEventType is the kind of change recorded in a subject audit event.
+type SubjectEventType string
+
+const (
+	// EventSubjectCreated records the creation of a catalogue subject.
+	EventSubjectCreated SubjectEventType = "subject_created"
+)
+
+// SubjectEvent is an immutable audit record of a subject-catalogue mutation. It records which
+// fields were set (names only) and who set them (the verified Clerk subject) — never the field
+// values, and never any source material.
+type SubjectEvent struct {
+	ID            string           `json:"id"`
+	SubjectID     string           `json:"subjectId"`
+	EventType     SubjectEventType `json:"eventType"`
+	ActorID       string           `json:"actorId"`
+	EventTime     time.Time        `json:"eventTime"`
+	ChangedFields []string         `json:"changedFields"`
+	CreatedAt     time.Time        `json:"createdAt"`
+}
+
 // Event is an immutable audit record of a catalogue mutation. It records which fields were
 // set/changed (names only) and who changed them (the verified Clerk subject) — never the
 // field values, and never any source material.

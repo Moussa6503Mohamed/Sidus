@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,10 +49,11 @@ func (fakeVerifier) Verify(_ context.Context, token string) (auth.Claims, error)
 // memoryStore is an in-memory Store for handler tests. It mirrors PostgresStore's validation
 // semantics closely enough to exercise the handlers and role matrix without a live database.
 type memoryStore struct {
-	subjects   map[string]Subject
-	syllabuses map[string]Syllabus
-	events     []Event
-	nextID     int
+	subjects      map[string]Subject
+	syllabuses    map[string]Syllabus
+	events        []Event
+	subjectEvents []SubjectEvent
+	nextID        int
 }
 
 func newMemoryStore() *memoryStore {
@@ -71,6 +74,9 @@ func (m *memoryStore) CreateSubject(_ context.Context, in CreateSubjectInput) (S
 	now := time.Now().UTC()
 	s := Subject{ID: m.id("sub"), Name: in.Name, CreatedAt: now, UpdatedAt: now}
 	m.subjects[s.ID] = s
+	m.subjectEvents = append(m.subjectEvents, SubjectEvent{
+		SubjectID: s.ID, EventType: EventSubjectCreated, ActorID: in.ActorID, ChangedFields: []string{"name"},
+	})
 	return s, nil
 }
 
@@ -507,5 +513,170 @@ func TestCreateSyllabus_RejectsUnknownField(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (unknown field rejected)", resp.StatusCode)
+	}
+}
+
+// --- Subject audit ---
+
+// TestCreateSubject_Success_RecordsVerifiedSubjectEvent proves admin subject creation records a
+// subject_created event whose actor is the verified Clerk subject (never a body field), and
+// that changed_fields carries only field names, never the submitted value.
+func TestCreateSubject_Success_RecordsVerifiedSubjectEvent(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	resp := doJSON(t, http.MethodPost, srv.URL+"/catalogue/subjects", map[string]any{"name": "Chemistry"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	subject := decodeJSON[Subject](t, resp)
+
+	found := false
+	for _, e := range store.subjectEvents {
+		if e.SubjectID != subject.ID {
+			continue
+		}
+		found = true
+		if e.EventType != EventSubjectCreated {
+			t.Fatalf("event type = %q, want %q", e.EventType, EventSubjectCreated)
+		}
+		if e.ActorID != adminSubject {
+			t.Fatalf("event actor = %q, want %q (verified subject, not a body field)", e.ActorID, adminSubject)
+		}
+		if len(e.ChangedFields) != 1 || e.ChangedFields[0] != "name" {
+			t.Fatalf("changed fields = %v, want [\"name\"] (names only, never the value)", e.ChangedFields)
+		}
+		for _, f := range e.ChangedFields {
+			if f == "Chemistry" {
+				t.Fatal("changed_fields must never contain the submitted field value")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no subject_created event recorded for the created subject")
+	}
+}
+
+// TestCreateSubject_Duplicate_NoNewEventRecorded proves a rejected (duplicate) subject creation
+// records no new subject event.
+func TestCreateSubject_Duplicate_NoNewEventRecorded(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	resp := doJSON(t, http.MethodPost, srv.URL+"/catalogue/subjects", map[string]any{"name": "Physics"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	before := len(store.subjectEvents)
+
+	resp = doJSON(t, http.MethodPost, srv.URL+"/catalogue/subjects", map[string]any{"name": "Physics"})
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 duplicate_subject", resp.StatusCode)
+	}
+	if len(store.subjectEvents) != before {
+		t.Fatalf("subject event count = %d, want %d (duplicate create must record no event)", len(store.subjectEvents), before)
+	}
+}
+
+// TestCreateSubject_Unauthorized_NoEventRecorded proves an unauthenticated/unauthorized subject
+// creation attempt never reaches the store and records no subject event.
+func TestCreateSubject_Unauthorized_NoEventRecorded(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	for _, tc := range []struct {
+		token string
+		want  int
+	}{
+		{"", http.StatusUnauthorized},
+		{"bogus", http.StatusUnauthorized},
+		{learnerToken, http.StatusForbidden},
+		{editorToken, http.StatusForbidden},
+	} {
+		resp := doJSONAs(t, http.MethodPost, srv.URL+"/catalogue/subjects", tc.token, map[string]any{"name": "Geology"})
+		resp.Body.Close()
+		if resp.StatusCode != tc.want {
+			t.Fatalf("create as %q: got %d, want %d", tc.token, resp.StatusCode, tc.want)
+		}
+	}
+	if len(store.subjectEvents) != 0 {
+		t.Fatalf("subject event count = %d, want 0 (no unauthorized creation should reach the store)", len(store.subjectEvents))
+	}
+	if len(store.subjects) != 0 {
+		t.Fatalf("subject count = %d, want 0", len(store.subjects))
+	}
+}
+
+// --- internal_error must never leak raw infrastructure text ---
+
+// sensitiveErrText simulates a raw driver/infrastructure error containing details (DSN-like
+// text, table/column names) that must never reach an HTTP client.
+const sensitiveErrText = "pq: password authentication failed for user \"sidus_admin\" on host db.internal:5432 (table subjects)"
+
+// failingStore wraps memoryStore but forces every read/write to fail with a raw, detail-bearing
+// error, proving the handlers never forward err.Error() for infrastructure failures.
+type failingStore struct{ memoryStore }
+
+func newFailingStore() *failingStore { return &failingStore{memoryStore: *newMemoryStore()} }
+
+func (f *failingStore) ListSubjects(context.Context) ([]Subject, error) {
+	return nil, errors.New(sensitiveErrText)
+}
+func (f *failingStore) CreateSubject(context.Context, CreateSubjectInput) (Subject, error) {
+	return Subject{}, errors.New(sensitiveErrText)
+}
+func (f *failingStore) ListSyllabuses(context.Context, bool) ([]Syllabus, error) {
+	return nil, errors.New(sensitiveErrText)
+}
+func (f *failingStore) GetSyllabus(context.Context, string, bool) (Syllabus, error) {
+	return Syllabus{}, errors.New(sensitiveErrText)
+}
+func (f *failingStore) CreateSyllabus(context.Context, CreateSyllabusInput) (Syllabus, error) {
+	return Syllabus{}, errors.New(sensitiveErrText)
+}
+func (f *failingStore) UpdateSyllabus(context.Context, string, UpdateSyllabusInput) (Syllabus, error) {
+	return Syllabus{}, errors.New(sensitiveErrText)
+}
+
+func TestInternalError_NeverLeaksRawInfrastructureText(t *testing.T) {
+	store := newFailingStore()
+	// Seed one syllabus directly (bypassing the failing store) so update/get have a target id.
+	store.memoryStore.subjects["seed-subject"] = Subject{ID: "seed-subject", Name: "Seed"}
+	store.memoryStore.syllabuses["seed-syllabus"] = Syllabus{ID: "seed-syllabus", Status: StatusActive}
+
+	mux := http.NewServeMux()
+	Register(mux, store, fakeVerifier{})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cases := []struct {
+		method, path string
+		body         any
+	}{
+		{http.MethodGet, "/catalogue/subjects", nil},
+		{http.MethodPost, "/catalogue/subjects", map[string]any{"name": "Astronomy"}},
+		{http.MethodGet, "/catalogue/syllabuses", nil},
+		{http.MethodGet, "/catalogue/syllabuses/seed-syllabus", nil},
+		{http.MethodPost, "/catalogue/syllabuses", map[string]any{
+			"board": "X", "syllabusCode": "1", "subjectId": "seed-subject", "qualification": "Q", "displayName": "D",
+		}},
+		{http.MethodPatch, "/catalogue/syllabuses/seed-syllabus", map[string]any{"status": "retired"}},
+	}
+	for _, tc := range cases {
+		resp := doJSON(t, tc.method, srv.URL+tc.path, tc.body)
+		bodyBytes := decodeJSON[map[string]any](t, resp)
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("%s %s: status = %d, want 500", tc.method, tc.path, resp.StatusCode)
+		}
+		if bodyBytes["error"] != "internal_error" {
+			t.Fatalf("%s %s: error = %v, want internal_error", tc.method, tc.path, bodyBytes["error"])
+		}
+		msg, _ := bodyBytes["message"].(string)
+		if msg != internalErrorMessage {
+			t.Fatalf("%s %s: message = %q, want stable generic message %q", tc.method, tc.path, msg, internalErrorMessage)
+		}
+		if strings.Contains(msg, "password") || strings.Contains(msg, "sidus_admin") || strings.Contains(msg, "db.internal") {
+			t.Fatalf("%s %s: message leaked raw infrastructure text: %q", tc.method, tc.path, msg)
+		}
 	}
 }

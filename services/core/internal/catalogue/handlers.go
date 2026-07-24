@@ -28,6 +28,11 @@ type handler struct {
 	store Store
 }
 
+// internalErrorMessage is the only text ever returned for database, scan, transaction, or
+// other infrastructure failures. Raw Go/driver error text (queries, DSNs, constraint/table
+// names) must never reach an HTTP response.
+const internalErrorMessage = "an internal error occurred"
+
 func actorFromContext(r *http.Request) (string, bool) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok || strings.TrimSpace(claims.Subject) == "" {
@@ -56,7 +61,7 @@ func decodeStrict(w http.ResponseWriter, r *http.Request, dst any) bool {
 func (h *handler) listSubjects(w http.ResponseWriter, r *http.Request) {
 	subjects, err := h.store.ListSubjects(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": subjects})
@@ -87,7 +92,7 @@ func (h *handler) createSubject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
 		return
 	}
 	writeJSON(w, http.StatusCreated, subject)
@@ -97,7 +102,7 @@ func (h *handler) listSyllabuses(w http.ResponseWriter, r *http.Request) {
 	// Readers only ever see active syllabuses.
 	syllabuses, err := h.store.ListSyllabuses(r.Context(), true)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": syllabuses})
@@ -110,7 +115,7 @@ func (h *handler) getSyllabus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
 		return
 	}
 	writeJSON(w, http.StatusOK, syllabus)
@@ -192,7 +197,7 @@ func (h *handler) createSyllabus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unknown_subject", "subjectId does not reference an existing subject")
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
 		return
 	}
 	writeJSON(w, http.StatusCreated, syllabus)
@@ -289,7 +294,7 @@ func (h *handler) updateSyllabus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "no_changes", "supplied values match the current stored values; nothing to update")
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
 		return
 	}
 	writeJSON(w, http.StatusOK, syllabus)

@@ -42,7 +42,13 @@ func scanSyllabus(row interface{ Scan(...any) error }) (Syllabus, error) {
 }
 
 func (p *PostgresStore) CreateSubject(ctx context.Context, in CreateSubjectInput) (Subject, error) {
-	row := p.db.QueryRowContext(ctx,
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Subject{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	row := tx.QueryRowContext(ctx,
 		`INSERT INTO subjects (name) VALUES ($1) RETURNING `+subjectColumns, in.Name,
 	)
 	subject, err := scanSubject(row)
@@ -52,6 +58,17 @@ func (p *PostgresStore) CreateSubject(ctx context.Context, in CreateSubjectInput
 			return Subject{}, ErrDuplicateSubject
 		}
 		return Subject{}, fmt.Errorf("insert subject: %w", err)
+	}
+
+	// Subject creation and its audit event are one transaction: a failed audit insert rolls
+	// back the subject row (deferred tx.Rollback above), so no subject can exist without a
+	// corresponding subject_created event.
+	if err := insertSubjectEvent(ctx, tx, subject.ID, EventSubjectCreated, in.ActorID, []string{"name"}); err != nil {
+		return Subject{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Subject{}, fmt.Errorf("commit: %w", err)
 	}
 	return subject, nil
 }
@@ -277,6 +294,17 @@ func insertEvent(ctx context.Context, tx *sql.Tx, syllabusID string, eventType E
 		syllabusID, eventType, actor, pq.Array(changed),
 	); err != nil {
 		return fmt.Errorf("insert syllabus event: %w", err)
+	}
+	return nil
+}
+
+func insertSubjectEvent(ctx context.Context, tx *sql.Tx, subjectID string, eventType SubjectEventType, actor string, changed []string) error {
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO subject_events (subject_id, event_type, actor_id, changed_fields)
+		VALUES ($1, $2, $3, $4)`,
+		subjectID, eventType, actor, pq.Array(changed),
+	); err != nil {
+		return fmt.Errorf("insert subject event: %w", err)
 	}
 	return nil
 }

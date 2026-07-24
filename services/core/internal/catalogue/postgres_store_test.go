@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 // These integration tests run against a real, disposable PostgreSQL instance that has had the
@@ -180,3 +180,87 @@ func TestPostgres_Integration_ContentSourceFKColumn(t *testing.T) {
 }
 
 func statusPtr(s SyllabusStatus) *SyllabusStatus { return &s }
+
+// TestPostgres_Integration_SubjectAuditAndImmutability confirms admin subject creation records
+// a subject_created event with the verified actor and names-only changed_fields, that a
+// duplicate (rejected) creation records no event, and that subject_events rows are immutable
+// (UPDATE and DELETE both rejected by the trigger).
+func TestPostgres_Integration_SubjectAuditAndImmutability(t *testing.T) {
+	db := openTestDB(t)
+	store := NewPostgresStore(db)
+	ctx := context.Background()
+
+	name := "Physics " + time.Now().Format("150405.000000000")
+	subject, err := store.CreateSubject(ctx, CreateSubjectInput{ActorID: "admin-subject", Name: name})
+	if err != nil {
+		t.Fatalf("create subject: %v", err)
+	}
+	// No cleanup: this created an immutable subject_events row (disposable DB, destroyed after).
+
+	var actorID string
+	var changedFields []string
+	var eventType string
+	if err := db.QueryRowContext(ctx,
+		`SELECT actor_id, event_type, changed_fields FROM subject_events WHERE subject_id = $1`, subject.ID,
+	).Scan(&actorID, &eventType, pq.Array(&changedFields)); err != nil {
+		t.Fatalf("query subject event: %v", err)
+	}
+	if actorID != "admin-subject" {
+		t.Fatalf("actor_id = %q, want %q (verified subject)", actorID, "admin-subject")
+	}
+	if eventType != string(EventSubjectCreated) {
+		t.Fatalf("event_type = %q, want %q", eventType, EventSubjectCreated)
+	}
+	if len(changedFields) != 1 || changedFields[0] != "name" {
+		t.Fatalf("changed_fields = %v, want [\"name\"] (names only, never the value)", changedFields)
+	}
+	for _, f := range changedFields {
+		if f == name {
+			t.Fatal("changed_fields must never contain the submitted subject name")
+		}
+	}
+
+	// A duplicate (rejected) subject creation records no new event.
+	var beforeCount int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM subject_events`).Scan(&beforeCount); err != nil {
+		t.Fatalf("count events before: %v", err)
+	}
+	if _, err := store.CreateSubject(ctx, CreateSubjectInput{ActorID: "admin-subject", Name: name}); !errors.Is(err, ErrDuplicateSubject) {
+		t.Fatalf("duplicate create: err = %v, want ErrDuplicateSubject", err)
+	}
+	var afterCount int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM subject_events`).Scan(&afterCount); err != nil {
+		t.Fatalf("count events after: %v", err)
+	}
+	if afterCount != beforeCount {
+		t.Fatalf("subject_events count = %d, want %d (duplicate create must record no event)", afterCount, beforeCount)
+	}
+
+	// subject_events rows are immutable even against direct SQL.
+	if _, err := db.ExecContext(ctx, `UPDATE subject_events SET actor_id = 'tampered' WHERE subject_id = $1`, subject.ID); err == nil {
+		t.Fatal("expected UPDATE on subject_events to be rejected by the immutability trigger")
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM subject_events WHERE subject_id = $1`, subject.ID); err == nil {
+		t.Fatal("expected DELETE on subject_events to be rejected by the immutability trigger")
+	}
+}
+
+// TestPostgres_Integration_SeededBiologySubject_NoSubjectEvent confirms the seed exception: the
+// Biology subject seeded by migration 0007 was inserted via plain SQL (not the CreateSubject
+// application path), so it carries no subject_events row and no invented actor id.
+func TestPostgres_Integration_SeededBiologySubject_NoSubjectEvent(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	var subjectID string
+	if err := db.QueryRowContext(ctx, `SELECT id FROM subjects WHERE name = 'Biology'`).Scan(&subjectID); err != nil {
+		t.Fatalf("find Biology subject: %v", err)
+	}
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM subject_events WHERE subject_id = $1`, subjectID).Scan(&count); err != nil {
+		t.Fatalf("count subject events: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("seeded Biology subject_events count = %d, want 0 (bootstrap seed, not a human-actor event)", count)
+	}
+}
