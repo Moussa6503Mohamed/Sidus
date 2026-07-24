@@ -8,7 +8,43 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/auth"
 )
+
+// fakeVerifier maps opaque test tokens to verified claims so handler tests exercise the
+// real auth middleware and role matrix without any live Clerk instance or cryptography.
+// Any unknown token verifies as invalid (mirrors a missing/expired/forged token -> 401).
+type fakeVerifier struct{}
+
+const (
+	adminToken    = "admin-token"
+	editorToken   = "editor-token"
+	reviewerToken = "reviewer-token"
+	learnerToken  = "learner-token"
+	noRoleToken   = "norole-token"
+
+	adminSubject    = "user_admin"
+	editorSubject   = "user_editor"
+	reviewerSubject = "user_reviewer"
+)
+
+func (fakeVerifier) Verify(_ context.Context, token string) (auth.Claims, error) {
+	switch token {
+	case adminToken:
+		return auth.Claims{Subject: adminSubject, Role: auth.RoleAdmin}, nil
+	case editorToken:
+		return auth.Claims{Subject: editorSubject, Role: auth.RoleEditor}, nil
+	case reviewerToken:
+		return auth.Claims{Subject: reviewerSubject, Role: auth.RoleReviewer}, nil
+	case learnerToken:
+		return auth.Claims{Subject: "user_learner", Role: auth.RoleLearner}, nil
+	case noRoleToken:
+		return auth.Claims{Subject: "user_norole", Role: auth.RoleUnknown}, nil
+	default:
+		return auth.Claims{}, auth.ErrInvalidToken
+	}
+}
 
 // memoryStore is an in-memory Store used only for handler tests, so they run without a
 // live Postgres instance. It mirrors PostgresStore's validation semantics.
@@ -165,13 +201,21 @@ func (m *memoryStore) Update(_ context.Context, id string, in UpdateInput) (Sour
 func newTestServer() (*httptest.Server, *memoryStore) {
 	store := newMemoryStore()
 	mux := http.NewServeMux()
-	Register(mux, store)
+	Register(mux, store, fakeVerifier{})
 	return httptest.NewServer(mux), store
 }
 
 func strPtr(s string) *string { return &s }
 
+// doJSON issues a request authenticated as an admin (full content-source permissions), so
+// behavior tests focus on business rules rather than auth. Auth-specific tests use doJSONAs.
 func doJSON(t *testing.T, method, url string, body any) *http.Response {
+	return doJSONAs(t, method, url, adminToken, body)
+}
+
+// doJSONAs issues a request bearing the given token. An empty token sends no Authorization
+// header (the missing-token case).
+func doJSONAs(t *testing.T, method, url, token string, body any) *http.Response {
 	t.Helper()
 	var reader *bytes.Reader
 	if body != nil {
@@ -188,6 +232,9 @@ func doJSON(t *testing.T, method, url string, body any) *http.Response {
 		t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("do request: %v", err)
@@ -279,7 +326,7 @@ func TestApprove_MissingRightsFields(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources/"+source.ID+"/approve", reviewRequest{ReviewerID: "reviewer-1"})
+	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources/"+source.ID+"/approve", reviewRequest{})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUnprocessableEntity)
 	}
@@ -311,7 +358,7 @@ func TestApprove_SucceedsWhenAllRightsFieldsPresent(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources/"+source.ID+"/approve", reviewRequest{ReviewerID: "reviewer-1"})
+	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources/"+source.ID+"/approve", reviewRequest{})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
@@ -334,7 +381,7 @@ func TestApprove_NotPending(t *testing.T) {
 		t.Fatalf("reject: %v", err)
 	}
 
-	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources/"+source.ID+"/approve", reviewRequest{ReviewerID: "reviewer-1"})
+	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources/"+source.ID+"/approve", reviewRequest{})
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusConflict)
 	}
@@ -350,6 +397,8 @@ func TestReject_RequiresReasonAndReviewer(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
+	// Reviewer identity now comes from the verified session, so a reject with no reason is
+	// the only missing-field case left at the HTTP boundary.
 	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources/"+source.ID+"/reject", reviewRequest{})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
@@ -374,7 +423,7 @@ func TestApprove_WhitespaceOnlyRightsFieldsCannotPass(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources/"+source.ID+"/approve", reviewRequest{ReviewerID: "reviewer-1"})
+	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources/"+source.ID+"/approve", reviewRequest{})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUnprocessableEntity)
 	}
@@ -488,7 +537,6 @@ func TestUpdate_Success(t *testing.T) {
 	}
 
 	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
-		ActorID:          strPtr("curator-1"),
 		Owner:            strPtr("Cambridge Assessment International Education"),
 		LicenceReference: strPtr("CAIE-PUBLIC-SYLLABUS-2026"),
 	})
@@ -515,9 +563,8 @@ func TestUpdate_CreatesImmutableEvent(t *testing.T) {
 	}
 
 	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
-		ActorID: strPtr("curator-1"),
-		Owner:   strPtr("CAIE"),
-		Title:   strPtr("Cambridge IGCSE Biology 0610 syllabus"),
+		Owner: strPtr("CAIE"),
+		Title: strPtr("Cambridge IGCSE Biology 0610 syllabus"),
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
@@ -529,8 +576,9 @@ func TestUpdate_CreatesImmutableEvent(t *testing.T) {
 	if ev.EventType != EventMetadataUpdated {
 		t.Fatalf("eventType = %q, want %q", ev.EventType, EventMetadataUpdated)
 	}
-	if ev.ActorID != "curator-1" {
-		t.Fatalf("actorId = %q, want curator-1", ev.ActorID)
+	// Actor is the verified Clerk subject of the request (admin token), never a body field.
+	if ev.ActorID != adminSubject {
+		t.Fatalf("actorId = %q, want %q (verified subject)", ev.ActorID, adminSubject)
 	}
 	want := []string{"title", "owner"}
 	if len(ev.ChangedFields) != len(want) {
@@ -551,8 +599,7 @@ func TestUpdate_WhitespaceOnlyValue_Returns400(t *testing.T) {
 	source, _ := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-ws"})
 
 	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
-		ActorID: strPtr("curator-1"),
-		Owner:   strPtr("   "),
+		Owner: strPtr("   "),
 	})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
@@ -570,7 +617,6 @@ func TestUpdate_InvalidSyllabusCode_Returns400(t *testing.T) {
 	source, _ := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-syl"})
 
 	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
-		ActorID:      strPtr("curator-1"),
 		SyllabusCode: strPtr("9999"),
 	})
 	if resp.StatusCode != http.StatusBadRequest {
@@ -591,7 +637,6 @@ func TestUpdate_InvalidSourceURL_Returns400(t *testing.T) {
 
 	for _, bad := range []string{"not-a-url", "ftp://example.org/x", "//example.org/x", "example.org/x"} {
 		resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
-			ActorID:   strPtr("curator-1"),
 			SourceURL: strPtr(bad),
 		})
 		if resp.StatusCode != http.StatusBadRequest {
@@ -613,7 +658,6 @@ func TestUpdate_DuplicateURL_Returns409(t *testing.T) {
 	target, _ := store.Create(ctx, CreateInput{Title: "B", SourceURL: "https://example.org/dup-b"})
 
 	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+target.ID, updateRequest{
-		ActorID:   strPtr("curator-1"),
 		SourceURL: strPtr("https://example.org/dup-a"),
 	})
 	if resp.StatusCode != http.StatusConflict {
@@ -636,8 +680,7 @@ func TestUpdate_NonPending_Returns409(t *testing.T) {
 	}
 
 	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
-		ActorID: strPtr("curator-1"),
-		Owner:   strPtr("CAIE"),
+		Owner: strPtr("CAIE"),
 	})
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusConflict)
@@ -645,28 +688,6 @@ func TestUpdate_NonPending_Returns409(t *testing.T) {
 	body := decodeJSON[map[string]any](t, resp)
 	if body["error"] != "invalid_status_transition" {
 		t.Fatalf("error = %v", body["error"])
-	}
-}
-
-func TestUpdate_MissingActorID_Returns400(t *testing.T) {
-	srv, store := newTestServer()
-	defer srv.Close()
-
-	ctx := context.Background()
-	source, _ := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-actor"})
-
-	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
-		Owner: strPtr("CAIE"),
-	})
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
-	}
-	body := decodeJSON[map[string]any](t, resp)
-	if body["error"] != "missing_required_fields" {
-		t.Fatalf("error = %v", body["error"])
-	}
-	if len(store.events) != 0 {
-		t.Fatalf("events = %d, want 0", len(store.events))
 	}
 }
 
@@ -685,7 +706,6 @@ func TestUpdate_MixedSameAndNewValues_RecordsOnlyChangedFields(t *testing.T) {
 	}
 
 	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
-		ActorID:          strPtr("curator-1"),
 		Owner:            strPtr("Cambridge Assessment International Education"), // same as stored
 		LicenceReference: strPtr("CAIE-PUBLIC-SYLLABUS-2026"),                    // new
 	})
@@ -722,9 +742,8 @@ func TestUpdate_AllSameValues_Returns400NoChanges(t *testing.T) {
 	}
 
 	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
-		ActorID: strPtr("curator-1"),
-		Title:   strPtr("Bio syllabus"),
-		Owner:   strPtr("Cambridge Assessment International Education"),
+		Title: strPtr("Bio syllabus"),
+		Owner: strPtr("Cambridge Assessment International Education"),
 	})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
@@ -754,8 +773,7 @@ func TestUpdate_NoChangeRequest_NoEventAndNoUpdatedAtChange(t *testing.T) {
 	}
 
 	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
-		ActorID: strPtr("curator-1"),
-		Owner:   strPtr("Cambridge Assessment International Education"),
+		Owner: strPtr("Cambridge Assessment International Education"),
 	})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
@@ -779,9 +797,7 @@ func TestUpdate_NoUpdatableFields_Returns400(t *testing.T) {
 	ctx := context.Background()
 	source, _ := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-empty"})
 
-	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
-		ActorID: strPtr("curator-1"),
-	})
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
 	}
@@ -801,12 +817,194 @@ func TestReject_Success(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources/"+source.ID+"/reject", reviewRequest{ReviewerID: "reviewer-1", Reason: "licence unclear"})
+	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources/"+source.ID+"/reject", reviewRequest{Reason: "licence unclear"})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 	rejected := decodeJSON[Source](t, resp)
 	if rejected.Status != StatusRejected {
 		t.Fatalf("status = %q, want rejected", rejected.Status)
+	}
+}
+
+// --- Authentication and authorization (T-0003) ---
+
+// TestAuth_MissingToken_401 covers every content-source endpoint refusing an unauthenticated
+// request before any handler logic runs.
+func TestAuth_MissingToken_401(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	cases := []struct {
+		method, path string
+		body         any
+	}{
+		{http.MethodPost, "/content-sources", createRequest{Title: "x", SourceURL: "https://example.org/x"}},
+		{http.MethodGet, "/content-sources", nil},
+		{http.MethodGet, "/content-sources/some-id", nil},
+		{http.MethodPatch, "/content-sources/some-id", updateRequest{Owner: strPtr("x")}},
+		{http.MethodPost, "/content-sources/some-id/approve", reviewRequest{}},
+		{http.MethodPost, "/content-sources/some-id/reject", reviewRequest{Reason: "x"}},
+	}
+	for _, c := range cases {
+		resp := doJSONAs(t, c.method, srv.URL+c.path, "", c.body)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s %s: status = %d, want 401", c.method, c.path, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+}
+
+// TestAuth_InvalidToken_401 covers an unrecognized/forged token being rejected.
+func TestAuth_InvalidToken_401(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	resp := doJSONAs(t, http.MethodGet, srv.URL+"/content-sources", "forged-token", nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "invalid_token" {
+		t.Fatalf("error = %v, want invalid_token", body["error"])
+	}
+}
+
+// TestAuth_LearnerForbidden_403 covers a valid session whose role has no content-source
+// access being denied on every endpoint.
+func TestAuth_LearnerForbidden_403(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/learner"})
+
+	cases := []struct {
+		method, path string
+		body         any
+	}{
+		{http.MethodPost, "/content-sources", createRequest{Title: "x", SourceURL: "https://example.org/lx"}},
+		{http.MethodGet, "/content-sources", nil},
+		{http.MethodGet, "/content-sources/" + src.ID, nil},
+		{http.MethodPatch, "/content-sources/" + src.ID, updateRequest{Owner: strPtr("x")}},
+		{http.MethodPost, "/content-sources/" + src.ID + "/approve", reviewRequest{}},
+		{http.MethodPost, "/content-sources/" + src.ID + "/reject", reviewRequest{Reason: "x"}},
+	}
+	for _, c := range cases {
+		resp := doJSONAs(t, c.method, srv.URL+c.path, learnerToken, c.body)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s %s: status = %d, want 403", c.method, c.path, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+}
+
+// TestAuth_MissingRole_403 covers a valid session with a missing/unknown role being denied
+// by default.
+func TestAuth_MissingRole_403(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	resp := doJSONAs(t, http.MethodGet, srv.URL+"/content-sources", noRoleToken, nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// TestAuth_EditorPermissions covers editor being able to read/create/update but not
+// approve/reject.
+func TestAuth_EditorPermissions(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/editor"})
+
+	// Allowed: list.
+	if resp := doJSONAs(t, http.MethodGet, srv.URL+"/content-sources", editorToken, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("editor list: status = %d, want 200", resp.StatusCode)
+	}
+	// Allowed: create.
+	if resp := doJSONAs(t, http.MethodPost, srv.URL+"/content-sources", editorToken, createRequest{Title: "New", SourceURL: "https://example.org/editor-new"}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("editor create: status = %d, want 201", resp.StatusCode)
+	}
+	// Allowed: update.
+	if resp := doJSONAs(t, http.MethodPatch, srv.URL+"/content-sources/"+src.ID, editorToken, updateRequest{Owner: strPtr("CAIE")}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("editor update: status = %d, want 200", resp.StatusCode)
+	}
+	// Forbidden: approve and reject.
+	if resp := doJSONAs(t, http.MethodPost, srv.URL+"/content-sources/"+src.ID+"/approve", editorToken, reviewRequest{}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("editor approve: status = %d, want 403", resp.StatusCode)
+	}
+	if resp := doJSONAs(t, http.MethodPost, srv.URL+"/content-sources/"+src.ID+"/reject", editorToken, reviewRequest{Reason: "x"}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("editor reject: status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// TestAuth_ReviewerPermissions covers reviewer having editor permissions plus reject/approve.
+func TestAuth_ReviewerPermissions(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/reviewer"})
+
+	// Allowed: update (editor permission).
+	if resp := doJSONAs(t, http.MethodPatch, srv.URL+"/content-sources/"+src.ID, reviewerToken, updateRequest{Owner: strPtr("CAIE")}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("reviewer update: status = %d, want 200", resp.StatusCode)
+	}
+	// Allowed: reject.
+	if resp := doJSONAs(t, http.MethodPost, srv.URL+"/content-sources/"+src.ID+"/reject", reviewerToken, reviewRequest{Reason: "licence unclear"}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("reviewer reject: status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestAuth_AdminPermissions covers admin being able to approve (all permissions).
+func TestAuth_AdminPermissions(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{
+		Title:            "Bio",
+		SourceURL:        "https://example.org/admin",
+		Owner:            strPtr("CAIE"),
+		SourceHash:       strPtr("sha256:abc"),
+		LicenceReference: strPtr("REF"),
+		PermittedUse:     strPtr("metadata only"),
+		AllowedAudience:  strPtr("internal"),
+	})
+
+	if resp := doJSONAs(t, http.MethodPost, srv.URL+"/content-sources/"+src.ID+"/approve", adminToken, reviewRequest{}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("admin approve: status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// TestUpdate_ActorFromVerifiedSubject proves the audit actor is the verified subject and can
+// never be spoofed from the request body.
+func TestUpdate_ActorFromVerifiedSubject(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/actor-subject"})
+
+	resp := doJSONAs(t, http.MethodPatch, srv.URL+"/content-sources/"+src.ID, editorToken, updateRequest{Owner: strPtr("CAIE")})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if len(store.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(store.events))
+	}
+	if store.events[0].ActorID != editorSubject {
+		t.Fatalf("actorId = %q, want %q (verified subject)", store.events[0].ActorID, editorSubject)
+	}
+}
+
+// TestReject_ReviewerFromVerifiedSubject proves the review reviewer is the verified subject.
+func TestReject_ReviewerFromVerifiedSubject(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/reviewer-subject"})
+
+	resp := doJSONAs(t, http.MethodPost, srv.URL+"/content-sources/"+src.ID+"/reject", reviewerToken, reviewRequest{Reason: "licence unclear"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if len(store.reviews) != 1 {
+		t.Fatalf("reviews = %d, want 1", len(store.reviews))
+	}
+	if store.reviews[0].ReviewerID != reviewerSubject {
+		t.Fatalf("reviewerId = %q, want %q (verified subject)", store.reviews[0].ReviewerID, reviewerSubject)
 	}
 }

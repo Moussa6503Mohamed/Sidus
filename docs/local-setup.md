@@ -18,7 +18,15 @@ docker run --rm --network sidus_default -v "$(pwd)/services/core:/app" -w /app \
   golang:1.22-alpine go run ./cmd/migrate
 ```
 
-See `infra/README.md` for details. `services/core` only mounts the `/content-sources` endpoints when `DATABASE_URL` is set.
+See `infra/README.md` for details. `services/core` mounts the `/content-sources` endpoints
+only when **both** `DATABASE_URL` and `CLERK_SECRET_KEY` are set (fail closed — no
+unauthenticated content access).
+
+## Authentication (Clerk)
+
+Clerk owns authentication; Sidus Core owns authorization. Set up keys and the `sidus_role`
+claim per `docs/auth-setup.md`. Real keys live only in **gitignored** `.env.local` files —
+never in `.env.example`. For the web app create `apps/web/.env.local` with your Clerk keys.
 
 ## Run
 

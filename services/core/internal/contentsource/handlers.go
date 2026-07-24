@@ -7,17 +7,32 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/auth"
 )
 
-// Register mounts the content source HTTP endpoints on mux.
-func Register(mux *http.ServeMux, store Store) {
+// Register mounts the content source HTTP endpoints on mux. Every endpoint requires a valid
+// Clerk session (verified by v) and the role permission listed against it; there is no
+// unauthenticated content-source access. The authenticated Clerk subject — never a
+// request-body field — is used as the audit actor/reviewer.
+func Register(mux *http.ServeMux, store Store, v auth.Verifier) {
 	h := &handler{store: store}
-	mux.HandleFunc("POST /content-sources", h.create)
-	mux.HandleFunc("GET /content-sources", h.list)
-	mux.HandleFunc("GET /content-sources/{id}", h.get)
-	mux.HandleFunc("PATCH /content-sources/{id}", h.update)
-	mux.HandleFunc("POST /content-sources/{id}/approve", h.approve)
-	mux.HandleFunc("POST /content-sources/{id}/reject", h.reject)
+	mux.HandleFunc("POST /content-sources", auth.Protect(v, auth.PermCreateSource, h.create))
+	mux.HandleFunc("GET /content-sources", auth.Protect(v, auth.PermReadSource, h.list))
+	mux.HandleFunc("GET /content-sources/{id}", auth.Protect(v, auth.PermReadSource, h.get))
+	mux.HandleFunc("PATCH /content-sources/{id}", auth.Protect(v, auth.PermUpdateSource, h.update))
+	mux.HandleFunc("POST /content-sources/{id}/approve", auth.Protect(v, auth.PermReviewSource, h.approve))
+	mux.HandleFunc("POST /content-sources/{id}/reject", auth.Protect(v, auth.PermReviewSource, h.reject))
+}
+
+// actorFromContext returns the verified Clerk subject that Protect placed on the request
+// context. Handlers use it as the audit actor/reviewer; it is never taken from the body.
+func actorFromContext(r *http.Request) (string, bool) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || strings.TrimSpace(claims.Subject) == "" {
+		return "", false
+	}
+	return claims.Subject, true
 }
 
 type handler struct {
@@ -94,8 +109,9 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, source)
 }
 
+// updateRequest carries only metadata fields. The actor is never accepted from the body; it
+// is derived from the verified Clerk session subject.
 type updateRequest struct {
-	ActorID          *string `json:"actorId"`
 	Title            *string `json:"title"`
 	Owner            *string `json:"owner"`
 	SourceURL        *string `json:"sourceUrl"`
@@ -109,14 +125,15 @@ type updateRequest struct {
 func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	var req updateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+	actor, ok := actorFromContext(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "invalid_token", "authenticated subject required")
 		return
 	}
 
-	if req.ActorID == nil || strings.TrimSpace(*req.ActorID) == "" {
-		writeMissingFields(w, http.StatusBadRequest, []string{"actorId"})
+	var req updateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
 		return
 	}
 
@@ -165,7 +182,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	source, _, err := h.store.Update(r.Context(), id, UpdateInput{
-		ActorID:          strings.TrimSpace(*req.ActorID),
+		ActorID:          actor,
 		Title:            req.Title,
 		Owner:            req.Owner,
 		SourceURL:        req.SourceURL,
@@ -219,8 +236,9 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": sources})
 }
 
+// reviewRequest carries only the decision metadata. The reviewer is never accepted from the
+// body; it is derived from the verified Clerk session subject.
 type reviewRequest struct {
-	ReviewerID   string  `json:"reviewerId"`
 	Reason       string  `json:"reason"`
 	DecisionDate *string `json:"decisionDate"`
 }
@@ -235,13 +253,15 @@ func (req reviewRequest) decisionDate() (time.Time, error) {
 func (h *handler) approve(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
+	reviewer, ok := actorFromContext(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "invalid_token", "authenticated subject required")
+		return
+	}
+
 	var req reviewRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
-		return
-	}
-	if strings.TrimSpace(req.ReviewerID) == "" {
-		writeMissingFields(w, http.StatusBadRequest, []string{"reviewerId"})
 		return
 	}
 	decisionDate, err := req.decisionDate()
@@ -251,7 +271,7 @@ func (h *handler) approve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	source, missing, err := h.store.Approve(r.Context(), id, ApproveInput{
-		ReviewerID:   req.ReviewerID,
+		ReviewerID:   reviewer,
 		DecisionDate: decisionDate,
 	})
 	switch {
@@ -277,21 +297,20 @@ func (h *handler) approve(w http.ResponseWriter, r *http.Request) {
 func (h *handler) reject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
+	reviewer, ok := actorFromContext(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "invalid_token", "authenticated subject required")
+		return
+	}
+
 	var req reviewRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
 		return
 	}
 
-	var missing []string
-	if strings.TrimSpace(req.ReviewerID) == "" {
-		missing = append(missing, "reviewerId")
-	}
 	if strings.TrimSpace(req.Reason) == "" {
-		missing = append(missing, "reason")
-	}
-	if len(missing) > 0 {
-		writeMissingFields(w, http.StatusBadRequest, missing)
+		writeMissingFields(w, http.StatusBadRequest, []string{"reason"})
 		return
 	}
 
@@ -302,7 +321,7 @@ func (h *handler) reject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	source, err := h.store.Reject(r.Context(), id, RejectInput{
-		ReviewerID:   req.ReviewerID,
+		ReviewerID:   reviewer,
 		Reason:       req.Reason,
 		DecisionDate: decisionDate,
 	})

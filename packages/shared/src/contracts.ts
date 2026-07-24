@@ -67,13 +67,13 @@ export interface CreateContentSourceRequest {
   syllabusCode?: SyllabusCode;
 }
 
+// Approve/reject/update requests carry NO caller-supplied identity. The reviewer/actor is
+// derived server-side from the verified Clerk session subject (see AuthenticatedRequest).
 export interface ApproveContentSourceRequest {
-  reviewerId: string;
   decisionDate?: string;
 }
 
 export interface RejectContentSourceRequest {
-  reviewerId: string;
   reason: string;
   decisionDate?: string;
 }
@@ -103,11 +103,11 @@ export type UpdatableContentSourceField =
   (typeof UPDATABLE_CONTENT_SOURCE_FIELDS)[number];
 
 /**
- * Update a pending content source. `actorId` is required. At least one updatable field
- * must be supplied; supplied fields must be non-empty. Only pending sources may be updated.
+ * Update a pending content source. At least one updatable field must be supplied; supplied
+ * fields must be non-empty. Only pending sources may be updated. The actor is derived from
+ * the verified Clerk session subject — never a request-body field.
  */
 export interface UpdateContentSourceRequest {
-  actorId: string;
   title?: string;
   owner?: string;
   sourceUrl?: string;
@@ -132,4 +132,28 @@ export interface ContentSourceEvent {
   eventTime: string;
   changedFields: UpdatableContentSourceField[];
   createdAt: string;
+}
+
+// --- Authentication and roles (T-0003) ---
+// Clerk owns authentication; Sidus Core owns authorization. Every content-source request
+// carries a verified Clerk session as `Authorization: Bearer <token>`; the authenticated
+// subject (never a body field) becomes the audit actor/reviewer. Authorization derives from
+// the verified `sidus_role` session claim. Mirrors services/core/internal/auth and
+// services/ai/app/auth.py.
+
+/** Sidus authorization roles, sourced from the verified `sidus_role` session claim. */
+export const SIDUS_ROLES = ["learner", "editor", "reviewer", "admin"] as const;
+
+/** A known Sidus role. A missing/unrecognized claim is denied by default (no access). */
+export type SidusRole = (typeof SIDUS_ROLES)[number];
+
+/** The Clerk session claim name that carries the Sidus role. */
+export const SIDUS_ROLE_CLAIM = "sidus_role";
+
+/**
+ * Every content-source request must be authenticated with a Clerk session bearer token in
+ * the `Authorization` header. There is no caller-supplied actor/reviewer field.
+ */
+export interface AuthenticatedRequestHeaders {
+  Authorization: `Bearer ${string}`;
 }
