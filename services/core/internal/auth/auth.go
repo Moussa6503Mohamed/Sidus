@@ -48,6 +48,12 @@ const (
 	PermReadCatalogue Permission = "content_catalogue:read"
 	// PermManageCatalogue covers creating and changing curriculum-catalogue metadata (admin only).
 	PermManageCatalogue Permission = "content_catalogue:manage"
+	// PermReadCurriculumMap covers listing/getting verified curriculum-map nodes by syllabus.
+	PermReadCurriculumMap Permission = "curriculum_map:read"
+	// PermCreateCurriculumMap covers creating and PATCHing draft curriculum-map nodes.
+	PermCreateCurriculumMap Permission = "curriculum_map:create"
+	// PermVerifyCurriculumMap covers verifying and retiring curriculum-map nodes.
+	PermVerifyCurriculumMap Permission = "curriculum_map:verify"
 )
 
 // rolePermissions is the least-privilege matrix. A role absent from this map, or the
@@ -55,25 +61,33 @@ const (
 var rolePermissions = map[Role]map[Permission]bool{
 	RoleLearner: {},
 	RoleEditor: {
-		PermReadSource:    true,
-		PermCreateSource:  true,
-		PermUpdateSource:  true,
-		PermReadCatalogue: true,
+		PermReadSource:          true,
+		PermCreateSource:        true,
+		PermUpdateSource:        true,
+		PermReadCatalogue:       true,
+		PermReadCurriculumMap:   true,
+		PermCreateCurriculumMap: true,
 	},
 	RoleReviewer: {
-		PermReadSource:    true,
-		PermCreateSource:  true,
-		PermUpdateSource:  true,
-		PermReviewSource:  true,
-		PermReadCatalogue: true,
+		PermReadSource:          true,
+		PermCreateSource:        true,
+		PermUpdateSource:        true,
+		PermReviewSource:        true,
+		PermReadCatalogue:       true,
+		PermReadCurriculumMap:   true,
+		PermCreateCurriculumMap: true,
+		PermVerifyCurriculumMap: true,
 	},
 	RoleAdmin: {
-		PermReadSource:      true,
-		PermCreateSource:    true,
-		PermUpdateSource:    true,
-		PermReviewSource:    true,
-		PermReadCatalogue:   true,
-		PermManageCatalogue: true,
+		PermReadSource:          true,
+		PermCreateSource:        true,
+		PermUpdateSource:        true,
+		PermReviewSource:        true,
+		PermReadCatalogue:       true,
+		PermManageCatalogue:     true,
+		PermReadCurriculumMap:   true,
+		PermCreateCurriculumMap: true,
+		PermVerifyCurriculumMap: true,
 	},
 }
 

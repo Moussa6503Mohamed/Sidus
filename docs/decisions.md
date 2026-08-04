@@ -105,6 +105,54 @@ is unchanged (still only `syllabusCode`, resolved server-side); no new endpoint,
 supplied catalogue ID, no auto-linking outside an explicit authenticated `PATCH` from an
 editor/reviewer/admin. See [provenance-catalogue-linking.md](provenance-catalogue-linking.md).
 
+## D-0008 — Curriculum-map authority and source gate
+
+**Status:** Approved
+**Decision:** Sidus Core owns a metadata-only curriculum map: normalized `curriculum_map_nodes`
+(plus an immutable `curriculum_map_events` audit trail) hold topic/objective/practical-skill/
+assessment-rule structure for a syllabus, scoped under the existing curriculum-catalogue
+`syllabuses` registry (D-0007). A node carries a stable id, syllabus FK, optional parent-node FK
+(same syllabus only), a `nodeKind` (`topic`/`objective`/`practical_skill`/`assessment_rule`), a
+stable per-syllabus `nodeCode`, an editorial `label`/summary placeholder for a future private
+approved authoring workflow, a lifecycle `status` (`draft`/`verified`/`retired`), a required
+approved `content_sources` FK, an optional `sourceLocator` reference string, and timestamps. The
+node table never stores syllabus text, objective wording, topic labels, assessment text,
+questions, mark schemes, or any other derivative content — `label`/`sourceLocator` are
+identity/reference metadata only, populated later by a private approved workflow outside this
+task's scope. Every node write (create, and any update that changes `contentSourceId`) is gated
+server-side by Core — the sole authority — verifying the referenced content source exists, is
+`approved`, and its `catalogue_syllabus_id` matches the node's syllabus; unknown/unapproved/
+unlinked/mismatched sources are rejected with a stable `400` before any write. Parent-same-
+syllabus and no-cycle-in-hierarchy are enforced at the application layer inside the same
+transaction as the write (row-locked ancestor walk), not by a DB trigger, so Core controls the
+exact `invalid_parent` error rather than parsing trigger-raised text; uniqueness of `nodeCode`
+per syllabus and the required source FK are DB constraints. `curriculum_map_events` mirrors
+`syllabus_events`/`content_source_events`: append-only, `BEFORE UPDATE OR DELETE` trigger,
+verified-Clerk-subject actor, changed-field-names only, no values. Least-privilege permissions
+`curriculum_map:read` (editor/reviewer/admin — verified nodes only), `curriculum_map:create`
+(editor/reviewer/admin — draft create/PATCH), `curriculum_map:verify` (reviewer/admin —
+verify/retire) are added to the existing role matrix; learner and unknown roles are denied. No
+map data is seeded: a human must first link/approve a content source (T-0001/T-0005), then
+author map content through a future private approved workflow.
+**Reason:** Topic maps/objectives/practical skills/assessment rules must be buildable without
+ever letting copyrighted syllabus/question text enter the repository (D-0005) or letting an
+unapproved/mismatched source ground a node (extends the T-0001 rights gate to a new content
+type); a single, explicit server-side gate — not a bare FK — is required because "approved" and
+"syllabus-matched" are point-in-time facts about another table a FK cannot express; least-
+privilege split (editor drafts, reviewer verifies) mirrors the existing content-source
+create/review split and lets an editorial pipeline exist before any public-facing map read
+surface.
+**Alternatives:** Enforce the source gate as a DB trigger (rejected: raw trigger-exception text
+would either leak or force fragile message-parsing to map to stable error codes, unlike the
+existing catalogue/content-source pattern of Go-layer validation before the write); allow the
+AI service to author/verify map nodes (rejected: Core remains the single content-authority, per
+D-0007's precedent); make `syllabusId` patchable on an existing node (rejected: would require
+re-validating an entire subtree's parent-syllabus consistency on every syllabus change — a new
+node under the correct syllabus is simpler and safer); seed placeholder topic/objective data for
+the D-0004 biology slice (rejected: no source has completed rights approval yet, so any seeded
+node would violate the source gate this task exists to enforce).
+**Owner/date:** Claude Code agent, 2026-08-04 (T-0006).
+
 ## Decision template
 
 ```md

@@ -57,4 +57,8 @@ cd services/ai && python -m pytest
 - Provenance-confirmed catalogue linking released in T-0005; see
   `docs/provenance-catalogue-linking.md`. Two seeded 0610/5090 content sources still need a
   human editor/admin `PATCH` to link (documented there).
-- No active task. See `docs/tasks/history.md`.
+- Curriculum-map foundation (metadata-only topic/objective/practical-skill/assessment-rule
+  infrastructure) built in T-0006; see `docs/curriculum-map.md` and D-0008. No map data is
+  seeded — a human must first approve and link a content source, then author map content via a
+  future private approved workflow.
+- Active task: T-0006 (status `review`). See `docs/tasks/active.md`.

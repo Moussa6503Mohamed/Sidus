@@ -244,3 +244,94 @@ export interface SyllabusEvent {
   changedFields: string[];
   createdAt: string;
 }
+
+// --- Curriculum map (T-0006) ---
+// Metadata-only infrastructure for topic maps, learning objectives, practical skills, and
+// assessment rules. Core is the sole authority — it enforces the source gate (approved,
+// syllabus-matched content source required) before any write. Never holds syllabus text,
+// objective wording, topic labels, assessment text, questions, or mark schemes; `label` is a
+// placeholder editorial field for a future private, approved authoring workflow. No initial
+// map data is seeded. Mirrors services/core/internal/curriculummap. Reads (verified nodes
+// only) require curriculum_map:read (editor/reviewer/admin); draft create/update require
+// curriculum_map:create (editor/reviewer/admin); verify/retire require curriculum_map:verify
+// (reviewer/admin). Learner and unknown roles are denied.
+
+/** Kind of curriculum-map node. */
+export type CurriculumMapNodeKind =
+  | "topic"
+  | "objective"
+  | "practical_skill"
+  | "assessment_rule";
+
+/** Lifecycle state of a curriculum-map node. */
+export type CurriculumMapNodeStatus = "draft" | "verified" | "retired";
+
+/** A curriculum-map node: hierarchy position, editorial identity, lifecycle, and the approved
+ * content source it is grounded in. Never carries syllabus/objective/assessment text. */
+export interface CurriculumMapNode {
+  id: string;
+  syllabusId: string;
+  /** Parent node id within the same syllabus; null for a root node. */
+  parentNodeId: string | null;
+  nodeKind: CurriculumMapNodeKind;
+  /** Stable editorial reference/code, unique within its syllabus. */
+  nodeCode: string;
+  /** Editorial label/summary — placeholder for the future private approved workflow. */
+  label: string;
+  status: CurriculumMapNodeStatus;
+  /** Approved content_sources id this node is grounded in; catalogueSyllabusId must match
+   * syllabusId (enforced server-side before every write). */
+  contentSourceId: string;
+  /** Optional reference metadata pointing at the approved source (e.g. a section label) —
+   * never the source content itself. */
+  sourceLocator: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Create a draft curriculum-map node (editor/reviewer/admin). The syllabus a node belongs to
+ * is not changeable after creation. */
+export interface CreateCurriculumMapNodeRequest {
+  syllabusId: string;
+  parentNodeId?: string;
+  nodeKind: CurriculumMapNodeKind;
+  nodeCode: string;
+  label: string;
+  contentSourceId: string;
+  sourceLocator?: string;
+}
+
+/**
+ * Update a draft curriculum-map node (editor/reviewer/admin). Only a node whose status is
+ * draft may be updated. At least one field must be supplied; supplied non-nullable fields must
+ * be non-empty. `parentNodeId`/`sourceLocator` may be explicitly set to `null` to clear them —
+ * omit the key entirely to leave it unchanged.
+ */
+export interface UpdateCurriculumMapNodeRequest {
+  parentNodeId?: string | null;
+  nodeKind?: CurriculumMapNodeKind;
+  nodeCode?: string;
+  label?: string;
+  contentSourceId?: string;
+  sourceLocator?: string | null;
+}
+
+export type CurriculumMapEventType =
+  | "node_created"
+  | "node_updated"
+  | "node_verified"
+  | "node_retired";
+
+/**
+ * Immutable audit record of a curriculum-map node mutation. Records which fields changed
+ * (names only) and who changed them — never field values, and never any source material.
+ */
+export interface CurriculumMapEvent {
+  id: string;
+  nodeId: string;
+  eventType: CurriculumMapEventType;
+  actorId: string;
+  eventTime: string;
+  changedFields: string[];
+  createdAt: string;
+}

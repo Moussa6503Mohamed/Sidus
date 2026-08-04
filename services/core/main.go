@@ -13,6 +13,7 @@ import (
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/auth"
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/catalogue"
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/contentsource"
+	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/curriculummap"
 )
 
 // defaultAuthorizedParty is the only `azp` origin accepted when CLERK_AUTHORIZED_PARTIES is
@@ -114,6 +115,7 @@ func main() {
 		// The catalogue store is the single authority for valid syllabuses: it also backs
 		// registry-based syllabus validation for content sources.
 		contentsource.Register(mux, contentsource.NewPostgresStore(db), catalogueStore, verifier)
+		curriculummap.Register(mux, curriculummap.NewPostgresStore(db), verifier)
 	}
 
 	_ = http.ListenAndServe(":8080", mux)
