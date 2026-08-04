@@ -385,3 +385,92 @@ No invented year/edition, objective, assessment rule, rights claim, or extra syl
 ### Handoff
 
 `docs/handoffs/T-0004.md`
+
+## T-0005 — Provenance-confirmed catalogue linking
+
+**Status:** done / released
+**Owner:** Claude Code agent
+**Priority:** P1
+**Depends on:** T-0001 (done), T-0002 (done), T-0003 (done), T-0004 (done)
+
+### Goal
+
+Let an editor/admin explicitly confirm and establish a missing or stale
+`content_sources.catalogue_syllabus_id` link through the existing authenticated `PATCH
+/content-sources/{id}` flow. Migration 0008 (T-0004) intentionally left every existing pending
+source's catalogue FK `NULL` rather than auto-mapping it; the pre-T-0005 `syllabusCode` diff
+logic compared only the free-text code, so re-supplying the already-stored code was always `400
+no_changes` — no safe application-layer path existed to complete the link, and no direct
+database workaround is acceptable (bypasses auth/audit).
+
+### Scope
+
+- `services/core/internal/contentsource/postgres_store.go`: `Update` now diffs `syllabusCode`
+  text and `catalogue_syllabus_id` independently instead of treating the FK as a byproduct of a
+  text-code change.
+  - Different code → `syllabus_code` + `catalogue_syllabus_id` updated, audited
+    `["syllabusCode"]`.
+  - Same code, missing/stale FK → `catalogue_syllabus_id` updated alone, audited
+    `["catalogueSyllabusId"]` (never claims `syllabusCode` changed).
+  - Same code, matching FK → unchanged `400 no_changes`, no write, no event.
+- `handlers_test.go`'s `memoryStore.Update` mirrors the same split-diff logic so handler-level
+  tests exercise identical semantics without a live database.
+- Request/response shape unchanged: caller still supplies only `syllabusCode`; Core resolves the
+  active catalogue syllabus server-side (unchanged registry-backed validation from T-0004).
+  Unknown/inactive/ambiguous code still fails `400 unknown_syllabus` before any write.
+- No new endpoint, no caller-supplied catalogue ID, no auto-linking (migration/startup/read/
+  create/background job), no approval/OCR/ingestion/rights/status change.
+- Docs: new `docs/provenance-catalogue-linking.md`; D-0007 updated in place (see
+  `docs/decisions.md`); `docs/curriculum-catalogue.md` migration-path section cross-referenced.
+
+### Acceptance checks
+
+- Existing code + `NULL` FK → same-code PATCH links; verified actor; `changed_fields` only
+  `catalogueSyllabusId`. — met
+- Existing code + wrong FK → safe relink. — met
+- Existing code + matching FK → `no_changes`; no event; `updated_at` unchanged. — met
+- Different code → code/FK update, correct audit (`["syllabusCode"]`). — met
+- Unknown/inactive/ambiguous code → `400` before write; no event. — met
+- Omitted code unchanged. — met
+- Non-pending source → `409`; no event. — met
+- Learner/unknown denied. — met
+- Disposable `sidus-test` integration proves FK/audit/immutability. — met
+- All existing tests remain green. — met
+
+### Constraints
+
+- Never stage/alter/move/delete: `DB.jpeg`, `arch.jpeg`, `Sidus.xlsx`,
+  `Sidus_Roadmap_and_Cost_Model(1).xlsx`, `Sidus_Final_MVP_Technical_Cost_Model*.xlsx`,
+  `Sidus_Final_MVP_Technical_Cost_Model_Recreated.xlsx`, `.claude/`, `.claude-flow/`, any
+  `.env.local`.
+- No content, questions, OCR, ingestion, or copyrighted data. No rights/status change.
+- No silent auto-mapping of the two seeded 0610/5090 content-source rows — a human still calls
+  the API per source (documented in `docs/provenance-catalogue-linking.md`).
+
+### Open questions / blockers
+
+- None blocking. The two seeded pending content-source rows remain unlinked
+  (`catalogueSyllabusId: null`) until a human editor/admin calls the documented `PATCH` for each
+  — this task added the safe path; it does not itself perform the linking. See "Manual steps
+  for the two seeded sources" in `docs/provenance-catalogue-linking.md`.
+
+### Release validation (final pass)
+
+| Command | Result |
+| --- | --- |
+| `go build ./... && go vet ./...` (Docker `golang:1.22-alpine`) | Pass |
+| `go test ./... -v` (unit, Docker toolchain) | Pass — core, auth, catalogue, contentsource green; 10 integration tests skipped (no `TEST_DATABASE_URL`) |
+| `docker compose -f docker-compose.yml config` / `-f docker-compose.test.yml config` | Pass / Pass |
+| `docker compose -f docker-compose.test.yml up -d` + health wait | Pass — `sidus-test-postgres-test-1` healthy |
+| `go run ./cmd/migrate` against disposable `sidus-test` | Pass — 9 migrations applied |
+| `go test ./... -run Integration -v` against `sidus-test` | Pass — 6 catalogue + 4 content-source integration tests, incl. `TestPostgresStore_Integration_ProvenanceCatalogueLinking` |
+| `docker compose -f docker-compose.test.yml down -v` | Pass — `sidus-test` destroyed only; dev untouched |
+| `python -m pytest -q` (services/ai) | Pass — 18 tests |
+| `npm --prefix apps/web run typecheck` | Pass |
+| `npm --prefix apps/web run build` | Pass — Proxy (Middleware) detected; routes intact |
+| `npx -p typescript tsc --noEmit --strict packages/shared/src/contracts.ts` | Pass |
+| `git diff --check` | Pass — clean |
+
+### Handoff
+
+`docs/handoffs/T-0005.md`
