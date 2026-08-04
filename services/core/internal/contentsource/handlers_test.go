@@ -1479,6 +1479,88 @@ func TestApprove_TrailingWhitespace_Accepted(t *testing.T) {
 	}
 }
 
+// --- Case-variant field names must be rejected (T-0008 hardening) ---
+//
+// Go's struct decoding matches JSON field names case-insensitively, so
+// json.Decoder.DisallowUnknownFields alone accepts `{"SyllabusCode":...}` as `syllabusCode`.
+// decodeStrict's allowlist pre-pass is the actual rejection point; these tests prove it fires.
+
+// TestCreate_RejectsCaseVariantFields proves a case-variant of a real field name (e.g.
+// `Title`, `SourceUrl`, `SyllabusCode`) is rejected rather than silently accepted as the
+// correctly-cased field.
+func TestCreate_RejectsCaseVariantFields(t *testing.T) {
+	cases := map[string]string{
+		"Title":        `{"Title":"Bio","sourceUrl":"https://example.org/case-title"}`,
+		"SourceUrl":    `{"title":"Bio","SourceUrl":"https://example.org/case-url"}`,
+		"SyllabusCode": `{"title":"Bio","sourceUrl":"https://example.org/case-syllabus","SyllabusCode":"0610"}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+
+			resp := doRaw(t, http.MethodPost, srv.URL+"/content-sources", adminToken, body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			got := decodeJSON[map[string]any](t, resp)
+			if got["error"] != "invalid_json" {
+				t.Fatalf("error = %v, want invalid_json", got["error"])
+			}
+			if len(store.sources) != 0 {
+				t.Fatalf("sources = %d, want 0 (case-variant field must not create a source)", len(store.sources))
+			}
+		})
+	}
+}
+
+// TestUpdate_RejectsCaseVariantFields mirrors TestCreate_RejectsCaseVariantFields for PATCH.
+func TestUpdate_RejectsCaseVariantFields(t *testing.T) {
+	cases := map[string]string{
+		"Owner":        `{"Owner":"CAIE"}`,
+		"SourceUrl":    `{"SourceUrl":"https://example.org/case-patch-url"}`,
+		"SyllabusCode": `{"SyllabusCode":"0610"}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+			src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/case-patch-" + name})
+
+			resp := doRaw(t, http.MethodPatch, srv.URL+"/content-sources/"+src.ID, editorToken, body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			got := decodeJSON[map[string]any](t, resp)
+			if got["error"] != "invalid_json" {
+				t.Fatalf("error = %v, want invalid_json", got["error"])
+			}
+			if len(store.events) != 0 {
+				t.Fatalf("events = %d, want 0 (case-variant field must not audit)", len(store.events))
+			}
+		})
+	}
+}
+
+// TestReject_RejectsCaseVariantFields mirrors the case-variant checks for the reject endpoint.
+func TestReject_RejectsCaseVariantFields(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/case-reject"})
+
+	resp := doRaw(t, http.MethodPost, srv.URL+"/content-sources/"+src.ID+"/reject", reviewerToken, `{"Reason":"licence unclear"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	got := decodeJSON[map[string]any](t, resp)
+	if got["error"] != "invalid_json" {
+		t.Fatalf("error = %v, want invalid_json", got["error"])
+	}
+	if len(store.reviews) != 0 {
+		t.Fatalf("reviews = %d, want 0 (case-variant field must not record a review)", len(store.reviews))
+	}
+}
+
 // TestUpdate_RejectsUnknownActorId_WithTrailingWhitespace proves whitespace-only trailing bytes
 // after an otherwise-rejected body still surface the original unknown-field error, not a
 // different failure mode.

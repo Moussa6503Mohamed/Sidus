@@ -23,6 +23,14 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 
 const sourceColumns = `id, title, owner, source_url, source_hash, licence_reference, permitted_use, allowed_audience, syllabus_code, catalogue_syllabus_id, status, created_at, updated_at`
 
+// isInvalidTextRepresentation reports whether err is Postgres 22P02 (e.g. a non-UUID string
+// supplied where a UUID column is compared). A malformed id is a client error, not an
+// infrastructure failure, and maps to the same not-found response as a missing id.
+func isInvalidTextRepresentation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "22P02"
+}
+
 func scanSource(row interface{ Scan(...any) error }) (Source, error) {
 	var s Source
 	err := row.Scan(
@@ -55,7 +63,7 @@ func (p *PostgresStore) Create(ctx context.Context, in CreateInput) (Source, err
 func (p *PostgresStore) Get(ctx context.Context, id string) (Source, error) {
 	row := p.db.QueryRowContext(ctx, `SELECT `+sourceColumns+` FROM content_sources WHERE id = $1`, id)
 	source, err := scanSource(row)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return Source{}, ErrNotFound
 	}
 	if err != nil {
@@ -99,7 +107,7 @@ func (p *PostgresStore) Approve(ctx context.Context, id string, in ApproveInput)
 
 	row := tx.QueryRowContext(ctx, `SELECT `+sourceColumns+` FROM content_sources WHERE id = $1 FOR UPDATE`, id)
 	source, err := scanSource(row)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return Source{}, nil, ErrNotFound
 	}
 	if err != nil {
@@ -181,7 +189,7 @@ func (p *PostgresStore) Update(ctx context.Context, id string, in UpdateInput) (
 
 	row := tx.QueryRowContext(ctx, `SELECT `+sourceColumns+` FROM content_sources WHERE id = $1 FOR UPDATE`, id)
 	source, err := scanSource(row)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return Source{}, nil, ErrNotFound
 	}
 	if err != nil {
@@ -279,7 +287,7 @@ func (p *PostgresStore) Reject(ctx context.Context, id string, in RejectInput) (
 
 	row := tx.QueryRowContext(ctx, `SELECT `+sourceColumns+` FROM content_sources WHERE id = $1 FOR UPDATE`, id)
 	source, err := scanSource(row)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return Source{}, ErrNotFound
 	}
 	if err != nil {

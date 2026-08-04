@@ -207,7 +207,7 @@ func (p *PostgresStore) UpdateNode(ctx context.Context, id string, in UpdateInpu
 
 	row := tx.QueryRowContext(ctx, `SELECT `+nodeColumns+` FROM curriculum_map_nodes WHERE id = $1 FOR UPDATE`, id)
 	current, err := scanNode(row)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return Node{}, ErrNotFound
 	}
 	if err != nil {
@@ -339,7 +339,7 @@ func (p *PostgresStore) transitionStatus(ctx context.Context, id, actorID string
 
 	row := tx.QueryRowContext(ctx, `SELECT `+nodeColumns+` FROM curriculum_map_nodes WHERE id = $1 FOR UPDATE`, id)
 	current, err := scanNode(row)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return Node{}, ErrNotFound
 	}
 	if err != nil {
@@ -390,7 +390,7 @@ func (p *PostgresStore) GetNode(ctx context.Context, id string, verifiedOnly boo
 	}
 	row := p.db.QueryRowContext(ctx, query, id)
 	node, err := scanNode(row)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return Node{}, ErrNotFound
 	}
 	if err != nil {

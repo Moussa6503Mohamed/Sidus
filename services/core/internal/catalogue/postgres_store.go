@@ -26,6 +26,14 @@ const (
 	syllabusColumns = `id, board, syllabus_code, subject_id, qualification, track, display_name, curriculum_year, status, created_at, updated_at`
 )
 
+// isInvalidTextRepresentation reports whether err is Postgres 22P02 (e.g. a non-UUID string
+// supplied where a UUID column is compared). A malformed id is a client error, not an
+// infrastructure failure, and maps to the same not-found response as a missing id.
+func isInvalidTextRepresentation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "22P02"
+}
+
 func scanSubject(row interface{ Scan(...any) error }) (Subject, error) {
 	var s Subject
 	err := row.Scan(&s.ID, &s.Name, &s.CreatedAt, &s.UpdatedAt)
@@ -153,7 +161,7 @@ func (p *PostgresStore) UpdateSyllabus(ctx context.Context, id string, in Update
 
 	row := tx.QueryRowContext(ctx, `SELECT `+syllabusColumns+` FROM syllabuses WHERE id = $1 FOR UPDATE`, id)
 	current, err := scanSyllabus(row)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return Syllabus{}, ErrNotFound
 	}
 	if err != nil {
@@ -226,7 +234,7 @@ func (p *PostgresStore) GetSyllabus(ctx context.Context, id string, activeOnly b
 	}
 	row := p.db.QueryRowContext(ctx, query, id)
 	syllabus, err := scanSyllabus(row)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return Syllabus{}, ErrNotFound
 	}
 	if err != nil {

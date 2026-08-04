@@ -680,3 +680,121 @@ func TestInternalError_NeverLeaksRawInfrastructureText(t *testing.T) {
 		}
 	}
 }
+
+// --- Strict JSON: case-variant fields, identity fields, and trailing data (T-0008) ---
+//
+// Go's struct decoding matches JSON field names case-insensitively, so
+// json.Decoder.DisallowUnknownFields alone accepts `{"SyllabusCode":...}` as `syllabusCode`.
+// decodeStrict's allowlist pre-pass is the actual rejection point; these tests prove it fires
+// before any store call.
+
+// doRaw issues a request with a raw, pre-serialized body so tests can send malformed,
+// case-variant, or multi-value payloads that json.Marshal could never produce.
+func doRaw(t *testing.T, method, url, token, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, url, bytes.NewReader([]byte(body)))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	return resp
+}
+
+func TestCreateSubject_StrictJSON(t *testing.T) {
+	cases := map[string]string{
+		"case variant":    `{"Name":"Astronomy"}`,
+		"actorId":         `{"name":"Astronomy","actorId":"attacker-supplied"}`,
+		"unknown field":   `{"name":"Astronomy","totallyUnknown":"x"}`,
+		"trailing object": `{"name":"Astronomy"}{}`,
+		"trailing junk":   `{"name":"Astronomy"}garbage`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+
+			resp := doRaw(t, http.MethodPost, srv.URL+"/catalogue/subjects", adminToken, body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			if got := decodeJSON[map[string]any](t, resp); got["error"] != "invalid_json" {
+				t.Fatalf("error = %v, want invalid_json", got["error"])
+			}
+			if len(store.subjects) != 0 {
+				t.Fatalf("subjects = %d, want 0 (rejected body must not write)", len(store.subjects))
+			}
+		})
+	}
+}
+
+func TestCreateSyllabus_StrictJSON(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	subj, err := store.CreateSubject(context.Background(), CreateSubjectInput{ActorID: adminSubject, Name: "Biology"})
+	if err != nil {
+		t.Fatalf("subject: %v", err)
+	}
+
+	valid := `"board":"Cambridge International","syllabusCode":"0610","subjectId":"` + subj.ID + `","qualification":"Cambridge IGCSE","displayName":"D"`
+	cases := map[string]string{
+		"Board case variant": `{"Board":"Cambridge International","syllabusCode":"0610","subjectId":"` + subj.ID + `","qualification":"Cambridge IGCSE","displayName":"D"}`,
+		"Label case variant": `{` + valid + `,"Label":"x"}`,
+		"actorId":            `{` + valid + `,"actorId":"attacker-supplied"}`,
+		"reviewerId":         `{` + valid + `,"reviewerId":"attacker-supplied"}`,
+		"trailing object":    `{` + valid + `}{}`,
+		"trailing junk":      `{` + valid + `}garbage`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			before := len(store.syllabuses)
+			resp := doRaw(t, http.MethodPost, srv.URL+"/catalogue/syllabuses", adminToken, body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			if got := decodeJSON[map[string]any](t, resp); got["error"] != "invalid_json" {
+				t.Fatalf("error = %v, want invalid_json", got["error"])
+			}
+			if len(store.syllabuses) != before {
+				t.Fatalf("syllabuses = %d, want %d (rejected body must not write)", len(store.syllabuses), before)
+			}
+		})
+	}
+}
+
+func TestUpdateSyllabus_StrictJSON(t *testing.T) {
+	cases := map[string]string{
+		"Board case variant":  `{"Board":"New Board"}`,
+		"DisplayName variant": `{"DisplayName":"New Name"}`,
+		"actorId":             `{"displayName":"New Name","actorId":"attacker-supplied"}`,
+		"reviewerId":          `{"displayName":"New Name","reviewerId":"attacker-supplied"}`,
+		"unknown field":       `{"displayName":"New Name","totallyUnknown":"x"}`,
+		"trailing object":     `{"displayName":"New Name"}{}`,
+		"trailing junk":       `{"displayName":"New Name"}garbage`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+			_, syl := seedActiveSyllabus(t, store)
+			before := len(store.events)
+
+			resp := doRaw(t, http.MethodPatch, srv.URL+"/catalogue/syllabuses/"+syl.ID, adminToken, body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			if got := decodeJSON[map[string]any](t, resp); got["error"] != "invalid_json" {
+				t.Fatalf("error = %v, want invalid_json", got["error"])
+			}
+			if len(store.events) != before {
+				t.Fatalf("events = %d, want %d (rejected body must not audit)", len(store.events), before)
+			}
+		})
+	}
+}

@@ -393,3 +393,54 @@ func TestPostgresStore_Integration_ProvenanceCatalogueLinking(t *testing.T) {
 		t.Fatalf("changed = %v, want [syllabusCode]", changed)
 	}
 }
+
+// TestPostgresStore_Integration_MalformedID_NotFoundNotInternalError exercises T-0008: a
+// malformed (non-UUID) id given to Get, Update, Approve, or Reject must produce the same
+// stable not_found behavior as a well-formed but missing id — never a 500 leaking Postgres
+// 22P02 driver text.
+func TestPostgresStore_Integration_MalformedID_NotFoundNotInternalError(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; skipping Postgres integration test")
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Ping(); err != nil {
+		t.Fatalf("ping db: %v", err)
+	}
+
+	store := NewPostgresStore(db)
+	ctx := context.Background()
+
+	ids := map[string]string{
+		"malformed":           "not-a-uuid",
+		"well-formed missing": "00000000-0000-0000-0000-000000000000",
+	}
+	for name, id := range ids {
+		t.Run("Get/"+name, func(t *testing.T) {
+			if _, err := store.Get(ctx, id); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("Get(%q) err = %v, want ErrNotFound", id, err)
+			}
+		})
+		t.Run("Update/"+name, func(t *testing.T) {
+			owner := "CAIE"
+			if _, _, err := store.Update(ctx, id, UpdateInput{ActorID: "tester", Owner: &owner}); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("Update(%q) err = %v, want ErrNotFound", id, err)
+			}
+		})
+		t.Run("Approve/"+name, func(t *testing.T) {
+			if _, _, err := store.Approve(ctx, id, ApproveInput{ReviewerID: "tester", DecisionDate: time.Now()}); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("Approve(%q) err = %v, want ErrNotFound", id, err)
+			}
+		})
+		t.Run("Reject/"+name, func(t *testing.T) {
+			if _, err := store.Reject(ctx, id, RejectInput{ReviewerID: "tester", Reason: "test", DecisionDate: time.Now()}); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("Reject(%q) err = %v, want ErrNotFound", id, err)
+			}
+		})
+	}
+}

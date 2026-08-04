@@ -691,3 +691,41 @@ func TestPostgresStore_Integration_EventImmutability(t *testing.T) {
 		t.Fatal("DELETE on curriculum_map_events succeeded, want rejection by trigger")
 	}
 }
+
+// TestPostgresStore_Integration_MalformedID_NotFoundNotInternalError exercises T-0008: a
+// malformed (non-UUID) id given to GetNode, UpdateNode, VerifyNode, or RetireNode must produce
+// the same stable not_found behavior as a well-formed but missing id — never a 500 leaking
+// Postgres 22P02 driver text.
+func TestPostgresStore_Integration_MalformedID_NotFoundNotInternalError(t *testing.T) {
+	db := openTestDB(t)
+	store := NewPostgresStore(db)
+	ctx := context.Background()
+
+	ids := map[string]string{
+		"malformed":           "not-a-uuid",
+		"well-formed missing": "00000000-0000-0000-0000-000000000000",
+	}
+	for name, id := range ids {
+		t.Run("GetNode/"+name, func(t *testing.T) {
+			if _, err := store.GetNode(ctx, id, true); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("GetNode(%q) err = %v, want ErrNotFound", id, err)
+			}
+		})
+		t.Run("UpdateNode/"+name, func(t *testing.T) {
+			label := "New label"
+			if _, err := store.UpdateNode(ctx, id, UpdateInput{ActorID: "tester", Label: &label}); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("UpdateNode(%q) err = %v, want ErrNotFound", id, err)
+			}
+		})
+		t.Run("VerifyNode/"+name, func(t *testing.T) {
+			if _, err := store.VerifyNode(ctx, id, "tester"); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("VerifyNode(%q) err = %v, want ErrNotFound", id, err)
+			}
+		})
+		t.Run("RetireNode/"+name, func(t *testing.T) {
+			if _, err := store.RetireNode(ctx, id, "tester"); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("RetireNode(%q) err = %v, want ErrNotFound", id, err)
+			}
+		})
+	}
+}

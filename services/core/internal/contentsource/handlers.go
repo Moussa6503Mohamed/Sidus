@@ -1,6 +1,7 @@
 package contentsource
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -83,17 +84,51 @@ type createRequest struct {
 	SyllabusCode     *string `json:"syllabusCode"`
 }
 
-// decodeStrict decodes the JSON request body into dst, rejecting any unknown field. Legacy
-// caller-controlled identity fields (e.g. actorId, reviewerId) — and any other unrecognized
-// field — therefore fail with a stable 400 invalid_json response rather than being silently
-// ignored. It also requires the body to contain exactly one JSON value: json.Decoder.Decode
-// alone accepts a valid value followed by more valid JSON (e.g. two concatenated objects), so
-// a second decode call must hit io.EOF or the request is rejected. Returns false (and writes
-// the error) on any decode failure or trailing data.
-func decodeStrict(w http.ResponseWriter, r *http.Request, dst any) bool {
+// createFields is the exact, case-sensitive set of accepted POST /content-sources field names.
+var createFields = map[string]struct{}{
+	"title":            {},
+	"sourceUrl":        {},
+	"owner":            {},
+	"sourceHash":       {},
+	"licenceReference": {},
+	"permittedUse":     {},
+	"allowedAudience":  {},
+	"syllabusCode":     {},
+}
+
+// updateFields is the exact, case-sensitive set of accepted PATCH /content-sources/{id} field
+// names.
+var updateFields = map[string]struct{}{
+	"title":            {},
+	"owner":            {},
+	"sourceUrl":        {},
+	"sourceHash":       {},
+	"licenceReference": {},
+	"permittedUse":     {},
+	"allowedAudience":  {},
+	"syllabusCode":     {},
+}
+
+// reviewFields is the exact, case-sensitive set of accepted approve/reject field names. The
+// reviewer is never a body field; it is the verified Clerk subject.
+var reviewFields = map[string]struct{}{
+	"reason":       {},
+	"decisionDate": {},
+}
+
+// decodeStrict decodes exactly one JSON object into dst, rejecting anything else with the same
+// stable 400: a non-object body, trailing values or junk after the object, and any key outside
+// allowed — which covers identity fields (`actorId`, `reviewerId`), typos, and case variants
+// (e.g. `SyllabusCode`, `SourceUrl`).
+//
+// The allowlist pre-pass exists because it is the only reliable rejection point. Go's struct
+// decoding matches field names case-insensitively, so `json.Decoder.DisallowUnknownFields` alone
+// accepts `{"SyllabusCode":...}` as `syllabusCode`. Rejection happens before any store call, so
+// a rejected request can never mutate a row or write an event.
+func decodeStrict(w http.ResponseWriter, r *http.Request, allowed map[string]struct{}, dst any) bool {
+	raw := map[string]json.RawMessage{}
 	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
+	if err := dec.Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
 		return false
 	}
@@ -101,12 +136,30 @@ func decodeStrict(w http.ResponseWriter, r *http.Request, dst any) bool {
 		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
 		return false
 	}
+	for name := range raw {
+		if _, ok := allowed[name]; !ok {
+			writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
+			return false
+		}
+	}
+
+	strictDec := json.NewDecoder(bytes.NewReader(mustMarshal(raw)))
+	strictDec.DisallowUnknownFields()
+	if err := strictDec.Decode(dst); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
+		return false
+	}
 	return true
+}
+
+func mustMarshal(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	var req createRequest
-	if !decodeStrict(w, r, &req) {
+	if !decodeStrict(w, r, createFields, &req) {
 		return
 	}
 
@@ -186,7 +239,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req updateRequest
-	if !decodeStrict(w, r, &req) {
+	if !decodeStrict(w, r, updateFields, &req) {
 		return
 	}
 
@@ -314,7 +367,7 @@ func (h *handler) approve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req reviewRequest
-	if !decodeStrict(w, r, &req) {
+	if !decodeStrict(w, r, reviewFields, &req) {
 		return
 	}
 	decisionDate, err := req.decisionDate()
@@ -357,7 +410,7 @@ func (h *handler) reject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req reviewRequest
-	if !decodeStrict(w, r, &req) {
+	if !decodeStrict(w, r, reviewFields, &req) {
 		return
 	}
 

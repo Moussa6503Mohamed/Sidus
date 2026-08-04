@@ -1098,3 +1098,59 @@ func TestNoRawInternalErrorText(t *testing.T) {
 		}
 	}
 }
+
+// --- Strict JSON: case-variant fields, identity fields, and trailing data (T-0008) ---
+//
+// Go's struct decoding matches JSON field names case-insensitively, so
+// json.Decoder.DisallowUnknownFields alone accepts `{"Label":...}` as `label`. decodeStrict's
+// allowlist pre-pass is the actual rejection point; these tests prove it fires before any
+// store call.
+
+// doRaw issues a request with a raw, pre-serialized body so tests can send case-variant or
+// multi-value payloads that json.Marshal could never produce.
+func doRaw(t *testing.T, method, url, token, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, url, bytes.NewReader([]byte(body)))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	return resp
+}
+
+func TestCreateNode_StrictJSON(t *testing.T) {
+	valid := `"syllabusId":"syl-active","nodeKind":"topic","nodeCode":"T1","label":"Topic one","contentSourceId":"src-approved-active"`
+	cases := map[string]string{
+		"Label case variant":      `{"syllabusId":"syl-active","nodeKind":"topic","nodeCode":"T1","Label":"Topic one","contentSourceId":"src-approved-active"}`,
+		"SyllabusId case variant": `{"SyllabusId":"syl-active","nodeKind":"topic","nodeCode":"T1","label":"Topic one","contentSourceId":"src-approved-active"}`,
+		"actorId":                 `{` + valid + `,"actorId":"attacker-supplied"}`,
+		"reviewerId":              `{` + valid + `,"reviewerId":"attacker-supplied"}`,
+		"unknown field":           `{` + valid + `,"totallyUnknown":"x"}`,
+		"trailing object":         `{` + valid + `}{}`,
+		"trailing junk":           `{` + valid + `}garbage`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+
+			resp := doRaw(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", adminToken, body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			if got := decodeJSON[map[string]any](t, resp); got["error"] != "invalid_json" {
+				t.Fatalf("error = %v, want invalid_json", got["error"])
+			}
+			if len(store.nodes) != 0 {
+				t.Fatalf("nodes = %d, want 0 (rejected body must not create a node)", len(store.nodes))
+			}
+		})
+	}
+}

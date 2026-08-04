@@ -264,3 +264,33 @@ func TestPostgres_Integration_SeededBiologySubject_NoSubjectEvent(t *testing.T) 
 		t.Fatalf("seeded Biology subject_events count = %d, want 0 (bootstrap seed, not a human-actor event)", count)
 	}
 }
+
+// TestPostgres_Integration_MalformedID_NotFoundNotInternalError exercises T-0008: a malformed
+// (non-UUID) id given to GetSyllabus or UpdateSyllabus must produce the same stable not_found
+// behavior as a well-formed but missing id — never a 500 leaking Postgres 22P02 driver text.
+func TestPostgres_Integration_MalformedID_NotFoundNotInternalError(t *testing.T) {
+	db := openTestDB(t)
+	store := NewPostgresStore(db)
+	ctx := context.Background()
+
+	malformed := "not-a-uuid"
+	wellFormedMissing := "00000000-0000-0000-0000-000000000000"
+
+	for name, id := range map[string]string{
+		"malformed":           malformed,
+		"well-formed missing": wellFormedMissing,
+	} {
+		t.Run("GetSyllabus/"+name, func(t *testing.T) {
+			_, err := store.GetSyllabus(ctx, id, true)
+			if !errors.Is(err, ErrNotFound) {
+				t.Fatalf("GetSyllabus(%q) err = %v, want ErrNotFound", id, err)
+			}
+		})
+		t.Run("UpdateSyllabus/"+name, func(t *testing.T) {
+			_, err := store.UpdateSyllabus(ctx, id, UpdateSyllabusInput{ActorID: "tester", Board: strPtr("New Board")})
+			if !errors.Is(err, ErrNotFound) {
+				t.Fatalf("UpdateSyllabus(%q) err = %v, want ErrNotFound", id, err)
+			}
+		})
+	}
+}

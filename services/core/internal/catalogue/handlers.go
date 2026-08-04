@@ -1,6 +1,7 @@
 package catalogue
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -41,13 +42,51 @@ func actorFromContext(r *http.Request) (string, bool) {
 	return claims.Subject, true
 }
 
-// decodeStrict decodes exactly one JSON value into dst, rejecting unknown fields and trailing
-// data. Mirrors the content-source strict decoder so caller-controlled identity fields cannot
-// be smuggled in.
-func decodeStrict(w http.ResponseWriter, r *http.Request, dst any) bool {
+// createSubjectFields is the exact, case-sensitive set of accepted POST /catalogue/subjects
+// field names.
+var createSubjectFields = map[string]struct{}{
+	"name": {},
+}
+
+// createSyllabusFields is the exact, case-sensitive set of accepted POST
+// /catalogue/syllabuses field names.
+var createSyllabusFields = map[string]struct{}{
+	"board":          {},
+	"syllabusCode":   {},
+	"subjectId":      {},
+	"qualification":  {},
+	"track":          {},
+	"displayName":    {},
+	"curriculumYear": {},
+	"status":         {},
+}
+
+// updateSyllabusFields is the exact, case-sensitive set of accepted PATCH
+// /catalogue/syllabuses/{id} field names.
+var updateSyllabusFields = map[string]struct{}{
+	"board":          {},
+	"syllabusCode":   {},
+	"subjectId":      {},
+	"qualification":  {},
+	"track":          {},
+	"displayName":    {},
+	"curriculumYear": {},
+	"status":         {},
+}
+
+// decodeStrict decodes exactly one JSON object into dst, rejecting anything else with the same
+// stable 400: a non-object body, trailing values or junk after the object, and any key outside
+// allowed — which covers identity fields (`actorId`, `reviewerId`), typos, and case variants
+// (e.g. `SyllabusCode`, `Label`).
+//
+// The allowlist pre-pass exists because it is the only reliable rejection point. Go's struct
+// decoding matches field names case-insensitively, so `json.Decoder.DisallowUnknownFields` alone
+// accepts `{"SyllabusCode":...}` as `syllabusCode`. Rejection happens before any store call, so
+// a rejected request can never mutate a row or write an event.
+func decodeStrict(w http.ResponseWriter, r *http.Request, allowed map[string]struct{}, dst any) bool {
+	raw := map[string]json.RawMessage{}
 	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
+	if err := dec.Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
 		return false
 	}
@@ -55,7 +94,25 @@ func decodeStrict(w http.ResponseWriter, r *http.Request, dst any) bool {
 		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
 		return false
 	}
+	for name := range raw {
+		if _, ok := allowed[name]; !ok {
+			writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
+			return false
+		}
+	}
+
+	strictDec := json.NewDecoder(bytes.NewReader(mustMarshal(raw)))
+	strictDec.DisallowUnknownFields()
+	if err := strictDec.Decode(dst); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
+		return false
+	}
 	return true
+}
+
+func mustMarshal(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 func (h *handler) listSubjects(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +135,7 @@ func (h *handler) createSubject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createSubjectRequest
-	if !decodeStrict(w, r, &req) {
+	if !decodeStrict(w, r, createSubjectFields, &req) {
 		return
 	}
 	if strings.TrimSpace(req.Name) == "" {
@@ -139,7 +196,7 @@ func (h *handler) createSyllabus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createSyllabusRequest
-	if !decodeStrict(w, r, &req) {
+	if !decodeStrict(w, r, createSyllabusFields, &req) {
 		return
 	}
 
@@ -221,7 +278,7 @@ func (h *handler) updateSyllabus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req updateSyllabusRequest
-	if !decodeStrict(w, r, &req) {
+	if !decodeStrict(w, r, updateSyllabusFields, &req) {
 		return
 	}
 

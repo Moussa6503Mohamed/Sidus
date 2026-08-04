@@ -298,6 +298,39 @@ role, permission, visibility rule, or source-gate behaviour changed.
    an empty list rather than an error. Existing unknown/inactive syllabus behaviour is unchanged,
    and the syllabus is still resolved first.
 
+## D-0010 — Cross-package input-hardening policy
+
+**Status:** Approved
+**Decision:** `contentsource`, `catalogue`, and `curriculummap` now enforce the same two input
+rules that `question` already enforced (T-0007): (1) every JSON body handler decodes through an
+explicit, case-sensitive field allowlist — `map[string]json.RawMessage` first, reject any key not
+in the allowlist (covering unknown fields, `actorId`/`reviewerId`, and case variants such as
+`SyllabusCode`/`Label`/`SourceUrl`, which `json.Decoder.DisallowUnknownFields` alone does not catch
+because Go struct decoding matches field names case-insensitively), then strict-decode into the
+destination struct; and (2) every store method that looks up an `{id}` path parameter treats
+Postgres `22P02` (invalid text representation — a non-UUID string compared against a UUID column)
+the same as `sql.ErrNoRows`, mapping both to the package's existing `ErrNotFound`, never a generic
+`500`. Each package keeps its own `decodeStrict`/`isInvalidTextRepresentation`; no shared helper
+was extracted across packages.
+**Reason:** The T-0006 review already fixed both problems for `curriculummap`'s node-lookup paths
+and its `PATCH` handler; T-0007 built `question` with both closed from the start and explicitly
+flagged, in its handoff, that `contentsource`, `catalogue`, and `curriculummap`'s remaining POST
+bodies and non-map-decoded lookups still had the gaps. Closing them now — before any web editorial
+client is built against these APIs — means a client can rely on one consistent error contract
+(`400 invalid_json` for bad input, the existing `404`-equivalent domain error for any bad id)
+across every package, rather than three packages behaving one way and `question` another.
+**Alternatives:** Extract a single shared `decodeStrict`/`isInvalidTextRepresentation` into a
+common internal package (rejected: the four packages' existing error-writing helpers
+(`writeError`, `writeInvalidJSON`, per-package error-mapping) are not identical, so a shared
+decoder would either take several closures per call site or leak assumptions from one package into
+another; the per-package duplication is small and each package already had its own copy before
+this task); leave the gap and document it only (rejected: it is exactly the gap T-0007's handoff
+flagged as the next piece of work, and leaving it open risks a divergent error contract reaching a
+future web client); map `22P02` to a distinct new error code instead of the existing `ErrNotFound`
+(rejected: a malformed id and a missing id are indistinguishable to a caller with no legitimate
+reason to know which, and reusing the existing not-found response keeps the contract stable).
+**Owner/date:** Claude Code agent, 2026-08-05 (T-0008).
+
 ## Decision template
 
 ```md
