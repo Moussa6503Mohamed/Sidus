@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -196,22 +197,24 @@ func TestPostgresStore_Integration_CreateAndNodeGate(t *testing.T) {
 
 // questionRowSnapshot is the persisted state a rejected write must leave byte-identical.
 type questionRowSnapshot struct {
-	status       string
-	prompt       string
-	language     string
-	responseType string
-	nodeID       string
-	updatedAt    time.Time
-	eventCount   int
-	rubricCount  int
+	status          string
+	prompt          string
+	language        string
+	responseType    string
+	nodeID          string
+	contentRevision int
+	updatedAt       time.Time
+	eventCount      int
+	rubricCount     int
 }
 
 func snapshotQuestionRow(t *testing.T, db *sql.DB, id string) questionRowSnapshot {
 	t.Helper()
 	var s questionRowSnapshot
 	if err := db.QueryRow(
-		`SELECT status, prompt, language, response_type, curriculum_map_node_id, updated_at FROM questions WHERE id = $1`, id,
-	).Scan(&s.status, &s.prompt, &s.language, &s.responseType, &s.nodeID, &s.updatedAt); err != nil {
+		`SELECT status, prompt, language, response_type, curriculum_map_node_id, content_revision, updated_at
+		 FROM questions WHERE id = $1`, id,
+	).Scan(&s.status, &s.prompt, &s.language, &s.responseType, &s.nodeID, &s.contentRevision, &s.updatedAt); err != nil {
 		t.Fatalf("snapshot question row: %v", err)
 	}
 	if err := db.QueryRow(`SELECT count(*) FROM question_events WHERE question_id = $1`, id).Scan(&s.eventCount); err != nil {
@@ -450,11 +453,14 @@ func TestPostgresStore_Integration_RubricVersionContentImmutable(t *testing.T) {
 
 	for name, stmt := range map[string]string{
 		"rewrite version number": `UPDATE question_rubric_versions SET version = 99 WHERE id = $1`,
-		"rewrite rubric":         `UPDATE question_rubric_versions SET rubric = '{"criteria":[{"id":"x","marks":1}]}' WHERE id = $1`,
-		"rewrite max marks":      `UPDATE question_rubric_versions SET max_marks = 99 WHERE id = $1`,
-		"rewrite question":       `UPDATE question_rubric_versions SET question_id = question_id WHERE id = $1`,
-		"rewrite creator":        `UPDATE question_rubric_versions SET created_by = 'tampered' WHERE id = $1`,
-		"delete":                 `DELETE FROM question_rubric_versions WHERE id = $1`,
+		// Question verification reads question_revision, so a direct SQL rewrite would be a way
+		// to re-point a stale rubric at the current question content and bypass the check.
+		"rewrite question revision": `UPDATE question_rubric_versions SET question_revision = 99 WHERE id = $1`,
+		"rewrite rubric":            `UPDATE question_rubric_versions SET rubric = '{"criteria":[{"id":"x","marks":1}]}' WHERE id = $1`,
+		"rewrite max marks":         `UPDATE question_rubric_versions SET max_marks = 99 WHERE id = $1`,
+		"rewrite question":          `UPDATE question_rubric_versions SET question_id = question_id WHERE id = $1`,
+		"rewrite creator":           `UPDATE question_rubric_versions SET created_by = 'tampered' WHERE id = $1`,
+		"delete":                    `DELETE FROM question_rubric_versions WHERE id = $1`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := f.db.Exec(stmt, versionID)
@@ -531,6 +537,211 @@ func TestPostgresStore_Integration_VerifyRequiresVerifiedRubric(t *testing.T) {
 	verified, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer")
 	if err != nil || verified.Status != StatusVerified {
 		t.Fatalf("verify question: q=%+v err=%v", verified, err)
+	}
+}
+
+// --- Question content revision ---
+
+// TestPostgresStore_Integration_ContentRevisionIncrementsOnce pins the increment rule against a
+// real database: one successful content update, one revision — and nothing else moves it.
+func TestPostgresStore_Integration_ContentRevisionIncrementsOnce(t *testing.T) {
+	f := newFixture(t)
+	q := f.createQuestion(t)
+	if q.ContentRevision != 1 {
+		t.Fatalf("new question contentRevision = %d, want 1", q.ContentRevision)
+	}
+
+	prompt := "A second original prompt."
+	language := "fr"
+	updated, err := f.store.UpdateQuestion(f.ctx, q.ID, UpdateInput{
+		ActorID: "test-editor", Prompt: &prompt, Language: &language,
+	})
+	if err != nil {
+		t.Fatalf("update question: %v", err)
+	}
+	if updated.ContentRevision != 2 {
+		t.Fatalf("contentRevision after a two-field update = %d, want 2", updated.ContentRevision)
+	}
+
+	// A no-op update must not consume a revision.
+	before := snapshotQuestionRow(t, f.db, q.ID)
+	if _, err := f.store.UpdateQuestion(f.ctx, q.ID, UpdateInput{ActorID: "test-editor", Prompt: &prompt}); !errors.Is(err, ErrNoChanges) {
+		t.Fatalf("no-op update: err = %v, want ErrNoChanges", err)
+	}
+	assertQuestionRowUnchanged(t, f.db, q.ID, before)
+
+	// Neither must a rejected one.
+	badNode := "00000000-0000-0000-0000-000000000000"
+	if _, err := f.store.UpdateQuestion(f.ctx, q.ID, UpdateInput{ActorID: "test-editor", CurriculumMapNodeID: &badNode}); !errors.Is(err, ErrUnknownNode) {
+		t.Fatalf("rejected update: err = %v, want ErrUnknownNode", err)
+	}
+	assertQuestionRowUnchanged(t, f.db, q.ID, before)
+
+	// Verify and retire are not content changes.
+	verifyRubric(t, f, q)
+	verified, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer")
+	if err != nil {
+		t.Fatalf("verify question: %v", err)
+	}
+	if verified.ContentRevision != 2 {
+		t.Fatalf("contentRevision after verify = %d, want 2", verified.ContentRevision)
+	}
+	retired, err := f.store.RetireQuestion(f.ctx, q.ID, "test-reviewer")
+	if err != nil {
+		t.Fatalf("retire question: %v", err)
+	}
+	if retired.ContentRevision != 2 {
+		t.Fatalf("contentRevision after retire = %d, want 2", retired.ContentRevision)
+	}
+}
+
+// TestPostgresStore_Integration_VerifyRequiresRubricForCurrentRevision is the review finding
+// against a real database: a rubric verified before an edit must not authorise verification, and
+// a new rubric at the current revision must.
+func TestPostgresStore_Integration_VerifyRequiresRubricForCurrentRevision(t *testing.T) {
+	f := newFixture(t)
+	q := f.createQuestion(t)
+
+	stale := verifyRubric(t, f, q)
+	if stale.QuestionRevision != 1 {
+		t.Fatalf("first rubric questionRevision = %d, want 1", stale.QuestionRevision)
+	}
+
+	prompt := "A materially different original prompt."
+	if _, err := f.store.UpdateQuestion(f.ctx, q.ID, UpdateInput{ActorID: "test-editor", Prompt: &prompt}); err != nil {
+		t.Fatalf("update question: %v", err)
+	}
+
+	before := snapshotQuestionRow(t, f.db, q.ID)
+	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer"); !errors.Is(err, ErrStaleVerifiedRubric) {
+		t.Fatalf("verify with a stale rubric: err = %v, want ErrStaleVerifiedRubric", err)
+	}
+	assertQuestionRowUnchanged(t, f.db, q.ID, before)
+
+	// The stale version is untouched: still verified, still at revision 1, still readable.
+	versions, err := f.store.ListRubricVersions(f.ctx, q.ID)
+	if err != nil {
+		t.Fatalf("list rubric versions: %v", err)
+	}
+	if len(versions) != 1 || versions[0].Status != RubricVerified || versions[0].QuestionRevision != 1 {
+		t.Fatalf("stale version was altered: %+v", versions)
+	}
+
+	// Appending and verifying a rubric at the current revision unblocks verification.
+	current := verifyRubric(t, f, q)
+	if current.Version != 2 || current.QuestionRevision != 2 {
+		t.Fatalf("new version = %+v, want version 2 at questionRevision 2", current)
+	}
+	verified, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer")
+	if err != nil || verified.Status != StatusVerified {
+		t.Fatalf("verify after a current rubric: q=%+v err=%v", verified, err)
+	}
+}
+
+// TestPostgresStore_Integration_ConcurrentRubricAllocationAndRevision checks that adding a
+// revision stamp did not weaken the row-locked allocator: concurrent writers still get distinct,
+// monotonic version numbers, and every version carries a revision the question actually had.
+func TestPostgresStore_Integration_ConcurrentRubricAllocationAndRevision(t *testing.T) {
+	f := newFixture(t)
+	q := f.createQuestion(t)
+	rubric, maxMarks := testRubric()
+
+	const writers = 6
+	var wg sync.WaitGroup
+	results := make([]RubricVersion, writers)
+	errs := make([]error, writers)
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i], errs[i] = f.store.CreateRubricVersion(f.ctx, q.ID, CreateRubricVersionInput{
+				ActorID: "test-editor", Rubric: rubric, MaxMarks: maxMarks,
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	seen := map[int]bool{}
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent create %d: %v", i, err)
+		}
+		v := results[i]
+		if seen[v.Version] {
+			t.Fatalf("version %d allocated twice", v.Version)
+		}
+		seen[v.Version] = true
+		if v.QuestionRevision != 1 {
+			t.Fatalf("version %d questionRevision = %d, want 1", v.Version, v.QuestionRevision)
+		}
+	}
+	for want := 1; want <= writers; want++ {
+		if !seen[want] {
+			t.Fatalf("version %d was never allocated: %v", want, seen)
+		}
+	}
+
+	// Now race edits against rubric creation. Whatever interleaving wins, every stored version
+	// must carry a revision the question genuinely passed through, and the question's final
+	// revision must equal 1 + the number of successful edits.
+	const editors = 4
+	edits := make([]error, editors)
+	creates := make([]error, editors)
+	for i := 0; i < editors; i++ {
+		wg.Add(2)
+		go func(i int) {
+			defer wg.Done()
+			prompt := "Concurrent original prompt " + strconv.Itoa(i)
+			_, edits[i] = f.store.UpdateQuestion(f.ctx, q.ID, UpdateInput{ActorID: "test-editor", Prompt: &prompt})
+		}(i)
+		go func(i int) {
+			defer wg.Done()
+			_, creates[i] = f.store.CreateRubricVersion(f.ctx, q.ID, CreateRubricVersionInput{
+				ActorID: "test-editor", Rubric: rubric, MaxMarks: maxMarks,
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	successfulEdits := 0
+	for _, err := range edits {
+		if err == nil {
+			successfulEdits++
+			continue
+		}
+		// A same-value prompt is the only legitimate failure here.
+		if !errors.Is(err, ErrNoChanges) {
+			t.Fatalf("concurrent edit: %v", err)
+		}
+	}
+	for _, err := range creates {
+		if err != nil {
+			t.Fatalf("concurrent rubric create during edits: %v", err)
+		}
+	}
+
+	final, err := f.store.GetQuestion(f.ctx, q.ID, false)
+	if err != nil {
+		t.Fatalf("get question: %v", err)
+	}
+	if final.ContentRevision != 1+successfulEdits {
+		t.Fatalf("contentRevision = %d, want %d (one per successful edit)", final.ContentRevision, 1+successfulEdits)
+	}
+
+	versions, err := f.store.ListRubricVersions(f.ctx, q.ID)
+	if err != nil {
+		t.Fatalf("list rubric versions: %v", err)
+	}
+	if len(versions) != writers+editors {
+		t.Fatalf("versions = %d, want %d", len(versions), writers+editors)
+	}
+	for i, v := range versions {
+		if v.Version != i+1 {
+			t.Fatalf("versions[%d].version = %d, want %d", i, v.Version, i+1)
+		}
+		if v.QuestionRevision < 1 || v.QuestionRevision > final.ContentRevision {
+			t.Fatalf("version %d carries questionRevision %d, outside 1..%d", v.Version, v.QuestionRevision, final.ContentRevision)
+		}
 	}
 }
 
@@ -636,7 +847,8 @@ func TestPostgresStore_Integration_AuditRecordsNamesOnly(t *testing.T) {
 
 	allowed := map[string]bool{
 		"syllabusId": true, "curriculumMapNodeId": true, "responseType": true, "language": true,
-		"prompt": true, "status": true, "rubricVersion": true, "rubricVersionStatus": true,
+		"prompt": true, "status": true, "contentRevision": true, "rubricVersion": true,
+		"questionRevision": true, "rubricVersionStatus": true,
 	}
 	seenActors := 0
 	for rows.Next() {
@@ -707,6 +919,55 @@ func TestPostgresStore_Integration_ListValidatesSyllabusAndFiltersNode(t *testin
 	}
 	if len(empty) != 0 {
 		t.Fatalf("empty node filter returned %d items, want 0", len(empty))
+	}
+}
+
+// TestPostgresStore_Integration_ListValidatesNodeFilter covers the review fix: an optional node
+// filter is resolved against the curriculum map instead of being passed straight into the WHERE
+// clause, where an unknown or foreign node produced an indistinguishable empty 200.
+func TestPostgresStore_Integration_ListValidatesNodeFilter(t *testing.T) {
+	f := newFixture(t)
+
+	otherSource := seedApprovedLinkedSource(t, f.db, f.otherSyl)
+	foreignNode := seedNode(t, f.db, f.otherSyl, otherSource, "verified")
+
+	for name, tc := range map[string]struct {
+		nodeID  string
+		wantErr error
+	}{
+		"unknown node":      {"00000000-0000-0000-0000-000000000000", ErrUnknownNode},
+		"malformed node id": {"not-a-uuid", ErrUnknownNode},
+		"empty node id":     {"", ErrUnknownNode},
+		"foreign node":      {foreignNode, ErrMismatchedNode},
+	} {
+		t.Run(name, func(t *testing.T) {
+			node := tc.nodeID
+			if _, err := f.store.ListQuestions(f.ctx, f.syllabusID, &node, true); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+
+	// A real node of this syllabus with no verified questions is still 200-with-empty, not an
+	// error — including a draft node, which a reader may legitimately filter by.
+	draftNode := seedNode(t, f.db, f.syllabusID, f.sourceID, "draft")
+	for name, node := range map[string]string{"verified node": f.nodeID, "draft node": draftNode} {
+		t.Run(name+" with no questions", func(t *testing.T) {
+			n := node
+			items, err := f.store.ListQuestions(f.ctx, f.syllabusID, &n, true)
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			if len(items) != 0 {
+				t.Fatalf("items = %d, want 0", len(items))
+			}
+		})
+	}
+
+	// The syllabus is still resolved first: a bad syllabus wins over the node filter.
+	node := f.nodeID
+	if _, err := f.store.ListQuestions(f.ctx, "not-a-uuid", &node, true); !errors.Is(err, ErrUnknownSyllabus) {
+		t.Fatalf("unknown syllabus with a node filter: err = %v, want ErrUnknownSyllabus", err)
 	}
 }
 

@@ -62,7 +62,7 @@ const (
 )
 
 // Question is an original question record: curriculum grounding, response shape, language,
-// original prompt, and lifecycle status.
+// original prompt, lifecycle status, and the revision of its content.
 type Question struct {
 	ID                  string       `json:"id"`
 	SyllabusID          string       `json:"syllabusId"`
@@ -71,24 +71,32 @@ type Question struct {
 	Language            string       `json:"language"`
 	Prompt              string       `json:"prompt"`
 	Status              Status       `json:"status"`
-	CreatedAt           time.Time    `json:"createdAt"`
-	UpdatedAt           time.Time    `json:"updatedAt"`
+	// ContentRevision starts at 1 and increases by exactly one on every successful draft-content
+	// update. It is never caller-settable. A rubric version is only current — and so only counts
+	// towards question verification — while its QuestionRevision equals this value.
+	ContentRevision int       `json:"contentRevision"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 // RubricVersion is one immutable, numbered marking rubric for a question. Its content
-// (question, version, rubric structure, maximum marks, creator) never changes after creation;
-// only verification metadata does.
+// (question, question revision, version, rubric structure, maximum marks, creator) never changes
+// after creation; only verification metadata does.
 type RubricVersion struct {
-	ID         string          `json:"id"`
-	QuestionID string          `json:"questionId"`
-	Version    int             `json:"version"`
-	Rubric     json.RawMessage `json:"rubric"`
-	MaxMarks   int             `json:"maxMarks"`
-	Status     RubricStatus    `json:"status"`
-	CreatedBy  string          `json:"createdBy"`
-	ReviewedBy *string         `json:"reviewedBy"`
-	CreatedAt  time.Time       `json:"createdAt"`
-	UpdatedAt  time.Time       `json:"updatedAt"`
+	ID         string `json:"id"`
+	QuestionID string `json:"questionId"`
+	Version    int    `json:"version"`
+	// QuestionRevision is the question's ContentRevision at the moment this version was created:
+	// the exact question content the reviewer marked against. When the question is edited, this
+	// version becomes stale for question verification but remains readable and immutable.
+	QuestionRevision int             `json:"questionRevision"`
+	Rubric           json.RawMessage `json:"rubric"`
+	MaxMarks         int             `json:"maxMarks"`
+	Status           RubricStatus    `json:"status"`
+	CreatedBy        string          `json:"createdBy"`
+	ReviewedBy       *string         `json:"reviewedBy"`
+	CreatedAt        time.Time       `json:"createdAt"`
+	UpdatedAt        time.Time       `json:"updatedAt"`
 }
 
 // EventType is the kind of change recorded in a question audit event.

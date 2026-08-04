@@ -372,11 +372,23 @@ export interface Question {
   /** ORIGINAL question body, authored privately at runtime. */
   prompt: string;
   status: QuestionStatus;
+  /**
+   * Revision of the question's content. Starts at 1 and increases by exactly one on every
+   * successful draft update (curriculumMapNodeId, responseType, language, prompt); a rejected or
+   * no-op update never moves it. Never caller-settable. A rubric version only counts towards
+   * question verification while its questionRevision equals this value.
+   */
+  contentRevision: number;
   createdAt: string;
   updatedAt: string;
 }
 
-/** One marking criterion. `descriptor` is original editorial wording, never a mark scheme. */
+/**
+ * One marking criterion. `descriptor` is original editorial wording, never a mark scheme.
+ *
+ * Core matches these key names EXACTLY and case-sensitively: `Id`, `Marks`, or `Descriptor` are
+ * rejected as `invalid_rubric`, as are unknown keys and duplicate keys.
+ */
 export interface RubricCriterion {
   id: string;
   /** Positive integer; criterion marks must sum exactly to the version's maxMarks. */
@@ -384,21 +396,31 @@ export interface RubricCriterion {
   descriptor?: string;
 }
 
-/** The validation-safe rubric structure Core accepts. Unknown fields are rejected. */
+/**
+ * The validation-safe rubric structure Core accepts. `criteria` is the only permitted key, spelled
+ * exactly that way; unknown keys, case variants, and duplicate keys are all rejected.
+ */
 export interface RubricStructure {
   criteria: RubricCriterion[];
 }
 
 /**
- * An immutable, numbered rubric for a question. Its question, version, structure, maximum marks,
- * and creator never change after creation (enforced by a database trigger); only verification
- * metadata does.
+ * An immutable, numbered rubric for a question. Its question, question revision, version,
+ * structure, maximum marks, and creator never change after creation (enforced by a database
+ * trigger); only verification metadata does.
  */
 export interface QuestionRubricVersion {
   id: string;
   questionId: string;
   /** Positive, allocated server-side per question — never caller-supplied. */
   version: number;
+  /**
+   * The question's contentRevision when this version was created: the exact question content the
+   * reviewer marked against. Stamped server-side. Editing the question makes older versions stale
+   * for question verification — they stay verified, readable, and immutable, but a question can
+   * only be verified with a verified version at its current revision.
+   */
+  questionRevision: number;
   rubric: RubricStructure;
   maxMarks: number;
   status: RubricVersionStatus;

@@ -37,7 +37,8 @@ can be created for either syllabus.** That is the intended state.
 
 ## Schema
 
-Tables live in `services/core/migrations` (0012–0014).
+Tables live in `services/core/migrations` (0012–0014); migration 0015 adds the content-revision
+columns described below.
 
 ### `questions`
 
@@ -50,6 +51,7 @@ Tables live in `services/core/migrations` (0012–0014).
 | `language` | TEXT | opaque non-empty tag (e.g. `en`); no language registry exists yet |
 | `prompt` | TEXT | **original** question body, written at runtime by the private workflow |
 | `status` | TEXT | `draft` \| `verified` \| `retired` (default `draft`) |
+| `content_revision` | INTEGER, `CHECK (> 0)` | starts at 1; **+1 per successful content update** |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
 
 ### `question_rubric_versions`
@@ -59,6 +61,7 @@ Tables live in `services/core/migrations` (0012–0014).
 | `id` | UUID PK | stable id |
 | `question_id` | UUID FK → `questions` | |
 | `version` | INTEGER, `CHECK (version > 0)` | allocated server-side under a row lock on the question |
+| `question_revision` | INTEGER, `CHECK (> 0)` | the question's `content_revision` at creation — the content this rubric was reviewed against |
 | `rubric` | JSONB | validation-safe structure (below); **original** editorial content |
 | `max_marks` | INTEGER, `CHECK (max_marks > 0)` | must equal the sum of criterion marks |
 | `status` | TEXT | `draft` \| `verified` (a version is superseded, never retired) |
@@ -68,10 +71,43 @@ Tables live in `services/core/migrations` (0012–0014).
 **Uniqueness:** `UNIQUE (question_id, version)`.
 
 **Immutability (database-enforced):** a `BEFORE UPDATE OR DELETE` trigger rejects every `DELETE`
-and any `UPDATE` that changes `question_id`, `version`, `rubric`, `max_marks`, `created_by`, or
-`created_at`. Only `status`, `reviewed_by`, and `updated_at` may change — i.e. verification, and
-nothing else. Correcting a rubric therefore means appending a **new version**, which is what makes
-a marked answer explainable by the exact rubric that produced it.
+and any `UPDATE` that changes `question_id`, `version`, `question_revision`, `rubric`, `max_marks`,
+`created_by`, or `created_at`. Only `status`, `reviewed_by`, and `updated_at` may change — i.e.
+verification, and nothing else. Correcting a rubric therefore means appending a **new version**,
+which is what makes a marked answer explainable by the exact rubric that produced it.
+`question_revision` is inside the immutable set on purpose: question verification reads it, so a
+direct SQL rewrite would otherwise be a way to re-point a stale version at current content.
+
+## Content revision: a rubric belongs to the question content it was reviewed against
+
+A rubric is only meaningful for the question wording, response type, language, and objective it was
+written for. Without a link between the two, a draft question could gain a **verified** rubric and
+then be edited, and question verification would still accept a rubric nobody reviewed against the
+current text.
+
+- `questions.content_revision` starts at **1** and is incremented by **exactly one**, inside the
+  transaction of every **successful** draft content update (`curriculumMapNodeId`, `responseType`,
+  `language`, `prompt`). `no_changes`, a validation failure, a grounding failure, a strict-decoding
+  rejection, and a lifecycle transition (verify/retire) all leave it untouched. It is never
+  caller-settable.
+- Every rubric version stores the `content_revision` that was current when it was created, under
+  the same row lock that allocated its version number.
+- A rubric version is **current** only while its `question_revision` equals the question's
+  `content_revision`.
+- **Verifying a question requires at least one verified rubric version for the current revision.**
+  A verified version from an older revision does not count.
+
+An edit therefore **stales** older versions rather than deleting or downgrading them: they stay
+`verified`, immutable, and readable to editorial roles, and they remain the correct record of what
+was marked at that revision. The remedy is to append a new version — which picks up the current
+revision automatically — and have a reviewer verify it; the question can then be verified.
+
+Because the two failures need different fixes, they have different stable codes:
+
+| Situation | Response |
+| --- | --- |
+| No verified rubric version at all | `409 missing_verified_rubric` |
+| Verified versions exist, all from older revisions | `409 missing_current_verified_rubric` |
 
 ### `question_events` (immutable audit)
 
@@ -97,12 +133,23 @@ The only accepted shape, validated in full before any write:
 }
 ```
 
-- `criteria` must be a non-empty array (bounded at 200 entries).
-- Each criterion needs a non-blank, unique `id` and a **positive integer** `marks`; `descriptor`
-  is optional but must be non-blank when present.
-- Unknown fields — on the document or on a criterion — are rejected.
+- **Every key is matched exactly and case-sensitively.** The document accepts `criteria` and
+  nothing else; a criterion accepts `id`, `marks`, and `descriptor` and nothing else. `Criteria`,
+  `ID`, `Marks`, `Descriptor`, a key with stray whitespace, an unknown key, a key at the wrong
+  level, and a **duplicate** key are all rejected.
+- `criteria` must be a non-empty array (bounded at 200 entries) of **objects**.
+- Each criterion needs a non-blank, unique `id` (a JSON string) and a **positive integer** `marks`
+  (a JSON number, not `"3"`, not `1.5`); `descriptor` is optional, may be explicitly `null`, and
+  must be a non-blank string otherwise.
+- Trailing JSON after the document is rejected.
 - **Criterion marks must sum exactly to `maxMarks`**, so a rubric can never award more or fewer
   marks than the question is worth.
+
+Validation is written against `encoding/json`'s token API rather than a struct or map decode,
+because neither of those can enforce the schema: Go matches struct field names **case-insensitively**
+(so `DisallowUnknownFields` still accepts `{"Criteria":[{"ID":…}]}`), and both a struct and a map
+silently keep the last value of a duplicated key instead of rejecting it. This mirrors the
+case-sensitive allowlist the HTTP handlers already apply to request bodies.
 
 A rubric is validated twice: when the version is created, and again when it is verified (the point
 at which it becomes usable). Failures return `400 invalid_rubric` or `400 invalid_max_marks` and
@@ -152,14 +199,18 @@ rubric version: draft --(verify)--> verified   (superseded by a new version, nev
 - **Create** always produces a `draft` question; `status` is never caller-settable.
 - **PATCH** (`curriculumMapNodeId`, `responseType`, `language`, `prompt` — and nothing else) only
   succeeds while `status = draft`; otherwise `409 invalid_lifecycle_transition`. `status` itself is
-  never PATCHable.
+  never PATCHable. A successful PATCH increments `content_revision` by one and so stales every
+  existing rubric version for verification purposes.
 - **Rubric versions may only be appended to a `draft` question.** Version numbers are allocated
-  server-side, are positive, and increase monotonically per question.
+  server-side, are positive, and increase monotonically per question; each version is stamped with
+  the question's current `content_revision`.
 - **Verify a rubric version** (`draft → verified`) requires `question:verify` and a parent question
-  that is `draft` or `verified`. Re-verifying a verified version is `409`.
+  that is `draft` or `verified`. Re-verifying a verified version is `409`. A version from an older
+  revision may still be verified — it simply does not unblock question verification.
 - **Verify a question** (`draft → verified`) requires `question:verify` **and at least one verified
-  rubric version** — otherwise `409 missing_verified_rubric`. A draft rubric version does not
-  count.
+  rubric version for the question's current revision** — otherwise `409 missing_verified_rubric`
+  (nothing verified) or `409 missing_current_verified_rubric` (only stale versions verified). A
+  draft rubric version does not count.
 - **Retire a question** (`draft`/`verified` → `retired`) requires `question:verify`. Retiring an
   already-retired question is `409`.
 - **Reader endpoints return verified questions only**, so retiring a question removes it from every
@@ -193,7 +244,7 @@ no effect at all on the `map[string]json.RawMessage` decode used to tell "field 
 
 | Method & path | Permission | Roles | Notes |
 | --- | --- | --- | --- |
-| `GET /questions?syllabusId=...&curriculumMapNodeId=...` | `question:read` | editor, reviewer, admin | verified only; `syllabusId` required and must resolve to an **active** catalogue syllabus; node filter optional |
+| `GET /questions?syllabusId=...&curriculumMapNodeId=...` | `question:read` | editor, reviewer, admin | verified only; `syllabusId` required and must resolve to an **active** catalogue syllabus; node filter optional but **validated** |
 | `GET /questions/{id}` | `question:read` | editor, reviewer, admin | verified only (404 otherwise) |
 | `POST /questions` | `question:create` | editor, reviewer, admin | creates a draft |
 | `PATCH /questions/{id}` | `question:create` | editor, reviewer, admin | draft only |
@@ -208,18 +259,30 @@ no effect at all on the `map[string]json.RawMessage` decode used to tell "field 
 `no_updatable_fields`, `no_changes`, `unknown_syllabus`, `unknown_node`, `unverified_node`,
 `mismatched_node`, `unknown_source`, `unapproved_source`, `unlinked_source`, `mismatched_source`,
 `invalid_rubric`, `invalid_max_marks`); `409` conflict (`invalid_lifecycle_transition`,
-`missing_verified_rubric`, `duplicate_rubric_version`); `404` not found.
+`missing_verified_rubric`, `missing_current_verified_rubric`, `duplicate_rubric_version`); `404`
+not found.
 
 `500 internal_error` (database, scan, transaction, or other infrastructure failure) always returns
 the same stable, generic message. Raw driver/Go error text is never forwarded to a client.
 
 ### Listing is validated, not silently empty
 
-`GET /questions` resolves `syllabusId` against the catalogue **before** returning a result: an
-unknown, malformed, or non-`active` syllabus is `400 unknown_syllabus`; a known active syllabus
-with no verified questions is `200` with an empty `items` list. A typo is therefore never
-indistinguishable from a real syllabus whose questions have not been authored yet — which matters
-while no questions exist at all.
+`GET /questions` resolves **both** filters against the database before returning a result, so a
+typo is never indistinguishable from a real filter whose questions have not been authored yet —
+which matters while no questions exist at all:
+
+1. `syllabusId` — unknown, malformed, or non-`active` → `400 unknown_syllabus` (checked first, so
+   a bad syllabus wins over the node filter);
+2. `curriculumMapNodeId`, when supplied — unknown or malformed → `400 unknown_node`; belonging to
+   another syllabus → `400 mismatched_node`.
+
+A known active syllabus, plus a node of that syllabus if supplied, with no verified questions is
+`200` with an empty `items` list.
+
+The node **filter** is checked more weakly than the [grounding gate](#the-grounding-gate): it
+requires only that the node exists and belongs to the syllabus, not that it is verified or that its
+source still passes the gate. A reader may legitimately filter by a node that has since been
+retired, and gets an empty list rather than an error.
 
 ## Roles
 
@@ -247,9 +310,9 @@ subject** and the **names** of the fields involved:
 | Action | `event_type` | `changed_fields` |
 | --- | --- | --- |
 | create question | `question_created` | `syllabusId`, `curriculumMapNodeId`, `responseType`, `language`, `prompt` |
-| PATCH question | `question_updated` | only the names that actually changed |
+| PATCH question | `question_updated` | only the names that actually changed, plus `contentRevision` |
 | verify / retire question | `question_verified` / `question_retired` | `status` |
-| create rubric version | `rubric_version_created` | `rubricVersion` |
+| create rubric version | `rubric_version_created` | `rubricVersion`, `questionRevision` |
 | verify rubric version | `rubric_version_verified` | `rubricVersionStatus` |
 
 ## Future AI boundary
@@ -259,7 +322,8 @@ generation are built (per D-0003: Anthropic only, Haiku for routine work, Sonnet
 marking), the boundary is:
 
 - **AI consumes, never authors.** A marking or explanation call reads a **verified** question and a
-  **verified** rubric version. It may not create, update, verify, or retire either, and it may not
+  **verified** rubric version for that question's current `contentRevision` — the pairing the
+  revision stamp exists to guarantee. It may not create, update, verify, or retire either, and it may not
   evaluate or bypass the grounding gate — Core remains the sole authority.
 - **The rubric version is part of the cache key.** The canonical explanation cache key is
   `question + syllabus + rubric + language + explanation version`; the immutable rubric **version**

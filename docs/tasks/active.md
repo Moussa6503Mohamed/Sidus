@@ -21,8 +21,8 @@ workflow** that is out of scope here.
 
 ### Scope
 
-- New tables `questions`, `question_rubric_versions`, `question_events` (migrations 0012–0014),
-  new package `services/core/internal/question`.
+- New tables `questions`, `question_rubric_versions`, `question_events` (migrations 0012–0014,
+  plus additive 0015 for content revision), new package `services/core/internal/question`.
 - Question fields: stable id, syllabus FK, curriculum-map-node FK, response type
   (`multiple_choice` | `short_answer` | `structured_response`), language, original question
   prompt/body, lifecycle status (`draft` | `verified` | `retired`), timestamps.
@@ -61,19 +61,39 @@ workflow** that is out of scope here.
   instead, which re-validates the syllabus match.
 - **Rubric versions are append-only per question.** `UNIQUE (question_id, version)`, version
   allocated inside the write transaction under a row lock on the question, and a DB trigger
-  rejects any `UPDATE` that changes `question_id`, `version`, `rubric`, or `max_marks` — only
-  `status`/`reviewed_by`/`updated_at` may change (verification).
+  rejects any `UPDATE` that changes `question_id`, `version`, `question_revision`, `rubric`, or
+  `max_marks` — only `status`/`reviewed_by`/`updated_at` may change (verification).
+- **A rubric version is bound to the question content it was reviewed against** (review fix 1,
+  migration 0015). `questions.content_revision` starts at 1 and is incremented by exactly one per
+  successful draft content update; every rubric version stores the revision current at its
+  creation. A version counts towards question verification only while the two are equal. An edit
+  stales older versions without deleting or downgrading them.
 - **Rubric JSONB has a validation-safe schema** validated before any write: a non-empty
   `criteria` array of objects with a non-empty `id`, a positive integer `marks`, and an optional
-  `descriptor`; unknown keys rejected; criterion marks must sum exactly to `maxMarks`.
-- **A question can only be verified when it has at least one verified rubric version**, checked
-  inside the verifying transaction.
+  `descriptor`; criterion marks must sum exactly to `maxMarks`. Every key is matched **exactly and
+  case-sensitively** at every level, and unknown keys, case variants, duplicate keys, wrongly-typed
+  values, and trailing JSON are all rejected (review fix 2).
+- **A question can only be verified when it has at least one verified rubric version for its
+  current content revision**, checked inside the verifying transaction. No verified version at all
+  is `409 missing_verified_rubric`; verified versions that all predate the current content are
+  `409 missing_current_verified_rubric` (review fix 1).
 - **Retired questions disappear from reader endpoints** (verified-only reads), mirroring the
   curriculum-map/catalogue reader pattern.
+
+- **`GET /questions` validates the optional node filter** (review fix 3): unknown/malformed →
+  `400 unknown_node`, a real node of another syllabus → `400 mismatched_node`, a valid matching
+  node with no verified questions → `200` with empty `items`. Weaker than the grounding gate on
+  purpose — a retired node filters to an empty list, not an error.
 
 ### Acceptance checks
 
 - Migrations bootstrap on an empty database and are idempotent on rerun.
+- Content revision increments exactly once per successful edit; never on `no_changes`, a rejected
+  write, or a lifecycle transition.
+- A question cannot be verified with only a rubric verified against an older revision; stale
+  versions stay verified, immutable, and readable.
+- Rubric JSON rejects case variants and duplicate keys at every level.
+- The optional node filter on listing is validated.
 - No seeded question or rubric text anywhere in the repository.
 - Question syllabus must equal the mapped node's syllabus; draft/retired/missing nodes rejected.
 - Verified node + source gate revalidated on every question write and verification.

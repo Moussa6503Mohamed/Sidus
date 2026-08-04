@@ -46,9 +46,15 @@ var ErrNoChanges = errors.New("supplied fields match current values")
 // not permit it.
 var ErrInvalidTransition = errors.New("question lifecycle transition is not allowed")
 
-// ErrMissingVerifiedRubric is returned when a question is verified without at least one verified
-// rubric version.
+// ErrMissingVerifiedRubric is returned when a question is verified while it has no verified
+// rubric version at all.
 var ErrMissingVerifiedRubric = errors.New("question requires at least one verified rubric version")
+
+// ErrStaleVerifiedRubric is returned when a question has verified rubric versions, but every one
+// of them was reviewed against an older revision of the question's content. It is deliberately
+// distinct from ErrMissingVerifiedRubric: "you reviewed a rubric, then edited the question" needs
+// a different fix (append and verify a new rubric version) from "you never reviewed a rubric".
+var ErrStaleVerifiedRubric = errors.New("every verified rubric version was reviewed against an older question revision")
 
 // ErrInvalidRubric is returned when a rubric payload does not match the validation-safe schema.
 var ErrInvalidRubric = errors.New("rubric structure is invalid")
@@ -76,11 +82,14 @@ type Store interface {
 
 	// UpdateQuestion applies a partial update to a draft question (ErrInvalidTransition
 	// otherwise). A supplied node is validated as the effective node; otherwise the stored one
-	// is re-validated.
+	// is re-validated. A successful update increments the question's ContentRevision by exactly
+	// one; ErrNoChanges and any rejected write leave it untouched.
 	UpdateQuestion(ctx context.Context, id string, in UpdateInput) (Question, error)
 
 	// VerifyQuestion transitions a draft question to verified. It requires at least one verified
-	// rubric version.
+	// rubric version whose QuestionRevision equals the question's current ContentRevision —
+	// otherwise ErrMissingVerifiedRubric (none verified at all) or ErrStaleVerifiedRubric (all
+	// verified versions predate the question's current content).
 	VerifyQuestion(ctx context.Context, id string, actorID string) (Question, error)
 
 	// RetireQuestion transitions a draft or verified question to retired, hiding it from every
@@ -93,12 +102,15 @@ type Store interface {
 
 	// ListQuestions returns questions for a syllabus, optionally narrowed to one curriculum-map
 	// node. The syllabus must resolve to a known active catalogue syllabus (ErrUnknownSyllabus
-	// otherwise) — an unknown or inactive syllabus is never reported as an empty list. When
-	// verifiedOnly is true only verified questions are returned.
+	// otherwise) and a supplied node filter must exist (ErrUnknownNode) and belong to that
+	// syllabus (ErrMismatchedNode) — neither an unknown syllabus nor an unknown or foreign node
+	// is ever reported as an empty list. When verifiedOnly is true only verified questions are
+	// returned.
 	ListQuestions(ctx context.Context, syllabusID string, nodeID *string, verifiedOnly bool) ([]Question, error)
 
 	// CreateRubricVersion appends a draft rubric version to a draft question, allocating the next
-	// positive version number under a row lock on the question.
+	// positive version number under a row lock on the question and stamping the question's
+	// current ContentRevision onto the version.
 	CreateRubricVersion(ctx context.Context, questionID string, in CreateRubricVersionInput) (RubricVersion, error)
 
 	// ListRubricVersions returns every rubric version for a question, oldest first. It is an

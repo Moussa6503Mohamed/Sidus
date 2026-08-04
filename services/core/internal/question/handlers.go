@@ -452,6 +452,10 @@ func mapQuestionError(err error) (questionErrorMapping, bool) {
 		return questionErrorMapping{http.StatusBadRequest, "no_changes", err.Error()}, true
 	case errors.Is(err, ErrMissingVerifiedRubric):
 		return questionErrorMapping{http.StatusConflict, "missing_verified_rubric", err.Error()}, true
+	case errors.Is(err, ErrStaleVerifiedRubric):
+		// Distinct from missing_verified_rubric: a rubric WAS verified, then the question's
+		// content changed. Reusing the generic code would tell an editor to do the wrong thing.
+		return questionErrorMapping{http.StatusConflict, "missing_current_verified_rubric", err.Error()}, true
 	case errors.Is(err, ErrInvalidTransition):
 		return questionErrorMapping{http.StatusConflict, "invalid_lifecycle_transition", err.Error()}, true
 	case errors.Is(err, ErrDuplicateRubricVersion):

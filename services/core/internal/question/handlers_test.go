@@ -155,6 +155,7 @@ func (m *memoryStore) CreateQuestion(_ context.Context, in CreateInput) (Questio
 		Language:            in.Language,
 		Prompt:              in.Prompt,
 		Status:              StatusDraft,
+		ContentRevision:     1,
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
@@ -199,6 +200,9 @@ func (m *memoryStore) UpdateQuestion(_ context.Context, id string, in UpdateInpu
 	if len(changed) == 0 {
 		return Question{}, ErrNoChanges
 	}
+	// Exactly one increment per successful content update — mirrors PostgresStore.
+	q.ContentRevision++
+	changed = append(changed, "contentRevision")
 	q.UpdatedAt = time.Now().UTC()
 	m.questions[id] = q
 	m.events = append(m.events, Event{QuestionID: id, EventType: EventQuestionUpdated, ActorID: in.ActorID, ChangedFields: changed, EventTime: q.UpdatedAt})
@@ -216,15 +220,21 @@ func (m *memoryStore) VerifyQuestion(_ context.Context, id, actorID string) (Que
 	if err := m.validateGrounding(q.CurriculumMapNodeID, q.SyllabusID); err != nil {
 		return Question{}, err
 	}
-	verified := false
+	verifiedTotal, verifiedCurrent := 0, 0
 	for _, v := range m.rubrics[id] {
-		if v.Status == RubricVerified {
-			verified = true
-			break
+		if v.Status != RubricVerified {
+			continue
+		}
+		verifiedTotal++
+		if v.QuestionRevision == q.ContentRevision {
+			verifiedCurrent++
 		}
 	}
-	if !verified {
-		return Question{}, ErrMissingVerifiedRubric
+	if verifiedCurrent == 0 {
+		if verifiedTotal == 0 {
+			return Question{}, ErrMissingVerifiedRubric
+		}
+		return Question{}, ErrStaleVerifiedRubric
 	}
 	q.Status = StatusVerified
 	q.UpdatedAt = time.Now().UTC()
@@ -263,6 +273,17 @@ func (m *memoryStore) ListQuestions(_ context.Context, syllabusID string, nodeID
 	if !m.activeSyllabuses[syllabusID] {
 		return nil, ErrUnknownSyllabus
 	}
+	// Mirrors PostgresStore: an unknown or foreign node filter is a stable 400, never an empty
+	// 200 that a caller cannot distinguish from "no questions authored yet".
+	if nodeID != nil {
+		n, ok := m.nodes[*nodeID]
+		if !ok {
+			return nil, ErrUnknownNode
+		}
+		if n.syllabusID != syllabusID {
+			return nil, ErrMismatchedNode
+		}
+	}
 	out := []Question{}
 	for _, q := range m.questions {
 		if q.SyllabusID != syllabusID {
@@ -296,18 +317,19 @@ func (m *memoryStore) CreateRubricVersion(_ context.Context, questionID string, 
 	next := len(m.rubrics[questionID]) + 1
 	now := time.Now().UTC()
 	v := RubricVersion{
-		ID:         fmt.Sprintf("%s-rubric-%d", questionID, next),
-		QuestionID: questionID,
-		Version:    next,
-		Rubric:     in.Rubric,
-		MaxMarks:   in.MaxMarks,
-		Status:     RubricDraft,
-		CreatedBy:  in.ActorID,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:               fmt.Sprintf("%s-rubric-%d", questionID, next),
+		QuestionID:       questionID,
+		Version:          next,
+		QuestionRevision: q.ContentRevision,
+		Rubric:           in.Rubric,
+		MaxMarks:         in.MaxMarks,
+		Status:           RubricDraft,
+		CreatedBy:        in.ActorID,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 	m.rubrics[questionID] = append(m.rubrics[questionID], v)
-	m.events = append(m.events, Event{QuestionID: questionID, EventType: EventRubricVersionCreated, ActorID: in.ActorID, ChangedFields: []string{"rubricVersion"}, EventTime: now})
+	m.events = append(m.events, Event{QuestionID: questionID, EventType: EventRubricVersionCreated, ActorID: in.ActorID, ChangedFields: []string{"rubricVersion", "questionRevision"}, EventTime: now})
 	return v, nil
 }
 
@@ -813,6 +835,25 @@ func TestCreateRubricVersion_InvalidRubricOrMarks_Returns400(t *testing.T) {
 		"missing criterion marks":      {`{"rubric":{"criteria":[{"id":"c1"}]},"maxMarks":3}`, "invalid_rubric"},
 		"blank descriptor":             {`{"rubric":{"criteria":[{"id":"c1","marks":3,"descriptor":" "}]},"maxMarks":3}`, "invalid_rubric"},
 		"rubric is not an object":      {`{"rubric":[1,2,3],"maxMarks":3}`, "invalid_rubric"},
+
+		// Case variants of every rubric key. Go's struct decoding matches JSON names
+		// case-insensitively, so these were previously ACCEPTED despite the documented schema.
+		"Criteria case variant":   {`{"rubric":{"Criteria":[{"id":"c1","marks":3}]},"maxMarks":3}`, "invalid_rubric"},
+		"CRITERIA case variant":   {`{"rubric":{"CRITERIA":[{"id":"c1","marks":3}]},"maxMarks":3}`, "invalid_rubric"},
+		"ID case variant":         {`{"rubric":{"criteria":[{"ID":"c1","marks":3}]},"maxMarks":3}`, "invalid_rubric"},
+		"Marks case variant":      {`{"rubric":{"criteria":[{"id":"c1","Marks":3}]},"maxMarks":3}`, "invalid_rubric"},
+		"Descriptor case variant": {`{"rubric":{"criteria":[{"id":"c1","marks":3,"Descriptor":"x"}]},"maxMarks":3}`, "invalid_rubric"},
+
+		// Structural abuse the schema must not admit.
+		"duplicate criteria key":   {`{"rubric":{"criteria":[{"id":"c1","marks":3}],"criteria":[{"id":"c2","marks":3}]},"maxMarks":3}`, "invalid_rubric"},
+		"duplicate criterion key":  {`{"rubric":{"criteria":[{"id":"c1","marks":1,"marks":3}]},"maxMarks":3}`, "invalid_rubric"},
+		"criterion is not object":  {`{"rubric":{"criteria":["c1"]},"maxMarks":3}`, "invalid_rubric"},
+		"criterion is null":        {`{"rubric":{"criteria":[null]},"maxMarks":3}`, "invalid_rubric"},
+		"criteria is null":         {`{"rubric":{"criteria":null},"maxMarks":3}`, "invalid_rubric"},
+		"id is not a string":       {`{"rubric":{"criteria":[{"id":7,"marks":3}]},"maxMarks":3}`, "invalid_rubric"},
+		"marks is a string":        {`{"rubric":{"criteria":[{"id":"c1","marks":"3"}]},"maxMarks":3}`, "invalid_rubric"},
+		"marks is fractional":      {`{"rubric":{"criteria":[{"id":"c1","marks":1.5},{"id":"c2","marks":1.5}]},"maxMarks":3}`, "invalid_rubric"},
+		"descriptor is not string": {`{"rubric":{"criteria":[{"id":"c1","marks":3,"descriptor":7}]},"maxMarks":3}`, "invalid_rubric"},
 	}
 
 	for name, tc := range cases {
@@ -1140,11 +1181,271 @@ func TestAuditNeverStoresContent(t *testing.T) {
 		for _, f := range e.ChangedFields {
 			switch f {
 			case "curriculumMapNodeId", "responseType", "language", "prompt", "status",
-				"syllabusId", "rubricVersion", "rubricVersionStatus":
+				"syllabusId", "contentRevision", "rubricVersion", "questionRevision",
+				"rubricVersionStatus":
 			default:
 				t.Fatalf("changed field %q is not a known field name — audit must never carry values", f)
 			}
 		}
+	}
+}
+
+// --- Question content revision: a rubric must match the question it was reviewed against ---
+
+// patchPrompt applies a prompt edit and returns the updated question.
+func patchPrompt(t *testing.T, srvURL, id, prompt string) Question {
+	t.Helper()
+	resp := doJSON(t, http.MethodPatch, srvURL+"/questions/"+id, map[string]any{"prompt": prompt})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("patch status = %d, want 200", resp.StatusCode)
+	}
+	return decodeJSON[Question](t, resp)
+}
+
+func TestCreateQuestion_StartsAtRevisionOne(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	if q := createQuestion(t, srv.URL); q.ContentRevision != 1 {
+		t.Fatalf("contentRevision = %d, want 1", q.ContentRevision)
+	}
+}
+
+// TestUpdateQuestion_IncrementsRevisionExactlyOnce covers each editable content field: one
+// successful update must move the revision by exactly one, never more.
+func TestUpdateQuestion_IncrementsRevisionExactlyOnce(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	q := createQuestion(t, srv.URL)
+	want := q.ContentRevision
+
+	for _, patch := range []map[string]any{
+		{"prompt": "A second original prompt."},
+		{"language": "fr"},
+		{"responseType": "structured_response"},
+		{"curriculumMapNodeId": "node-verified-2"},
+		// A multi-field update is still one revision.
+		{"prompt": "A third original prompt.", "language": "de"},
+	} {
+		want++
+		resp := doJSON(t, http.MethodPatch, srv.URL+"/questions/"+q.ID, patch)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("patch %v status = %d, want 200", patch, resp.StatusCode)
+		}
+		if updated := decodeJSON[Question](t, resp); updated.ContentRevision != want {
+			t.Fatalf("contentRevision after %v = %d, want %d", patch, updated.ContentRevision, want)
+		}
+	}
+}
+
+// TestUpdateQuestion_RejectedWritesLeaveRevisionUnchanged pins the other half of the invariant: a
+// no-op or rejected update must not burn a revision, which would silently stale every rubric.
+func TestUpdateQuestion_RejectedWritesLeaveRevisionUnchanged(t *testing.T) {
+	cases := map[string]struct {
+		body       string
+		wantStatus int
+	}{
+		"no changes":         {`{"prompt":"Original question body written by an editor."}`, http.StatusBadRequest},
+		"no updatable field": {`{}`, http.StatusBadRequest},
+		"blank field":        {`{"prompt":"   "}`, http.StatusBadRequest},
+		"unknown field":      {`{"prompt":"new","totallyUnknown":1}`, http.StatusBadRequest},
+		"immutable field":    {`{"prompt":"new","syllabusId":"syl-other-active"}`, http.StatusBadRequest},
+		"invalid node":       {`{"curriculumMapNodeId":"node-draft"}`, http.StatusBadRequest},
+		"malformed json":     {`{"prompt":`, http.StatusBadRequest},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+
+			q := createQuestion(t, srv.URL)
+			before := snapshotOf(t, store, q.ID)
+
+			resp := doRaw(t, http.MethodPatch, srv.URL+"/questions/"+q.ID, tc.body)
+			if resp.StatusCode != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.wantStatus)
+			}
+			resp.Body.Close()
+			// assertUnchanged compares the whole question, contentRevision included.
+			assertUnchanged(t, store, q.ID, before)
+			if store.questions[q.ID].ContentRevision != before.question.ContentRevision {
+				t.Fatalf("contentRevision = %d, want %d (a rejected write must not consume a revision)",
+					store.questions[q.ID].ContentRevision, before.question.ContentRevision)
+			}
+		})
+	}
+}
+
+func TestCreateRubricVersion_StampsCurrentQuestionRevision(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	q := createQuestion(t, srv.URL)
+	first := decodeJSON[RubricVersion](t, doJSON(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions", validRubric()))
+	if first.QuestionRevision != 1 {
+		t.Fatalf("first version questionRevision = %d, want 1", first.QuestionRevision)
+	}
+
+	patchPrompt(t, srv.URL, q.ID, "An edited original prompt.")
+
+	second := decodeJSON[RubricVersion](t, doJSON(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions", validRubric()))
+	if second.QuestionRevision != 2 {
+		t.Fatalf("post-edit version questionRevision = %d, want 2", second.QuestionRevision)
+	}
+	if second.Version != 2 {
+		t.Fatalf("version = %d, want 2", second.Version)
+	}
+}
+
+// TestVerifyQuestion_StaleRubricAfterEdit_Returns409 is the review finding itself: a rubric
+// verified against revision 1 must not authorise verifying a question whose content has changed.
+func TestVerifyQuestion_StaleRubricAfterEdit_Returns409(t *testing.T) {
+	for name, patch := range map[string]map[string]any{
+		"prompt edited":       {"prompt": "A materially different original prompt."},
+		"responseType edited": {"responseType": "structured_response"},
+		"language edited":     {"language": "fr"},
+		"node repointed":      {"curriculumMapNodeId": "node-verified-2"},
+		"two fields at once":  {"prompt": "Another original prompt.", "language": "fr"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+
+			q := createQuestion(t, srv.URL)
+			createVerifiedRubric(t, srv.URL, q)
+
+			resp := doJSON(t, http.MethodPatch, srv.URL+"/questions/"+q.ID, patch)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("patch status = %d, want 200", resp.StatusCode)
+			}
+			resp.Body.Close()
+			before := snapshotOf(t, store, q.ID)
+
+			verify := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil)
+			if verify.StatusCode != http.StatusConflict {
+				t.Fatalf("verify status = %d, want 409", verify.StatusCode)
+			}
+			if body := decodeJSON[map[string]string](t, verify); body["error"] != "missing_current_verified_rubric" {
+				t.Fatalf("error = %q, want missing_current_verified_rubric", body["error"])
+			}
+			assertUnchanged(t, store, q.ID, before)
+		})
+	}
+}
+
+// TestVerifyQuestion_NewRubricAfterEdit_Succeeds shows the intended remedy: append and verify a
+// rubric at the current revision.
+func TestVerifyQuestion_NewRubricAfterEdit_Succeeds(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	q := createQuestion(t, srv.URL)
+	createVerifiedRubric(t, srv.URL, q)
+	edited := patchPrompt(t, srv.URL, q.ID, "An edited original prompt.")
+	if edited.ContentRevision != 2 {
+		t.Fatalf("contentRevision = %d, want 2", edited.ContentRevision)
+	}
+
+	second := createVerifiedRubric(t, srv.URL, q)
+	if second.Version != 2 || second.QuestionRevision != 2 {
+		t.Fatalf("second version = %+v, want version 2 at questionRevision 2", second)
+	}
+
+	verify := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil)
+	if verify.StatusCode != http.StatusOK {
+		t.Fatalf("verify status = %d, want 200", verify.StatusCode)
+	}
+	if verified := decodeJSON[Question](t, verify); verified.Status != StatusVerified {
+		t.Fatalf("status = %q, want verified", verified.Status)
+	}
+}
+
+// TestStaleRubricVersion_RemainsReadable confirms an edit stales a version for verification only:
+// it is neither deleted nor downgraded, and editorial roles can still read it.
+func TestStaleRubricVersion_RemainsReadable(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	q := createQuestion(t, srv.URL)
+	original := createVerifiedRubric(t, srv.URL, q)
+	patchPrompt(t, srv.URL, q.ID, "An edited original prompt.")
+
+	for _, token := range []string{editorToken, reviewerToken, adminToken} {
+		listed := decodeJSON[map[string][]RubricVersion](t,
+			doJSONAs(t, http.MethodGet, srv.URL+"/questions/"+q.ID+"/rubric-versions", token, nil))["items"]
+		if len(listed) != 1 {
+			t.Fatalf("as %q: versions = %d, want 1", token, len(listed))
+		}
+		got := listed[0]
+		if got.Status != RubricVerified {
+			t.Fatalf("as %q: stale version status = %q, want verified (staleness must not downgrade it)", token, got.Status)
+		}
+		if got.Version != original.Version || got.QuestionRevision != 1 || got.MaxMarks != original.MaxMarks {
+			t.Fatalf("as %q: stale version mutated: %+v", token, got)
+		}
+	}
+}
+
+// --- Listing: the optional node filter is validated ---
+
+func TestListQuestions_NodeFilterValidated(t *testing.T) {
+	cases := map[string]struct {
+		nodeID    string
+		wantError string
+	}{
+		"unknown node":        {"node-does-not-exist", "unknown_node"},
+		"malformed node id":   {"not-a-uuid", "unknown_node"},
+		"node other syllabus": {"node-other-syllabus", "mismatched_node"},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv, _ := newTestServer()
+			defer srv.Close()
+
+			resp := doJSON(t, http.MethodGet,
+				srv.URL+"/questions?syllabusId=syl-active&curriculumMapNodeId="+tc.nodeID, nil)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			if body := decodeJSON[map[string]string](t, resp); body["error"] != tc.wantError {
+				t.Fatalf("error = %q, want %q", body["error"], tc.wantError)
+			}
+		})
+	}
+}
+
+// TestListQuestions_ValidNodeWithNoQuestions_ReturnsEmpty keeps the other half honest: a real
+// node of the right syllabus is 200 with an empty list, not an error.
+func TestListQuestions_ValidNodeWithNoQuestions_ReturnsEmpty(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	resp := doJSON(t, http.MethodGet,
+		srv.URL+"/questions?syllabusId=syl-active&curriculumMapNodeId=node-verified-2", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if items := decodeJSON[map[string][]Question](t, resp)["items"]; len(items) != 0 {
+		t.Fatalf("items = %d, want 0", len(items))
+	}
+}
+
+// TestListQuestions_UnknownSyllabusBeatsNodeFilter preserves the existing syllabus behaviour: the
+// syllabus is still resolved first, so a bad syllabus is unknown_syllabus regardless of the node.
+func TestListQuestions_UnknownSyllabusBeatsNodeFilter(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	resp := doJSON(t, http.MethodGet,
+		srv.URL+"/questions?syllabusId=syl-does-not-exist&curriculumMapNodeId=node-verified", nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if body := decodeJSON[map[string]string](t, resp); body["error"] != "unknown_syllabus" {
+		t.Fatalf("error = %q, want unknown_syllabus", body["error"])
 	}
 }
 
@@ -1283,6 +1584,7 @@ func TestNoRawInternalErrorText(t *testing.T) {
 		ErrInvalidMaxMarks:        "invalid_max_marks",
 		ErrNoChanges:              "no_changes",
 		ErrMissingVerifiedRubric:  "missing_verified_rubric",
+		ErrStaleVerifiedRubric:    "missing_current_verified_rubric",
 		ErrInvalidTransition:      "invalid_lifecycle_transition",
 		ErrDuplicateRubricVersion: "duplicate_rubric_version",
 	} {

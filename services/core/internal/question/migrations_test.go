@@ -62,3 +62,34 @@ func TestMigrations_QuestionTablesExist(t *testing.T) {
 		}
 	}
 }
+
+// TestMigrations_ContentRevisionIsAdditive checks that the revision columns arrive as an ALTER on
+// the existing tables — the review fix had to be additive, with no table or column dropped.
+func TestMigrations_ContentRevisionIsAdditive(t *testing.T) {
+	const file = "0015_add_question_content_revision.sql"
+	body, err := os.ReadFile(filepath.Join(migrationsDir, file))
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	sql := string(body)
+
+	for _, want := range []string{
+		"ALTER TABLE questions",
+		"ADD COLUMN IF NOT EXISTS content_revision",
+		"ALTER TABLE question_rubric_versions",
+		"ADD COLUMN IF NOT EXISTS question_revision",
+		// question_revision must be immutable, or a direct UPDATE could re-point a stale rubric
+		// version at the question's current content.
+		"NEW.question_revision IS DISTINCT FROM OLD.question_revision",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("%s does not contain %q", file, want)
+		}
+	}
+
+	for _, forbidden := range []string{"DROP TABLE", "DROP COLUMN"} {
+		if strings.Contains(strings.ToUpper(sql), forbidden) {
+			t.Fatalf("%s contains %q; the revision migration must be purely additive", file, forbidden)
+		}
+	}
+}

@@ -65,8 +65,11 @@ cd services/ai && python -m pytest
   map list, real ancestor row locking) — see D-0008 "Update (T-0006 review)".
 - Original question and versioned rubric foundation (private, metadata/code-only infrastructure
   for a future Exam Mode) built in T-0007; see `docs/question-rubric-model.md` and D-0009. Core
-  owns `questions`/`question_rubric_versions`/`question_events` (migrations 0012–0014). Every
+  owns `questions`/`question_rubric_versions`/`question_events` (migrations 0012–0015). Every
   question must trace to a **verified** curriculum-map node whose approved source still passes the
   T-0006 source gate — re-checked on every write. No question, rubric, or map data is seeded, and
-  no AI/OCR/ingestion path is involved.
+  no AI/OCR/ingestion path is involved. Three review findings were fixed on top of `768c8e2`
+  (question `content_revision` so a question can only be verified with a rubric verified against
+  its **current** content, case-sensitive rubric JSON keys, validated node filter on
+  `GET /questions`) — see D-0009 "Update (T-0007 review)".
 - Active task: T-0007 (status `review`). See `docs/tasks/active.md` / `docs/tasks/history.md`.

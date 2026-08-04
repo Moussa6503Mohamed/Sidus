@@ -260,6 +260,44 @@ has completed rights approval, no map node exists, and seeded content in a publi
 exactly what D-0005 forbids).
 **Owner/date:** Claude Code agent, 2026-08-04 (T-0007).
 
+### Update (T-0007 review)
+
+Three review findings were fixed on top of `768c8e2`. All three are additive; no table, column,
+role, permission, visibility rule, or source-gate behaviour changed.
+
+1. **A rubric version is bound to the question content it was reviewed against.** A draft question
+   could gain a **verified** rubric version and then have its `prompt`, `responseType`, `language`,
+   or `curriculumMapNodeId` changed, and `VerifyQuestion` would still accept that rubric — one
+   nobody had reviewed against the current wording. Migration `0015` adds
+   `questions.content_revision` (starts at 1, incremented by **exactly one** inside the transaction
+   of every **successful** draft content update; never moved by `no_changes`, a rejected write, or
+   a lifecycle transition; never caller-settable) and `question_rubric_versions.question_revision`
+   (the question's revision at the moment the version was created, stamped under the same row lock
+   that allocates the version number). A version is **current** only while the two are equal, and a
+   question may only be verified when it has a **verified, current** version. `question_revision`
+   joins the trigger's immutable set, so no direct SQL rewrite can re-point a stale version at
+   current content. An edit **stales** older versions rather than deleting or downgrading them:
+   they stay `verified`, immutable, and readable to editorial roles. Because the two failures need
+   different fixes, the stale case gets its own stable code, `409
+   missing_current_verified_rubric`, instead of reusing the misleading `missing_verified_rubric`.
+2. **Rubric JSON keys are matched exactly and case-sensitively.** `ValidateRubric` decoded into a
+   Go struct, and Go matches JSON field names case-insensitively, so a rubric documented as
+   accepting only `criteria`/`id`/`marks`/`descriptor` in fact accepted `Criteria`, `ID`, `Marks`,
+   and `Descriptor` — and, like any struct or map decode, silently kept the last value of a
+   duplicated key. Validation is now written against `encoding/json`'s token API against explicit
+   key sets, and additionally rejects duplicate keys, non-object criteria, non-string ids, numeric
+   marks supplied as strings or fractions, non-string descriptors, and trailing JSON. Responses
+   still use the existing stable `invalid_rubric` / `invalid_max_marks` codes and never echo parser
+   text. This matches the case-sensitive allowlist the handlers already applied to request bodies.
+3. **The optional node filter on `GET /questions` is validated.** `curriculumMapNodeId` was passed
+   straight into the `WHERE` clause, so an unknown or foreign node returned `200` with an empty
+   list — the same "typo looks like an unauthored map" problem already fixed for `syllabusId` in
+   the T-0006 review. It now returns `400 unknown_node` (unknown or malformed) or `400
+   mismatched_node` (a real node of another syllabus). The filter is checked more weakly than the
+   grounding gate on purpose: a reader may filter by a node that has since been retired, and gets
+   an empty list rather than an error. Existing unknown/inactive syllabus behaviour is unchanged,
+   and the syllabus is still resolved first.
+
 ## Decision template
 
 ```md

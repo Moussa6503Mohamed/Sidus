@@ -22,9 +22,9 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
-const questionColumns = `id, syllabus_id, curriculum_map_node_id, response_type, language, prompt, status, created_at, updated_at`
+const questionColumns = `id, syllabus_id, curriculum_map_node_id, response_type, language, prompt, status, content_revision, created_at, updated_at`
 
-const rubricColumns = `id, question_id, version, rubric, max_marks, status, created_by, reviewed_by, created_at, updated_at`
+const rubricColumns = `id, question_id, version, question_revision, rubric, max_marks, status, created_by, reviewed_by, created_at, updated_at`
 
 type scanner interface{ Scan(...any) error }
 
@@ -32,7 +32,7 @@ func scanQuestion(row scanner) (Question, error) {
 	var q Question
 	err := row.Scan(
 		&q.ID, &q.SyllabusID, &q.CurriculumMapNodeID, &q.ResponseType, &q.Language, &q.Prompt,
-		&q.Status, &q.CreatedAt, &q.UpdatedAt,
+		&q.Status, &q.ContentRevision, &q.CreatedAt, &q.UpdatedAt,
 	)
 	return q, err
 }
@@ -41,8 +41,8 @@ func scanRubricVersion(row scanner) (RubricVersion, error) {
 	var v RubricVersion
 	var rubric []byte
 	err := row.Scan(
-		&v.ID, &v.QuestionID, &v.Version, &rubric, &v.MaxMarks, &v.Status, &v.CreatedBy,
-		&v.ReviewedBy, &v.CreatedAt, &v.UpdatedAt,
+		&v.ID, &v.QuestionID, &v.Version, &v.QuestionRevision, &rubric, &v.MaxMarks, &v.Status,
+		&v.CreatedBy, &v.ReviewedBy, &v.CreatedAt, &v.UpdatedAt,
 	)
 	if err != nil {
 		return RubricVersion{}, err
@@ -125,6 +125,27 @@ func validateGrounding(ctx context.Context, q queryRower, nodeID, syllabusID str
 	}
 	if *catalogueSyllabusID != syllabusID {
 		return ErrMismatchedSource
+	}
+	return nil
+}
+
+// validateNodeFilter resolves an optional list filter against the curriculum map. It is weaker
+// than validateGrounding on purpose: a reader may legitimately filter by a node that has since
+// been retired or whose source has regressed, and would then get an empty list. What it must not
+// do is silently accept a node that does not exist or belongs to another syllabus.
+func validateNodeFilter(ctx context.Context, q queryRower, nodeID, syllabusID string) error {
+	var nodeSyllabusID string
+	err := q.QueryRowContext(ctx,
+		`SELECT syllabus_id FROM curriculum_map_nodes WHERE id = $1`, nodeID,
+	).Scan(&nodeSyllabusID)
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
+		return ErrUnknownNode
+	}
+	if err != nil {
+		return fmt.Errorf("check curriculum map node filter: %w", err)
+	}
+	if nodeSyllabusID != syllabusID {
+		return ErrMismatchedNode
 	}
 	return nil
 }
@@ -222,6 +243,14 @@ func (p *PostgresStore) UpdateQuestion(ctx context.Context, id string, in Update
 		return Question{}, ErrNoChanges
 	}
 
+	// Exactly one increment per successful content update, inside the same transaction and under
+	// the row lock taken above. ErrNoChanges returns before this point, and any rejected write
+	// rolls the transaction back, so a revision is never skipped or double-counted. Every rubric
+	// version stamped with the old revision becomes stale for question verification here —
+	// without being deleted, downgraded, or edited.
+	setClauses = append(setClauses, "content_revision = content_revision + 1")
+	changed = append(changed, "contentRevision")
+
 	setClauses = append(setClauses, "updated_at = now()")
 	args = append(args, id)
 	query := `UPDATE questions SET ` + strings.Join(setClauses, ", ") +
@@ -287,14 +316,8 @@ func (p *PostgresStore) transitionStatus(
 	}
 
 	if requireVerifiedRubric {
-		var verifiedRubrics int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM question_rubric_versions WHERE question_id = $1 AND status = 'verified'`, id,
-		).Scan(&verifiedRubrics); err != nil {
-			return Question{}, fmt.Errorf("count verified rubric versions: %w", err)
-		}
-		if verifiedRubrics == 0 {
-			return Question{}, ErrMissingVerifiedRubric
+		if err := requireCurrentVerifiedRubric(ctx, tx, id, current.ContentRevision); err != nil {
+			return Question{}, err
 		}
 	}
 
@@ -314,6 +337,35 @@ func (p *PostgresStore) transitionStatus(
 		return Question{}, fmt.Errorf("commit: %w", err)
 	}
 	return updated, nil
+}
+
+// requireCurrentVerifiedRubric enforces that the question has at least one verified rubric
+// version reviewed against its CURRENT content revision.
+//
+// A verified rubric for an older revision is not enough: the reviewer approved marking criteria
+// for wording, a response type, a language, or a curriculum-map node that the question no longer
+// has. Such versions stay readable and immutable — they are only stale for verification — so the
+// fix is to append a new version at the current revision and verify that.
+//
+// It runs inside the verifying transaction, under the caller's row lock on the question, so the
+// revision it compares against cannot move underneath it.
+func requireCurrentVerifiedRubric(ctx context.Context, tx *sql.Tx, questionID string, revision int) error {
+	var verifiedTotal, verifiedCurrent int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT count(*), count(*) FILTER (WHERE question_revision = $2)
+		FROM question_rubric_versions
+		WHERE question_id = $1 AND status = 'verified'`,
+		questionID, revision,
+	).Scan(&verifiedTotal, &verifiedCurrent); err != nil {
+		return fmt.Errorf("count verified rubric versions: %w", err)
+	}
+	if verifiedCurrent > 0 {
+		return nil
+	}
+	if verifiedTotal == 0 {
+		return ErrMissingVerifiedRubric
+	}
+	return ErrStaleVerifiedRubric
 }
 
 func (p *PostgresStore) GetQuestion(ctx context.Context, id string, verifiedOnly bool) (Question, error) {
@@ -340,6 +392,15 @@ func (p *PostgresStore) ListQuestions(ctx context.Context, syllabusID string, no
 	}
 	if !active {
 		return nil, ErrUnknownSyllabus
+	}
+
+	// The optional node filter is validated for the same reason as the syllabus: an unknown,
+	// malformed, or foreign node id must be a stable 400, not a 200 with an empty list that a
+	// caller cannot tell from "this node has no verified questions yet".
+	if nodeID != nil {
+		if err := validateNodeFilter(ctx, p.db, *nodeID, syllabusID); err != nil {
+			return nil, err
+		}
 	}
 
 	args := []any{syllabusID}
@@ -405,11 +466,14 @@ func (p *PostgresStore) CreateRubricVersion(ctx context.Context, questionID stri
 		return RubricVersion{}, fmt.Errorf("allocate rubric version: %w", err)
 	}
 
+	// The question's current content revision is stamped onto the version under the same row lock
+	// that allocated its number, so a concurrent edit cannot slip between the two: the reviewer
+	// will verify a rubric against exactly the content read here.
 	version, err := scanRubricVersion(tx.QueryRowContext(ctx, `
-		INSERT INTO question_rubric_versions (question_id, version, rubric, max_marks, created_by)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO question_rubric_versions (question_id, version, question_revision, rubric, max_marks, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING `+rubricColumns,
-		questionID, nextVersion, []byte(in.Rubric), in.MaxMarks, in.ActorID,
+		questionID, nextVersion, current.ContentRevision, []byte(in.Rubric), in.MaxMarks, in.ActorID,
 	))
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -418,8 +482,9 @@ func (p *PostgresStore) CreateRubricVersion(ctx context.Context, questionID stri
 		return RubricVersion{}, fmt.Errorf("insert rubric version: %w", err)
 	}
 
-	// Names only: neither the rubric structure nor the marks values are recorded.
-	if err := insertEvent(ctx, tx, questionID, EventRubricVersionCreated, in.ActorID, []string{"rubricVersion"}); err != nil {
+	// Names only: neither the rubric structure, the marks values, nor the revision number is
+	// recorded — only the names of the fields the write set.
+	if err := insertEvent(ctx, tx, questionID, EventRubricVersionCreated, in.ActorID, []string{"rubricVersion", "questionRevision"}); err != nil {
 		return RubricVersion{}, err
 	}
 

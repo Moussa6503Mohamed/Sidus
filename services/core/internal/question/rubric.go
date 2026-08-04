@@ -10,9 +10,23 @@ import (
 // maxRubricCriteria bounds a rubric so a pathological payload cannot be stored or walked.
 const maxRubricCriteria = 200
 
-// rubricDocument is the only accepted rubric shape. It is deliberately narrow: Core must be able
-// to validate a rubric completely (structure, marks arithmetic) before writing it, and an
-// open-ended blob could not be checked at all.
+// rubricDocumentFields and rubricCriterionFields are the EXACT, case-sensitive key sets accepted
+// at each level of a rubric. They are the whole schema: anything else — an unknown key, a nested
+// key at the wrong level, or a case variant such as `Criteria`, `ID`, `Marks`, or `Descriptor` —
+// is rejected.
+//
+// A case-sensitive check is load-bearing rather than pedantic. Go's struct decoding matches JSON
+// field names case-insensitively, so decoding into a struct (even with DisallowUnknownFields)
+// silently accepts `{"Criteria":[{"ID":"c1","Marks":2}]}` — which would have let a payload that
+// does not match the documented schema, and does not match what the TypeScript contract or a
+// future marking consumer expects, be stored as a verified rubric.
+var (
+	rubricDocumentFields  = map[string]struct{}{"criteria": {}}
+	rubricCriterionFields = map[string]struct{}{"id": {}, "marks": {}, "descriptor": {}}
+)
+
+// rubricDocument and rubricCriterion document the accepted shape and are used to construct
+// payloads. Validation deliberately does NOT decode into them — see rubricDocumentFields.
 //
 // The descriptor is original editorial text supplied at runtime by a private, approved workflow.
 // It is never seeded, never copied from a mark scheme, and never recorded in the audit trail.
@@ -32,10 +46,13 @@ type rubricCriterion struct {
 //
 // Rules:
 //   - maxMarks must be a positive integer.
-//   - The payload must be exactly one JSON object with no unknown fields and no trailing data.
-//   - criteria must be a non-empty array (bounded by maxRubricCriteria).
+//   - The payload must be exactly one JSON object, with no trailing data.
+//   - Every key, at every level, must match the schema EXACTLY: `criteria` on the document, and
+//     `id`/`marks`/`descriptor` on a criterion. Unknown keys, misplaced keys, case variants, and
+//     duplicate keys are all rejected.
+//   - criteria must be a non-empty array (bounded by maxRubricCriteria) of objects.
 //   - Each criterion needs a non-blank, unique id and a positive integer marks; descriptor is
-//     optional but must be non-blank when present.
+//     optional but must be a non-blank string when present (explicit null means absent).
 //   - Criterion marks must sum exactly to maxMarks, so a rubric can never award more or fewer
 //     marks than the question is worth.
 func ValidateRubric(raw json.RawMessage, maxMarks int) error {
@@ -46,41 +63,177 @@ func ValidateRubric(raw json.RawMessage, maxMarks int) error {
 		return ErrInvalidRubric
 	}
 
-	var doc rubricDocument
 	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&doc); err != nil {
+	fields, err := decodeExactObject(dec, rubricDocumentFields)
+	if err != nil {
+		return err
+	}
+	if err := requireEOF(dec); err != nil {
+		return err
+	}
+
+	criteriaRaw, ok := fields["criteria"]
+	if !ok {
 		return ErrInvalidRubric
 	}
-	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+	var items []json.RawMessage
+	if err := json.Unmarshal(criteriaRaw, &items); err != nil {
+		return ErrInvalidRubric
+	}
+	if len(items) == 0 || len(items) > maxRubricCriteria {
 		return ErrInvalidRubric
 	}
 
-	if len(doc.Criteria) == 0 || len(doc.Criteria) > maxRubricCriteria {
-		return ErrInvalidRubric
-	}
-
-	seen := make(map[string]struct{}, len(doc.Criteria))
+	seen := make(map[string]struct{}, len(items))
 	total := 0
-	for _, c := range doc.Criteria {
-		id := strings.TrimSpace(c.ID)
-		if id == "" {
-			return ErrInvalidRubric
+	for _, item := range items {
+		id, marks, err := validateCriterion(item)
+		if err != nil {
+			return err
 		}
 		if _, dup := seen[id]; dup {
 			return ErrInvalidRubric
 		}
 		seen[id] = struct{}{}
-		if c.Marks == nil || *c.Marks <= 0 {
-			return ErrInvalidRubric
+		// Bounding each criterion by maxMarks keeps the running total from overflowing on a
+		// hostile payload, and a single over-large criterion is a marks error either way.
+		if marks > maxMarks {
+			return ErrInvalidMaxMarks
 		}
-		if c.Descriptor != nil && blank(*c.Descriptor) {
-			return ErrInvalidRubric
-		}
-		total += *c.Marks
+		total += marks
 	}
 	if total != maxMarks {
 		return ErrInvalidMaxMarks
 	}
 	return nil
+}
+
+// validateCriterion checks one criterion object and returns its trimmed id and marks.
+func validateCriterion(raw json.RawMessage) (string, int, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	fields, err := decodeExactObject(dec, rubricCriterionFields)
+	if err != nil {
+		return "", 0, err
+	}
+	if err := requireEOF(dec); err != nil {
+		return "", 0, err
+	}
+
+	idRaw, ok := fields["id"]
+	if !ok {
+		return "", 0, ErrInvalidRubric
+	}
+	var id string
+	if err := json.Unmarshal(idRaw, &id); err != nil {
+		return "", 0, ErrInvalidRubric
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", 0, ErrInvalidRubric
+	}
+
+	marksRaw, ok := fields["marks"]
+	if !ok {
+		return "", 0, ErrInvalidRubric
+	}
+	// encoding/json happily unmarshals a JSON *string* into a json.Number, so the raw value has
+	// to be checked first: marks is a number, and "3" is not one.
+	if !isJSONNumber(marksRaw) {
+		return "", 0, ErrInvalidRubric
+	}
+	var marks json.Number
+	if err := json.Unmarshal(marksRaw, &marks); err != nil {
+		return "", 0, ErrInvalidRubric
+	}
+	// Int64 rejects 2.5 and 2e3-style values: marks are whole marks.
+	marksValue, err := marks.Int64()
+	if err != nil || marksValue <= 0 || marksValue > int64(maxRubricMarksPerCriterion) {
+		return "", 0, ErrInvalidRubric
+	}
+
+	// descriptor is optional. An explicit null is treated as absent; anything other than a
+	// non-blank string is rejected.
+	if descriptorRaw, ok := fields["descriptor"]; ok && !isJSONNull(descriptorRaw) {
+		var descriptor string
+		if err := json.Unmarshal(descriptorRaw, &descriptor); err != nil {
+			return "", 0, ErrInvalidRubric
+		}
+		if blank(descriptor) {
+			return "", 0, ErrInvalidRubric
+		}
+	}
+
+	return id, int(marksValue), nil
+}
+
+// maxRubricMarksPerCriterion bounds a single criterion so an absurd value cannot be stored. It is
+// far above any realistic question and exists only to keep arithmetic and storage sane.
+const maxRubricMarksPerCriterion = 1000
+
+// decodeExactObject reads exactly one JSON object from dec, requiring every key to appear in
+// allowed with EXACTLY that spelling and casing, and rejecting duplicate keys. Values are
+// returned undecoded so each caller can type-check them itself.
+//
+// It is written against the token API rather than a struct or a map because neither of those can
+// do this job: a struct decode matches names case-insensitively, and both a struct and a map
+// silently keep the last value of a duplicated key instead of rejecting it.
+func decodeExactObject(dec *json.Decoder, allowed map[string]struct{}) (map[string]json.RawMessage, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, ErrInvalidRubric
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return nil, ErrInvalidRubric
+	}
+
+	fields := make(map[string]json.RawMessage, len(allowed))
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return nil, ErrInvalidRubric
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return nil, ErrInvalidRubric
+		}
+		if _, ok := allowed[key]; !ok {
+			return nil, ErrInvalidRubric
+		}
+		if _, dup := fields[key]; dup {
+			return nil, ErrInvalidRubric
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, ErrInvalidRubric
+		}
+		fields[key] = value
+	}
+	// Consume the closing brace.
+	if _, err := dec.Token(); err != nil {
+		return nil, ErrInvalidRubric
+	}
+	return fields, nil
+}
+
+// requireEOF rejects anything after the decoded value: a second object, an array, or junk.
+func requireEOF(dec *json.Decoder) error {
+	if _, err := dec.Token(); err != io.EOF {
+		return ErrInvalidRubric
+	}
+	return nil
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	return string(bytes.TrimSpace(raw)) == "null"
+}
+
+// isJSONNumber reports whether raw is a JSON number literal (not a quoted numeric string, and not
+// a boolean, null, object, or array).
+func isJSONNumber(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return false
+	}
+	first := trimmed[0]
+	return first == '-' || (first >= '0' && first <= '9')
 }
