@@ -43,10 +43,17 @@ cd services/core && DATABASE_URL="postgres://sidus:sidus_dev_password@localhost:
 cd services/ai && python -m venv .venv && .venv/Scripts/pip install -r requirements.txt && .venv/Scripts/uvicorn app.main:app --reload
 ```
 
+To use the editorial source workflow (`/dashboard/editorial/sources`, T-0009), also add
+`SIDUS_CORE_API_URL=http://localhost:8080` to `apps/web/.env.local` (server-only — never
+`NEXT_PUBLIC_*`; see `docs/editorial-source-workflow.md`). Sign in with a Clerk user whose
+`sidus_role` public metadata is `editor`, `reviewer`, or `admin` per `docs/auth-setup.md`;
+`learner`/unknown users see no editorial controls.
+
 ## Check
 
 ```sh
 cd apps/web && npm run typecheck
+cd apps/web && npm run test
 # No host Go toolchain required — run go test via the golang Docker image:
 docker run --rm -v "$(pwd)/services/core:/app" -w /app golang:1.22-alpine go test ./...
 # Postgres-backed integration test (optional): needs the disposable postgres-test service from

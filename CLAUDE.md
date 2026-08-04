@@ -43,6 +43,7 @@ Build Sidus: academic preparation platform. First vertical slice: Cambridge IGCS
 
 ```sh
 npm --prefix apps/web run typecheck
+npm --prefix apps/web run test
 npm --prefix apps/web run build
 docker run --rm -v "$(pwd)/services/core:/app" -w /app golang:1.22-alpine go test ./...
 cd services/ai && python -m pytest
@@ -78,4 +79,13 @@ cd services/ai && python -m pytest
   and map malformed (non-UUID) `{id}` path parameters to the existing not-found response instead
   of a `500` — see D-0010 and `docs/handoffs/T-0008.md`. No business rule, schema, or seed
   content changed. Released 2026-08-05.
+- Private editorial source workflow released in T-0009: `apps/web` gains a protected
+  `/dashboard/editorial/sources` page and a narrow BFF (`app/api/editorial/*`, backed by
+  `lib/editorial/core-proxy.ts`) that is the browser's only path to the content-source/
+  catalogue APIs — see `docs/editorial-source-workflow.md` and D-0011. Fixed operation
+  allowlist (no open proxy), server-only `SIDUS_CORE_API_URL` and Clerk bearer forwarding,
+  fail-closed on missing config/token. Core stays the sole authorization authority; the web
+  role check only hides/shows controls. No Core/AI/migration/business-rule change, and no
+  approval/link of the seeded 0610/5090 sources was performed (that is now a human action
+  through the new UI).
 - No active task. See `docs/tasks/active.md` / `docs/tasks/history.md`.

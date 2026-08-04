@@ -21,7 +21,12 @@
     "skipLibCheck": true,
     "incremental": true,
     "esModuleInterop": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"],
+      "@sidus/shared": ["../../packages/shared/src/contracts.ts"]
+    }
   },
   "include": [
     "next-env.d.ts",

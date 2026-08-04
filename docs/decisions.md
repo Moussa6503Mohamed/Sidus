@@ -331,6 +331,70 @@ future web client); map `22P02` to a distinct new error code instead of the exis
 reason to know which, and reusing the existing not-found response keeps the contract stable).
 **Owner/date:** Claude Code agent, 2026-08-05 (T-0008).
 
+## D-0011 — Editorial source workflow BFF
+
+**Status:** Approved
+**Decision:** `apps/web` gains the first browser-facing surface over the content-source/
+catalogue APIs: a protected `/dashboard/editorial/sources` page and a narrow Next.js
+route-handler layer (`app/api/editorial/*`, backed by `lib/editorial/core-proxy.ts`) that is
+the browser's only path to Core. The browser never calls Core directly. `callCore` accepts a
+closed `EditorialOperation` union — not a caller-controlled path/URL — mapping each variant to
+exactly one fixed Core method+path template (`GET/POST /content-sources`,
+`GET/PATCH /content-sources/{id}`, `POST /content-sources/{id}/approve`,
+`POST /content-sources/{id}/reject`, `GET /catalogue/syllabuses`); a supplied `{id}` is
+validated against `^[A-Za-z0-9_-]{1,128}$` before interpolation. Each Next.js route file
+exports only its allowlisted HTTP method(s), so unsupported verbs get Next's own `405`
+structurally. The Core base URL comes only from server-only `SIDUS_CORE_API_URL` (never
+`NEXT_PUBLIC_*`); the Clerk session bearer token is obtained server-side per request via
+`auth().getToken()` and forwarded to Core, never exposed to or round-tripped through the
+browser by this layer. Both are fail-closed: a missing/blank `SIDUS_CORE_API_URL` returns a
+generic `503` before any auth check runs; a missing/expired session token returns a generic
+`401` before any network call — mirroring `services/core/main.go`'s own
+DATABASE_URL-then-Clerk fail-closed ordering. A `POST`/`PATCH` body is checked
+(`application/json`, ≤100 KB, syntactically valid JSON) and then forwarded **verbatim** (the
+original raw text, never re-parsed and re-serialized) so Core's own strict, case-sensitive
+field allowlist (D-0010) stays the sole authority on shape; the approve route ignores any
+client body and always sends `{}`. Core's response status/body are passed through unchanged
+(already safe/generic per D-0007–D-0010); a `fetch` failure or non-JSON upstream response maps
+to a generic `502`, never forwarding the underlying error text, stack trace, or target URL.
+Nothing in `lib/editorial/*` or `app/api/editorial/*` logs anything. The web app's own role
+check (`lib/editorial/permissions.ts` mirroring `services/core/internal/auth.ParseRole`,
+read via `lib/editorial/role.ts` from the verified `sidus_role` Clerk session claim) is
+**UI-visibility only** — it decides which controls render (nav entry, page access, review
+buttons) and performs zero API calls for `learner`/unknown roles, but every mutation is still
+authorized by Core's existing `auth.Protect` (401/403); a stale or wrong web-side role value
+can only hide a control Core would have allowed, never show one Core would refuse. This task
+adds no new Core role, permission, endpoint, schema, or business rule, and performs no
+approval/link of the seeded 0610/5090 sources itself — that stays a human action through the
+new UI (D-0005).
+**Reason:** A browser-facing editorial surface needs a same-origin boundary that can hold the
+Clerk token and Core URL server-side without ever trusting the browser for authorization
+(D-0006 precedent: Core is the sole authorization authority); an explicit closed operation
+union is what makes "no open proxy" verifiable rather than asserted — a generic
+`[...path]`-forwarding route would let any caller reach any Core path/method by construction,
+while a fixed union cannot express a request outside the six mounted operations regardless of
+input. Raw-body passthrough (vs. parse-and-re-serialize) avoids subtle JSON transform
+differences (key order, number precision) between what an editor typed and what Core's strict
+decoder sees. Fail-closed ordering and generic error messages mirror the existing Core/AI
+precedent (`docs/auth-setup.md` → "Fail-closed configuration") so the whole stack behaves one
+way under misconfiguration.
+**Alternatives:** A generic `[...path]` proxy route forwarding an allowlisted prefix (rejected:
+"allowlisted prefix" is a runtime string check that can drift or be bypassed by encoding
+tricks; a closed TypeScript union is checked by the compiler and cannot express an
+out-of-union request at all); let the browser call Core directly with a client-managed token
+(rejected: contradicts D-0006 — the Clerk secret/JWKS trust boundary and the Core URL would
+both need to be public, and CORS would have to open Core to the browser origin); re-serialize
+the parsed request body before forwarding (rejected: no behavioral need, and it risks
+byte-for-byte drift from what the editor actually submitted vs. what Core validates); check the
+caller's role in the BFF and reject before calling Core (rejected: would duplicate Core's
+authorization matrix in a second place that could drift from it — D-0006 already establishes
+Core as the sole authority, so the web check stays cosmetic); make `app/layout.tsx`'s
+role-gated nav entry client-side only via a `/api/editorial/*` call (rejected: forces every
+page, including the public home page, to wait on an extra fetch just to decide whether to show
+a nav link; reading the already-verified session claim server-side in the existing async layout
+is one `auth()` call with no additional round trip).
+**Owner/date:** Claude Code agent, 2026-08-05 (T-0009).
+
 ## Decision template
 
 ```md

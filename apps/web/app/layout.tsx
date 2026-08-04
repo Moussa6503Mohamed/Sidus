@@ -7,15 +7,20 @@ import {
   UserButton,
 } from "@clerk/nextjs";
 import Link from "next/link";
+import { getOptionalEditorialRole } from "@/lib/editorial/role";
+import { isEditorialRole } from "@/lib/editorial/permissions";
 
 export const metadata: Metadata = {
   title: "Sidus Observatory",
   description: "Sidus academic preparation",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const role = await getOptionalEditorialRole();
+  const showEditorialNav = isEditorialRole(role);
+
   return (
     <ClerkProvider>
       <html lang="en">
@@ -39,6 +44,9 @@ export default function RootLayout({
               </Show>
               <Show when="signed-in">
                 <Link href="/dashboard">Dashboard</Link>
+                {showEditorialNav && (
+                  <Link href="/dashboard/editorial/sources">Editorial sources</Link>
+                )}
                 <UserButton />
               </Show>
             </nav>
