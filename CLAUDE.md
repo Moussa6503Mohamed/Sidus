@@ -58,9 +58,9 @@ cd services/ai && python -m pytest
   `docs/provenance-catalogue-linking.md`. Two seeded 0610/5090 content sources still need a
   human editor/admin `PATCH` to link (documented there).
 - Curriculum-map foundation (metadata-only topic/objective/practical-skill/assessment-rule
-  infrastructure) built in T-0006; see `docs/curriculum-map.md` and D-0008. No map data is
+  infrastructure) released in T-0006; see `docs/curriculum-map.md` and D-0008. No map data is
   seeded — a human must first approve and link a content source, then author map content via a
   future private approved workflow. Four review findings were fixed on top of `b1677cb`
   (strict PATCH decoding, source gate re-validated on every node write, syllabus validation on
   map list, real ancestor row locking) — see D-0008 "Update (T-0006 review)".
-- Active task: T-0006 (status `review`). See `docs/tasks/active.md`.
+- No active task. See `docs/tasks/active.md` / `docs/tasks/history.md`.

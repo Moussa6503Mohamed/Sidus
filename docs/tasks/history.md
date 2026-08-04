@@ -474,3 +474,133 @@ database workaround is acceptable (bypasses auth/audit).
 ### Handoff
 
 `docs/handoffs/T-0005.md`
+
+## T-0006 — Curriculum-map foundation
+
+**Status:** done / released
+**Owner:** Claude Code agent
+**Priority:** P1
+**Depends on:** T-0001 (done), T-0004 (done), T-0005 (done)
+
+### Goal
+
+Build metadata-only curriculum-map infrastructure for all subjects: topic maps, learning
+objectives, practical skills, and assessment rules, scoped under the existing curriculum
+catalogue. No syllabus text, objective wording, topic labels, assessment text, questions, mark
+schemes, PDFs, extracts, diagrams, OCR output, or derivative content is created. No map data is
+seeded.
+
+### Scope
+
+- New tables `curriculum_map_nodes` and `curriculum_map_events` (migrations 0010–0011),
+  package `services/core/internal/curriculummap`.
+- Node fields: stable id, syllabus FK, optional parent-node FK (same syllabus, no cycles),
+  `nodeKind` (topic/objective/practical_skill/assessment_rule), unique-per-syllabus
+  `nodeCode`, editorial `label` placeholder, lifecycle `status`
+  (draft/verified/retired), required approved content-source FK, optional `sourceLocator`,
+  timestamps.
+- Server-side source gate (Core is sole authority): every create, and every update that
+  changes `contentSourceId`, verifies the referenced `content_sources` row exists, is
+  `approved`, and its `catalogue_syllabus_id` matches the node's syllabus. Unknown/
+  unapproved/unlinked/mismatched → stable `400` before any write.
+- New least-privilege permissions `curriculum_map:read` (editor/reviewer/admin, verified-only
+  reads), `curriculum_map:create` (editor/reviewer/admin, draft create/PATCH),
+  `curriculum_map:verify` (reviewer/admin, verify/retire). Learner/unknown denied.
+- Core API: list/get verified nodes by syllabus, create draft, PATCH draft, verify, retire.
+  Strict JSON (no caller actor field); every route Clerk-protected; no raw internal error text.
+- Shared TypeScript contracts, D-0008, `docs/curriculum-map.md`, `docs/local-setup.md` update.
+- No AI-service map authority; AI service untouched.
+
+### Review findings (fixed on top of `b1677cb`, commit `a05c523`)
+
+Four findings from independent review, all fixed in this task's scope. No change to the
+authority model, schema purpose, role matrix, approval/provenance rules, public content
+restrictions, Clerk setup, or the "no map data seeded" stance. See D-0008 "Update (T-0006
+review)".
+
+1. **PATCH strict-JSON bypass** — unknown fields including `actorId`/`reviewerId`/`syllabusId`/
+   `status` silently accepted via a `map[string]json.RawMessage` decode where
+   `DisallowUnknownFields` has no effect. Fixed with an explicit six-field allowlist plus a
+   strict struct decode.
+2. **Source gate only ran when `contentSourceId` changed** — now re-validated on every node
+   write (update/verify/retire), before any mutation.
+3. **`GET /curriculum-map/nodes` returned an empty `200` for an unknown/inactive syllabus** —
+   now `400 unknown_syllabus`.
+4. **Ancestor walk was not actually row-locked** — every traversed ancestor is now locked `FOR
+   UPDATE` in the writing transaction.
+
+### Schema decisions
+
+- Parent-same-syllabus and no-cycle enforcement are done at the **application layer** (Go, same
+  transaction, row-locked ancestor walk) rather than a DB trigger — keeps `invalid_parent` error
+  mapping under Core's control instead of parsing trigger-raised text. See D-0008
+  "Alternatives".
+- `syllabusId` is immutable after node creation (not PATCHable).
+- `nodeCode` uniqueness is a DB unique index (`syllabus_id`, `node_code`); required
+  `content_source_id` is a `NOT NULL` FK.
+- `curriculum_map_events` mirrors `syllabus_events`/`content_source_events`: append-only,
+  `BEFORE UPDATE OR DELETE` trigger, verified-Clerk-subject actor, changed-field-names only.
+
+### Acceptance checks
+
+- Metadata-only tables + immutable audit trail created; migrations idempotent on rerun. — met
+- Source gate rejects unapproved/unlinked/mismatched/unknown sources before any write. — met
+- Parent-same-syllabus and no-cycle enforced before any write. — met
+- Duplicate node code per syllabus rejected. — met
+- Lifecycle transitions (draft→verified, draft/verified→retired) enforced; invalid transitions
+  rejected. — met
+- Role matrix: learner/unknown denied; editor read+draft only; reviewer adds verify/retire;
+  admin all. — met
+- Strict JSON (unknown fields / trailing JSON rejected on both POST and PATCH); no caller
+  actor/reviewer field. — met
+- Source gate re-validated on every node write, not only on `contentSourceId` change. — met
+- List rejects unknown/inactive syllabus with `400 unknown_syllabus`; empty list only for a
+  known active syllabus. — met
+- Ancestor walk row-locks every traversed ancestor. — met
+- No raw database/internal error text ever returned. — met
+- No map data seeded; two seeded 0610/5090 sources remain pending/unlinked until a human
+  completes rights approval + catalogue linking. — met
+- Relevant tests pass. — met, see release validation below.
+
+### Constraints
+
+- Never stage/alter/move/delete: `DB.jpeg`, `arch.jpeg`, `Sidus.xlsx`,
+  `Sidus_Roadmap_and_Cost_Model(1).xlsx`, `Sidus_Final_MVP_Technical_Cost_Model*.xlsx`,
+  `Sidus_Final_MVP_Technical_Cost_Model_Recreated.xlsx`, `.claude/`, `.claude-flow/`, any
+  `.env.local`.
+- No content, questions, OCR, source ingestion, or copyrighted data. No manual PATCH performed
+  on the two seeded 0610/5090 content sources (human action only).
+- No web UI for curriculum-map authoring in this task. No AI curriculum-map authority.
+
+### Open questions / blockers
+
+- None blocking. Authoring actual map content (topic labels, objective wording, etc.) requires
+  a future private, approved editorial workflow — out of scope here, this task shipped
+  infrastructure only. Linking/approving the two seeded 0610/5090 content sources remains a
+  human action (carried from T-0005), not performed by this task.
+- Observation, not fixed: a malformed (non-UUID) node id on `GET`/`PATCH`/`verify`/`retire`
+  still yields `500 internal_error` rather than `404 not_found` — pre-existing behaviour shared
+  with the catalogue and content-source packages, not one of the four review findings. Worth a
+  separate cross-package task.
+
+### Release validation (final pass, 2026-08-04)
+
+| Command | Result |
+| --- | --- |
+| `go build ./... && go vet ./... && gofmt -l .` (Docker `golang:1.22-alpine`) | Pass — gofmt flags only pre-existing unrelated `internal/auth/auth_test.go` and `main_test.go` |
+| `go test ./...` (unit, Docker toolchain) | Pass — core, auth, catalogue, contentsource, curriculummap all green |
+| `docker compose -f docker-compose.yml config` / `-f docker-compose.test.yml config` | Pass / Pass |
+| `docker compose -f docker-compose.test.yml up -d` + `pg_isready` wait | Pass — `sidus-test-postgres-test-1` healthy |
+| `go run ./cmd/migrate` against disposable `sidus-test` | Pass — 11 migrations applied |
+| `go test ./... -run Integration -v` against `sidus-test` | Pass — catalogue (6) + content-source (4) + curriculum-map (17, incl. the concurrency ancestor-lock test) |
+| `go run ./cmd/migrate` rerun against the same `sidus-test` | Pass — idempotent, 0 migrations applied |
+| `docker compose -f docker-compose.test.yml down -v` | Pass — `sidus-test` destroyed only; dev untouched |
+| `python -m pytest -q` (services/ai) | Pass — 18 tests |
+| `npm --prefix apps/web run typecheck` | Pass |
+| `npm --prefix apps/web run build` | Pass — Proxy (Middleware) detected; 6 routes intact |
+| `npx -p typescript tsc --noEmit --strict packages/shared/src/contracts.ts` | Pass |
+| `git diff --check` | Pass — clean |
+
+### Handoff
+
+`docs/handoffs/T-0006.md`
