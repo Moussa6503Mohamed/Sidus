@@ -150,6 +150,8 @@ type updateColumn struct {
 
 func (in UpdateInput) columns(current Source) []updateColumn {
 	// Order mirrors UpdatableFields so changed-field names and SQL are deterministic.
+	// syllabusCode is deliberately excluded: it can change independently of
+	// catalogue_syllabus_id (T-0005 link-only confirmation), so Update handles it separately.
 	return []updateColumn{
 		{"title", "title", in.Title, &current.Title},
 		{"owner", "owner", in.Owner, current.Owner},
@@ -158,8 +160,16 @@ func (in UpdateInput) columns(current Source) []updateColumn {
 		{"licenceReference", "licence_reference", in.LicenceReference, current.LicenceReference},
 		{"permittedUse", "permitted_use", in.PermittedUse, current.PermittedUse},
 		{"allowedAudience", "allowed_audience", in.AllowedAudience, current.AllowedAudience},
-		{"syllabusCode", "syllabus_code", in.SyllabusCode, current.SyllabusCode},
 	}
+}
+
+// stringPtrEqual reports whether two optional strings hold the same value: both nil, or
+// both non-nil with equal contents.
+func stringPtrEqual(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func (p *PostgresStore) Update(ctx context.Context, id string, in UpdateInput) (Source, []string, error) {
@@ -197,14 +207,32 @@ func (p *PostgresStore) Update(ctx context.Context, id string, in UpdateInput) (
 		args = append(args, *c.value)
 		setClauses = append(setClauses, c.column+" = $"+strconv.Itoa(len(args)))
 		changed = append(changed, c.field)
-		// When the syllabus code actually changes, keep the catalogue FK in sync with the
-		// registry-resolved id the handler supplied. Not recorded as a separate changed field:
-		// it is a derived column of syllabusCode, not a user-facing field.
-		if c.field == "syllabusCode" {
+	}
+
+	// syllabusCode and catalogue_syllabus_id can change independently (T-0005): a supplied
+	// code that differs from the stored one updates both columns and is recorded as
+	// "syllabusCode"; a supplied code that matches the stored text but resolves to a
+	// different (or previously missing) catalogue syllabus is a provenance link-only
+	// confirmation — it updates catalogue_syllabus_id alone and is recorded as
+	// "catalogueSyllabusId", never claiming syllabusCode changed.
+	if in.SyllabusCode != nil {
+		suppliedCount++
+		codeChanged := source.SyllabusCode == nil || *source.SyllabusCode != *in.SyllabusCode
+		fkChanged := !stringPtrEqual(source.CatalogueSyllabusID, in.CatalogueSyllabusID)
+		switch {
+		case codeChanged:
+			args = append(args, *in.SyllabusCode)
+			setClauses = append(setClauses, "syllabus_code = $"+strconv.Itoa(len(args)))
 			args = append(args, in.CatalogueSyllabusID)
 			setClauses = append(setClauses, "catalogue_syllabus_id = $"+strconv.Itoa(len(args)))
+			changed = append(changed, "syllabusCode")
+		case fkChanged:
+			args = append(args, in.CatalogueSyllabusID)
+			setClauses = append(setClauses, "catalogue_syllabus_id = $"+strconv.Itoa(len(args)))
+			changed = append(changed, "catalogueSyllabusId")
 		}
 	}
+
 	if suppliedCount == 0 {
 		return Source{}, nil, ErrNoUpdatableFields
 	}

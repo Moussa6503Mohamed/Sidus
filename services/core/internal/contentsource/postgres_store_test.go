@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 // These integration tests write rows to content_source_reviews and content_source_events,
@@ -240,5 +240,156 @@ func TestPostgresStore_Integration_UpdateOnlyChangedFields(t *testing.T) {
 	}
 	if !unchanged.UpdatedAt.Equal(updated.UpdatedAt) {
 		t.Fatalf("updatedAt changed after no-change request: before=%v after=%v", updated.UpdatedAt, unchanged.UpdatedAt)
+	}
+}
+
+// TestPostgresStore_Integration_ProvenanceCatalogueLinking proves the T-0005 link-only
+// confirmation path against a real database: a source whose syllabus_code text is unchanged
+// but whose catalogue_syllabus_id FK is null or stale can be safely linked/relinked, the
+// resulting content_source_events row records catalogueSyllabusId only (never claiming
+// syllabusCode changed), and the event is immutable at the DB level like every other
+// content_source_events row. Skipped unless TEST_DATABASE_URL is set.
+func TestPostgresStore_Integration_ProvenanceCatalogueLinking(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set; skipping Postgres integration test")
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := db.Ping(); err != nil {
+		t.Fatalf("ping db: %v", err)
+	}
+
+	var catalogueID0610, catalogueID5090 string
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT id FROM syllabuses WHERE syllabus_code = '0610' AND status = 'active'`).Scan(&catalogueID0610); err != nil {
+		t.Fatalf("look up seeded 0610 catalogue syllabus id: %v", err)
+	}
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT id FROM syllabuses WHERE syllabus_code = '5090' AND status = 'active'`).Scan(&catalogueID5090); err != nil {
+		t.Fatalf("look up seeded 5090 catalogue syllabus id: %v", err)
+	}
+
+	store := NewPostgresStore(db)
+	ctx := context.Background()
+	code0610 := "0610"
+	stamp := time.Now().Format("20060102150405.000000000")
+
+	// Null FK (mirrors the two migration-0008 legacy seeded content_sources rows): same-code
+	// PATCH links it.
+	url := "https://example.org/link-null-fk-" + stamp
+	source, err := store.Create(ctx, CreateInput{Title: "Legacy link source", SourceURL: url, SyllabusCode: &code0610})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if source.CatalogueSyllabusID != nil {
+		t.Fatalf("catalogueSyllabusId = %v, want nil before linking", *source.CatalogueSyllabusID)
+	}
+	// No cleanup: this test creates immutable content_source_events rows (see file-level
+	// comment above). Requires a disposable database, destroyed after the test run.
+
+	linked, changed, err := store.Update(ctx, source.ID, UpdateInput{
+		ActorID:             "curator-provenance-1",
+		SyllabusCode:        &code0610,
+		CatalogueSyllabusID: &catalogueID0610,
+	})
+	if err != nil {
+		t.Fatalf("link update: %v", err)
+	}
+	if linked.CatalogueSyllabusID == nil || *linked.CatalogueSyllabusID != catalogueID0610 {
+		t.Fatalf("catalogueSyllabusId = %v, want %q", linked.CatalogueSyllabusID, catalogueID0610)
+	}
+	if linked.SyllabusCode == nil || *linked.SyllabusCode != code0610 {
+		t.Fatalf("syllabusCode = %v, want unchanged %q", linked.SyllabusCode, code0610)
+	}
+	if len(changed) != 1 || changed[0] != "catalogueSyllabusId" {
+		t.Fatalf("changed = %v, want [catalogueSyllabusId] (never claim syllabusCode changed)", changed)
+	}
+
+	var eventCount int
+	var eventChangedFields []string
+	if err := db.QueryRowContext(ctx,
+		`SELECT changed_fields FROM content_source_events WHERE content_source_id = $1`, source.ID,
+	).Scan(pq.Array(&eventChangedFields)); err != nil {
+		t.Fatalf("read event changed_fields: %v", err)
+	}
+	if len(eventChangedFields) != 1 || eventChangedFields[0] != "catalogueSyllabusId" {
+		t.Fatalf("event changed_fields = %v, want [catalogueSyllabusId]", eventChangedFields)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM content_source_events WHERE content_source_id = $1`, source.ID).Scan(&eventCount); err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("eventCount = %d, want 1", eventCount)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE content_source_events SET actor_id = 'tampered' WHERE content_source_id = $1`, source.ID); err == nil {
+		t.Fatal("expected UPDATE on content_source_events to be rejected by the immutability trigger")
+	}
+
+	// Same-code PATCH once the FK already matches: no_changes, no new event, updated_at
+	// unchanged.
+	if _, _, err := store.Update(ctx, source.ID, UpdateInput{
+		ActorID:             "curator-provenance-1",
+		SyllabusCode:        &code0610,
+		CatalogueSyllabusID: &catalogueID0610,
+	}); !errors.Is(err, ErrNoChanges) {
+		t.Fatalf("re-confirm matching link: err = %v, want ErrNoChanges", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM content_source_events WHERE content_source_id = $1`, source.ID).Scan(&eventCount); err != nil {
+		t.Fatalf("count events after no-change confirm: %v", err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("eventCount = %d, want 1 (no_changes must not add a second event)", eventCount)
+	}
+
+	// Stale FK: a source's syllabus_code text is "0610" but its catalogue_syllabus_id points
+	// at a different (still valid) catalogue syllabus — same-code PATCH safely relinks it to
+	// the currently resolved 0610 catalogue syllabus.
+	staleURL := "https://example.org/link-stale-fk-" + stamp
+	staleSource, err := store.Create(ctx, CreateInput{
+		Title: "Stale link source", SourceURL: staleURL, SyllabusCode: &code0610, CatalogueSyllabusID: &catalogueID5090,
+	})
+	if err != nil {
+		t.Fatalf("create stale-linked source: %v", err)
+	}
+	relinked, changed, err := store.Update(ctx, staleSource.ID, UpdateInput{
+		ActorID:             "curator-provenance-2",
+		SyllabusCode:        &code0610,
+		CatalogueSyllabusID: &catalogueID0610,
+	})
+	if err != nil {
+		t.Fatalf("relink update: %v", err)
+	}
+	if relinked.CatalogueSyllabusID == nil || *relinked.CatalogueSyllabusID != catalogueID0610 {
+		t.Fatalf("catalogueSyllabusId = %v, want %q (safe relink)", relinked.CatalogueSyllabusID, catalogueID0610)
+	}
+	if len(changed) != 1 || changed[0] != "catalogueSyllabusId" {
+		t.Fatalf("changed = %v, want [catalogueSyllabusId]", changed)
+	}
+
+	// A genuinely different code updates both syllabus_code and catalogue_syllabus_id and is
+	// audited as "syllabusCode".
+	code5090 := "5090"
+	recoded, changed, err := store.Update(ctx, staleSource.ID, UpdateInput{
+		ActorID:             "curator-provenance-2",
+		SyllabusCode:        &code5090,
+		CatalogueSyllabusID: &catalogueID5090,
+	})
+	if err != nil {
+		t.Fatalf("recode update: %v", err)
+	}
+	if recoded.SyllabusCode == nil || *recoded.SyllabusCode != code5090 {
+		t.Fatalf("syllabusCode = %v, want %q", recoded.SyllabusCode, code5090)
+	}
+	if recoded.CatalogueSyllabusID == nil || *recoded.CatalogueSyllabusID != catalogueID5090 {
+		t.Fatalf("catalogueSyllabusId = %v, want %q", recoded.CatalogueSyllabusID, catalogueID5090)
+	}
+	if len(changed) != 1 || changed[0] != "syllabusCode" {
+		t.Fatalf("changed = %v, want [syllabusCode]", changed)
 	}
 }

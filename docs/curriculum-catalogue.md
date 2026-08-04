@@ -135,9 +135,13 @@ No year/edition, objective, assessment rule, rights claim, or any other syllabus
 
 - Existing seeded `content_sources` rows (migration 0003) keep their `syllabus_code` text and
   get `catalogue_syllabus_id = NULL`. They are **not** silently auto-mapped to catalogue
-  syllabuses; a human links them in a later task (no ambiguous mapping).
+  syllabuses. A human links them via the authenticated `PATCH /content-sources/{id}` flow — see
+  [provenance-catalogue-linking.md](provenance-catalogue-linking.md) (T-0005) for the exact
+  request, permission, and audit rules.
 - New/updated content sources that supply a code have it resolved to an active catalogue
-  syllabus and store the FK.
+  syllabus and store the FK. A `PATCH` that re-supplies the *same* stored code but whose
+  `catalogue_syllabus_id` is missing or stale is a link-only provenance confirmation, not a
+  code change — see [provenance-catalogue-linking.md](provenance-catalogue-linking.md).
 
 ## Onboarding checklist — adding a future syllabus
 

@@ -90,6 +90,21 @@ silent mapping of ambiguous rights records — a human links them later); let th
 catalogue authority (rejected: Core is the single authority; AI adds no content ingestion).
 **Owner/date:** Claude Code agent, 2026-07-24 (T-0004).
 
+**Update (T-0005, 2026-08-04):** the migration path above intentionally left every existing
+`content_sources` row's `catalogue_syllabus_id` `NULL` rather than auto-mapping it, but the
+original `PATCH /content-sources/{id}` `syllabusCode` diff logic only compared the free-text
+code — re-supplying an already-stored code was always `400 no_changes`, so there was no safe,
+authenticated, audited path to complete that link. `PATCH` now splits the diff: a supplied code
+that differs from the stored text still updates `syllabus_code` **and**
+`catalogue_syllabus_id` together (audited `changed_fields: ["syllabusCode"]`); a supplied code
+that matches the stored text but whose resolved catalogue syllabus differs from the stored FK
+(including a `NULL` FK) updates `catalogue_syllabus_id` alone as a link-only human provenance
+confirmation (audited `changed_fields: ["catalogueSyllabusId"]` — never claiming `syllabusCode`
+changed when it did not); a supplied code matching both stays `400 no_changes`. The request body
+is unchanged (still only `syllabusCode`, resolved server-side); no new endpoint, no caller-
+supplied catalogue ID, no auto-linking outside an explicit authenticated `PATCH` from an
+editor/reviewer/admin. See [provenance-catalogue-linking.md](provenance-catalogue-linking.md).
+
 ## Decision template
 
 ```md

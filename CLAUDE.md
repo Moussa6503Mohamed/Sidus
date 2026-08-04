@@ -54,4 +54,5 @@ cd services/ai && python -m pytest
 - Biology syllabus/provenance commit: `4cfb5d3`.
 - Curriculum catalogue (multi-subject) released in T-0004. Core owns the metadata-only
   `subjects`/`syllabuses` registry; see `docs/curriculum-catalogue.md` and D-0007.
-- No active task. See `docs/tasks/history.md`.
+- T-0005 (provenance-confirmed catalogue linking) in review. See `docs/tasks/active.md` and
+  `docs/provenance-catalogue-linking.md`.

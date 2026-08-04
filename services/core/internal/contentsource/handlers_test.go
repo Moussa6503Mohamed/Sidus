@@ -164,7 +164,6 @@ func (m *memoryStore) Update(_ context.Context, id string, in UpdateInput) (Sour
 		{"licenceReference", in.LicenceReference, s.LicenceReference, func(v string) { s.LicenceReference = strPtr(v) }},
 		{"permittedUse", in.PermittedUse, s.PermittedUse, func(v string) { s.PermittedUse = strPtr(v) }},
 		{"allowedAudience", in.AllowedAudience, s.AllowedAudience, func(v string) { s.AllowedAudience = strPtr(v) }},
-		{"syllabusCode", in.SyllabusCode, s.SyllabusCode, func(v string) { s.SyllabusCode = strPtr(v); s.CatalogueSyllabusID = in.CatalogueSyllabusID }},
 	}
 	var changed []string
 	suppliedCount := 0
@@ -186,6 +185,24 @@ func (m *memoryStore) Update(_ context.Context, id string, in UpdateInput) (Sour
 		c.apply(*c.value)
 		changed = append(changed, c.field)
 	}
+
+	// syllabusCode and catalogue_syllabus_id can change independently (T-0005): mirrors
+	// PostgresStore.Update so handler tests exercise the same link-only-confirmation logic.
+	if in.SyllabusCode != nil {
+		suppliedCount++
+		codeChanged := s.SyllabusCode == nil || *s.SyllabusCode != *in.SyllabusCode
+		fkChanged := !stringPtrEqual(s.CatalogueSyllabusID, in.CatalogueSyllabusID)
+		switch {
+		case codeChanged:
+			s.SyllabusCode = strPtr(*in.SyllabusCode)
+			s.CatalogueSyllabusID = in.CatalogueSyllabusID
+			changed = append(changed, "syllabusCode")
+		case fkChanged:
+			s.CatalogueSyllabusID = in.CatalogueSyllabusID
+			changed = append(changed, "catalogueSyllabusId")
+		}
+	}
+
 	if suppliedCount == 0 {
 		return Source{}, nil, ErrNoUpdatableFields
 	}
@@ -847,6 +864,191 @@ func TestUpdate_NoChangeRequest_NoEventAndNoUpdatedAtChange(t *testing.T) {
 	}
 	if !after.UpdatedAt.Equal(before.UpdatedAt) {
 		t.Fatalf("updatedAt changed: before=%v after=%v, want unchanged", before.UpdatedAt, after.UpdatedAt)
+	}
+}
+
+// --- Provenance-confirmed catalogue linking (T-0005) ---
+//
+// A PATCH that supplies the existing syllabusCode (unchanged text) but the source's
+// catalogue_syllabus_id is missing or stale is a human provenance-confirmation link, not a
+// syllabus-code change. It must update catalogue_syllabus_id only and audit it as
+// "catalogueSyllabusId", never claiming "syllabusCode" changed.
+
+func TestUpdate_SameCode_NullCatalogueLink_LinksProvenance(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{
+		Title:               "Legacy 0610 syllabus",
+		SourceURL:           "https://example.org/link-null",
+		SyllabusCode:        strPtr("0610"),
+		CatalogueSyllabusID: nil, // simulates the two migration-0008 legacy seeded rows
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	resp := doJSONAs(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, editorToken, updateRequest{
+		SyllabusCode: strPtr("0610"),
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	updated := decodeJSON[Source](t, resp)
+	if updated.CatalogueSyllabusID == nil || *updated.CatalogueSyllabusID != "syl-0610" {
+		t.Fatalf("catalogueSyllabusId = %v, want syl-0610", updated.CatalogueSyllabusID)
+	}
+	if updated.SyllabusCode == nil || *updated.SyllabusCode != "0610" {
+		t.Fatalf("syllabusCode = %v, want unchanged 0610", updated.SyllabusCode)
+	}
+
+	if len(store.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(store.events))
+	}
+	ev := store.events[0]
+	if ev.ActorID != editorSubject {
+		t.Fatalf("actorId = %q, want %q (verified subject)", ev.ActorID, editorSubject)
+	}
+	want := []string{"catalogueSyllabusId"}
+	if len(ev.ChangedFields) != len(want) || ev.ChangedFields[0] != want[0] {
+		t.Fatalf("changedFields = %v, want %v (never claim syllabusCode changed)", ev.ChangedFields, want)
+	}
+}
+
+func TestUpdate_SameCode_StaleCatalogueLink_Relinks(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{
+		Title:               "Bio syllabus",
+		SourceURL:           "https://example.org/link-stale",
+		SyllabusCode:        strPtr("0610"),
+		CatalogueSyllabusID: strPtr("stale-catalogue-id"),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		SyllabusCode: strPtr("0610"),
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	updated := decodeJSON[Source](t, resp)
+	if updated.CatalogueSyllabusID == nil || *updated.CatalogueSyllabusID != "syl-0610" {
+		t.Fatalf("catalogueSyllabusId = %v, want syl-0610 (safe relink)", updated.CatalogueSyllabusID)
+	}
+	if len(store.events) != 1 || store.events[0].ChangedFields[0] != "catalogueSyllabusId" {
+		t.Fatalf("events = %v, want single catalogueSyllabusId event", store.events)
+	}
+}
+
+func TestUpdate_SameCode_MatchingCatalogueLink_NoChanges(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{
+		Title:               "Bio syllabus",
+		SourceURL:           "https://example.org/link-matching",
+		SyllabusCode:        strPtr("0610"),
+		CatalogueSyllabusID: strPtr("syl-0610"),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	before, err := store.Get(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		SyllabusCode: strPtr("0610"),
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	body := decodeJSON[map[string]any](t, resp)
+	if body["error"] != "no_changes" {
+		t.Fatalf("error = %v, want no_changes", body["error"])
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("events = %d, want 0", len(store.events))
+	}
+	after, err := store.Get(ctx, source.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatalf("updatedAt changed: before=%v after=%v, want unchanged", before.UpdatedAt, after.UpdatedAt)
+	}
+}
+
+func TestUpdate_DifferentCode_UpdatesCodeAndCatalogueLink(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{
+		Title:               "Bio syllabus",
+		SourceURL:           "https://example.org/link-different-code",
+		SyllabusCode:        strPtr("0610"),
+		CatalogueSyllabusID: strPtr("syl-0610"),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		SyllabusCode: strPtr("5090"),
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	updated := decodeJSON[Source](t, resp)
+	if updated.SyllabusCode == nil || *updated.SyllabusCode != "5090" {
+		t.Fatalf("syllabusCode = %v, want 5090", updated.SyllabusCode)
+	}
+	if updated.CatalogueSyllabusID == nil || *updated.CatalogueSyllabusID != "syl-5090" {
+		t.Fatalf("catalogueSyllabusId = %v, want syl-5090", updated.CatalogueSyllabusID)
+	}
+	if len(store.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(store.events))
+	}
+	want := []string{"syllabusCode"}
+	if len(store.events[0].ChangedFields) != len(want) || store.events[0].ChangedFields[0] != want[0] {
+		t.Fatalf("changedFields = %v, want %v", store.events[0].ChangedFields, want)
+	}
+}
+
+// Confirming a missing/stale catalogue link requires the same editor/admin permission as any
+// other pending-source PATCH; a learner is denied like every other content-source write.
+func TestUpdate_CatalogueLinkConfirmation_LearnerDenied(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{
+		Title:               "Bio syllabus",
+		SourceURL:           "https://example.org/link-learner-denied",
+		SyllabusCode:        strPtr("0610"),
+		CatalogueSyllabusID: nil,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	resp := doJSONAs(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, learnerToken, updateRequest{
+		SyllabusCode: strPtr("0610"),
+	})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("events = %d, want 0", len(store.events))
 	}
 }
 
