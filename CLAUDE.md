@@ -72,9 +72,10 @@ cd services/ai && python -m pytest
   (question `content_revision` so a question can only be verified with a rubric verified against
   its **current** content, case-sensitive rubric JSON keys, validated node filter on
   `GET /questions`) — see D-0009 "Update (T-0007 review)". Released 2026-08-05.
-- Cross-package API input hardening (T-0008, in review): `contentsource`, `catalogue`, and
+- Cross-package API input hardening released in T-0008: `contentsource`, `catalogue`, and
   `curriculummap` now match `question`'s strict-decode allowlist (rejects case-variant field
-  names, `actorId`/`reviewerId`, unknown fields, trailing JSON) and map malformed (non-UUID)
-  `{id}` path parameters to the existing not-found response instead of a `500` — see D-0010 and
-  `docs/handoffs/T-0008.md`. No business rule, schema, or seed content changed.
-- Active task: T-0008 (status `review`). See `docs/tasks/active.md` / `docs/tasks/history.md`.
+  names, `actorId`/`reviewerId`, unknown fields, trailing JSON, and literal JSON `null` bodies)
+  and map malformed (non-UUID) `{id}` path parameters to the existing not-found response instead
+  of a `500` — see D-0010 and `docs/handoffs/T-0008.md`. No business rule, schema, or seed
+  content changed. Released 2026-08-05.
+- No active task. See `docs/tasks/active.md` / `docs/tasks/history.md`.

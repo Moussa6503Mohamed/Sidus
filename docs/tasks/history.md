@@ -749,3 +749,96 @@ workflow** that is out of scope here.
 ### Handoff
 
 `docs/handoffs/T-0007.md`
+
+## T-0008 — Cross-package API input hardening
+
+**Status:** done / released
+**Owner:** Claude Code agent
+**Priority:** P1
+**Depends on:** T-0003 (done), T-0006 (done), T-0007 (done)
+
+### Goal
+
+Make the existing Core APIs in `contentsource`, `catalogue`, and `curriculummap` reject
+malformed IDs and case-variant request fields consistently, closing the two cross-package gaps
+the T-0007 review flagged as carried-forward observations, before any web editorial client is
+built.
+
+### Scope
+
+- `services/core/internal/contentsource`, `services/core/internal/catalogue`,
+  `services/core/internal/curriculummap` only.
+- Every JSON body handler in these packages: reject unknown fields, case-variant field names,
+  `actorId`/`reviewerId`, and trailing JSON — all before any store call, with the existing
+  stable `invalid_json` error.
+- Every route with an `{id}` path parameter: a malformed (non-UUID) id now maps to the same
+  stable not-found response as a missing id, never a generic `500 internal_error`.
+- `question` package: unchanged (already closed both gaps in T-0007).
+
+### What changed
+
+- `contentsource`, `catalogue`, `curriculummap` handlers: `decodeStrict` now takes an explicit
+  case-sensitive field allowlist (decode into `map[string]json.RawMessage` first, reject any key
+  outside the allowlist, then strict-decode into the destination struct) — mirrors the pattern
+  `question` already used. Applied to every POST/PATCH body.
+- `contentsource`, `catalogue` `postgres_store.go`: added `isInvalidTextRepresentation` (checks
+  Postgres `22P02`) and used it alongside `sql.ErrNoRows` everywhere an `{id}` path parameter is
+  looked up. `curriculummap` already had this helper (T-0006 review); its remaining `{id}`
+  routes now use it too.
+
+### Review fix (T-0008 review)
+
+Every allowlist decoder decoded a literal JSON `null` body into a `nil`
+`map[string]json.RawMessage` with no error, which passed the allowlist loop (zero keys) and
+reached business validation looking identical to an empty object. Each decoder now rejects a
+`nil` decoded map as `400 invalid_json` immediately after the first successful decode, before the
+trailing-data check, the allowlist loop, or any store/event call. Valid `{}` is unaffected. See
+D-0010 "Update" in `docs/decisions.md` and `docs/handoffs/T-0008.md` "Update (T-0008 review)".
+
+### Acceptance checks
+
+- Case-variant fields rejected for every affected create/PATCH body shape. — met
+- `actorId`/`reviewerId`, unknown fields, trailing JSON values, null bodies, and trailing junk
+  rejected before any store call, in every affected package. — met
+- Malformed (non-UUID) IDs on GET/PATCH/verify/retire/approve/reject map to the existing
+  not-found response, never `500`. — met
+- A valid UUID for a missing resource still returns the existing not-found response
+  (unchanged). — met
+- Full role matrix and all pre-existing behavior remain green. — met
+
+### Constraints
+
+- Never stage/alter/move/delete: `DB.jpeg`, `arch.jpeg`, `Sidus.xlsx`,
+  `Sidus_Roadmap_and_Cost_Model(1).xlsx`, `Sidus_Final_MVP_Technical_Cost_Model*.xlsx`,
+  `Sidus_Final_MVP_Technical_Cost_Model_Recreated.xlsx`, `.claude/`, `.claude-flow/`, any
+  `.env.local`.
+- No business-rule, role, schema, migration, or source approval/linking changes. No UI, AI/OCR/
+  ingestion, or source/PDF/text/diagram/question/rubric content work. No shared-helper
+  extraction across packages.
+
+### Open questions / blockers
+
+None.
+
+### Release validation (final pass, 2026-08-05)
+
+| Command | Result |
+| --- | --- |
+| `docker compose -f docker-compose.yml config` / `-f docker-compose.test.yml config` | Pass / Pass |
+| `go build ./... && go vet ./...` (Docker `golang:1.22-alpine`) | Pass |
+| `gofmt -l .` (scoped to changed packages) | Pass — no changed file listed |
+| `go test ./...` (unit, Docker toolchain) | Pass — core, auth, catalogue, contentsource, curriculummap, question all green |
+| `docker compose -f docker-compose.test.yml up -d` + `pg_isready` wait | Pass — `sidus-test-postgres-test-1` healthy |
+| `go run ./cmd/migrate` against a fresh disposable `sidus-test` | Pass — 15 migrations applied |
+| `go run ./cmd/migrate` rerun | Pass — idempotent, 0 migrations applied |
+| `go test ./... -run Integration` against `sidus-test` | Pass — catalogue, contentsource, curriculummap, question all green |
+| `docker compose -f docker-compose.test.yml down -v` | Pass — `sidus-test` destroyed only; dev untouched |
+| `python -m pytest -q` (services/ai) | Pass — 18 tests |
+| `npm --prefix apps/web run typecheck` | Pass |
+| `npm --prefix apps/web run build` | Pass — 6 routes intact |
+| `npx -p typescript tsc --noEmit --strict packages/shared/src/contracts.ts` | Pass |
+| `git diff --check` | Pass — clean |
+
+### Handoff
+
+`docs/handoffs/T-0008.md`
