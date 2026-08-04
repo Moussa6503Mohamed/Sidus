@@ -75,6 +75,10 @@ func decodeStrict(w http.ResponseWriter, r *http.Request, allowed map[string]str
 		writeInvalidJSON(w)
 		return false
 	}
+	if raw == nil {
+		writeInvalidJSON(w)
+		return false
+	}
 	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
 		writeInvalidJSON(w)
 		return false
@@ -236,6 +240,10 @@ func (h *handler) updateNode(w http.ResponseWriter, r *http.Request) {
 	raw := map[string]json.RawMessage{}
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&raw); err != nil {
+		writeInvalidJSON(w)
+		return
+	}
+	if raw == nil {
 		writeInvalidJSON(w)
 		return
 	}

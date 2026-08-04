@@ -714,6 +714,7 @@ func TestCreateSubject_StrictJSON(t *testing.T) {
 		"unknown field":   `{"name":"Astronomy","totallyUnknown":"x"}`,
 		"trailing object": `{"name":"Astronomy"}{}`,
 		"trailing junk":   `{"name":"Astronomy"}garbage`,
+		"null body":       `null`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -750,6 +751,7 @@ func TestCreateSyllabus_StrictJSON(t *testing.T) {
 		"reviewerId":         `{` + valid + `,"reviewerId":"attacker-supplied"}`,
 		"trailing object":    `{` + valid + `}{}`,
 		"trailing junk":      `{` + valid + `}garbage`,
+		"null body":          `null`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -777,6 +779,7 @@ func TestUpdateSyllabus_StrictJSON(t *testing.T) {
 		"unknown field":       `{"displayName":"New Name","totallyUnknown":"x"}`,
 		"trailing object":     `{"displayName":"New Name"}{}`,
 		"trailing junk":       `{"displayName":"New Name"}garbage`,
+		"null body":           `null`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {

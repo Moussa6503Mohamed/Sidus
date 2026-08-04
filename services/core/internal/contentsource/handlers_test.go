@@ -1582,3 +1582,100 @@ func TestUpdate_RejectsUnknownActorId_WithTrailingWhitespace(t *testing.T) {
 		t.Fatalf("events = %d, want 0", len(store.events))
 	}
 }
+
+// --- JSON `null` body must be rejected, not treated as an empty object (T-0008 review) ---
+//
+// `map[string]json.RawMessage` decodes JSON `null` successfully into a nil map, so a naive
+// nil-check-free decodeStrict let `null` slip past the "exactly one JSON object" rule and reach
+// business validation as if it were `{}`. These tests prove `null` is rejected up front.
+
+// TestCreate_RejectsNullBody proves a literal `null` body is rejected with invalid_json and
+// never reaches missing-required-fields validation or creates a source.
+func TestCreate_RejectsNullBody(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	resp := doRaw(t, http.MethodPost, srv.URL+"/content-sources", adminToken, "null")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	got := decodeJSON[map[string]any](t, resp)
+	if got["error"] != "invalid_json" {
+		t.Fatalf("error = %v, want invalid_json", got["error"])
+	}
+	if len(store.sources) != 0 {
+		t.Fatalf("sources = %d, want 0 (null body must not create a source)", len(store.sources))
+	}
+}
+
+// TestUpdate_RejectsNullBody proves a literal `null` body on PATCH is rejected before it can
+// reach no-updatable-fields validation or write an event.
+func TestUpdate_RejectsNullBody(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/null-update"})
+
+	resp := doRaw(t, http.MethodPatch, srv.URL+"/content-sources/"+src.ID, editorToken, "null")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	got := decodeJSON[map[string]any](t, resp)
+	if got["error"] != "invalid_json" {
+		t.Fatalf("error = %v, want invalid_json", got["error"])
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("events = %d, want 0 (null body must not audit)", len(store.events))
+	}
+}
+
+// TestApprove_RejectsNullBody proves a literal `null` body on approve is rejected before any
+// review is recorded or state changes.
+func TestApprove_RejectsNullBody(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{
+		Title:            "Bio",
+		SourceURL:        "https://example.org/null-approve",
+		Owner:            strPtr("CAIE"),
+		SourceHash:       strPtr("sha256:abc"),
+		LicenceReference: strPtr("REF"),
+		PermittedUse:     strPtr("metadata only"),
+		AllowedAudience:  strPtr("internal"),
+	})
+
+	resp := doRaw(t, http.MethodPost, srv.URL+"/content-sources/"+src.ID+"/approve", adminToken, "null")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	got := decodeJSON[map[string]any](t, resp)
+	if got["error"] != "invalid_json" {
+		t.Fatalf("error = %v, want invalid_json", got["error"])
+	}
+	if len(store.reviews) != 0 {
+		t.Fatalf("reviews = %d, want 0 (null body must not record a review)", len(store.reviews))
+	}
+	gotSrc := decodeJSON[Source](t, doJSONAs(t, http.MethodGet, srv.URL+"/content-sources/"+src.ID, adminToken, nil))
+	if gotSrc.Status != StatusPending {
+		t.Fatalf("status = %q, want still pending (approve was rejected)", gotSrc.Status)
+	}
+}
+
+// TestReject_RejectsNullBody proves a literal `null` body on reject is rejected before any
+// review is recorded.
+func TestReject_RejectsNullBody(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	src, _ := store.Create(context.Background(), CreateInput{Title: "Bio", SourceURL: "https://example.org/null-reject"})
+
+	resp := doRaw(t, http.MethodPost, srv.URL+"/content-sources/"+src.ID+"/reject", reviewerToken, "null")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	got := decodeJSON[map[string]any](t, resp)
+	if got["error"] != "invalid_json" {
+		t.Fatalf("error = %v, want invalid_json", got["error"])
+	}
+	if len(store.reviews) != 0 {
+		t.Fatalf("reviews = %d, want 0 (null body must not record a review)", len(store.reviews))
+	}
+}

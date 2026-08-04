@@ -830,6 +830,7 @@ func TestUpdateNode_ForbiddenAndUnknownFields_Returns400(t *testing.T) {
 		"typo field":      `{"labell":"new"}`,
 		"case variant":    `{"Label":"new"}`,
 		"forbidden alone": `{"status":"retired"}`,
+		"null body":       `null`,
 	}
 
 	for name, body := range cases {
@@ -1135,6 +1136,7 @@ func TestCreateNode_StrictJSON(t *testing.T) {
 		"unknown field":           `{` + valid + `,"totallyUnknown":"x"}`,
 		"trailing object":         `{` + valid + `}{}`,
 		"trailing junk":           `{` + valid + `}garbage`,
+		"null body":               `null`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {

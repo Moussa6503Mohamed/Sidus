@@ -132,6 +132,10 @@ func decodeStrict(w http.ResponseWriter, r *http.Request, allowed map[string]str
 		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
 		return false
 	}
+	if raw == nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
+		return false
+	}
 	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
 		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
 		return false
