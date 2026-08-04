@@ -71,5 +71,5 @@ cd services/ai && python -m pytest
   no AI/OCR/ingestion path is involved. Three review findings were fixed on top of `768c8e2`
   (question `content_revision` so a question can only be verified with a rubric verified against
   its **current** content, case-sensitive rubric JSON keys, validated node filter on
-  `GET /questions`) — see D-0009 "Update (T-0007 review)".
-- Active task: T-0007 (status `review`). See `docs/tasks/active.md` / `docs/tasks/history.md`.
+  `GET /questions`) — see D-0009 "Update (T-0007 review)". Released 2026-08-05.
+- No active task. See `docs/tasks/active.md` / `docs/tasks/history.md`.

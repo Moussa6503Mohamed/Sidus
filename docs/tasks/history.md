@@ -604,3 +604,148 @@ review)".
 ### Handoff
 
 `docs/handoffs/T-0006.md`
+
+## T-0007 — Original question and rubric foundation
+
+**Status:** done / released
+**Owner:** Claude Code agent
+**Priority:** P1
+**Depends on:** T-0001 (done), T-0004 (done), T-0005 (done), T-0006 (done)
+
+### Goal
+
+Build private, metadata-and-code-only infrastructure for **original** questions and **versioned**
+rubrics that future Exam Mode will use. Every question traces to exactly one **verified**
+curriculum-map node whose approved content source still passes the T-0006 source gate.
+
+**No question text, rubric text, syllabus text, mark schemes, past-paper content, PDFs,
+extracted text, diagrams, OCR output, or derivative questions are created or seeded by this
+task.** The public repository holds schema, code, contracts, docs, and tests only; question and
+rubric content exists solely in a runtime database, written by a future **private editorial
+workflow** that is out of scope here.
+
+### Scope
+
+- New tables `questions`, `question_rubric_versions`, `question_events` (migrations 0012–0014,
+  plus additive 0015 for content revision), new package `services/core/internal/question`.
+- Question fields: stable id, syllabus FK, curriculum-map-node FK, response type
+  (`multiple_choice` | `short_answer` | `structured_response`), language, original question
+  prompt/body, lifecycle status (`draft` | `verified` | `retired`), timestamps.
+- Rubric version fields: stable id, question FK, immutable positive per-question version number,
+  rubric structure JSONB (validation-safe schema), maximum marks, status (`draft` | `verified`),
+  creator/reviewer verified Clerk subjects, timestamps.
+- Question event fields: question id, event type covering create/update/verify/retire and
+  rubric-version create/verify, verified Clerk subject, names-only changed fields, immutable
+  trigger blocking `UPDATE`/`DELETE`. Never stores prompt or rubric values.
+- Core API: list/get verified questions (by syllabus, optional node); create/PATCH draft
+  question; create rubric version; list rubric versions (editorial roles only); verify rubric
+  version; verify question; retire question.
+- New least-privilege permissions `question:read`, `question:create`, `question:verify`,
+  `question_rubric:read`. Learner/unknown denied.
+- Shared TypeScript contracts, D-0009, `docs/question-rubric-model.md`, `docs/local-setup.md`,
+  `CLAUDE.md`, handoff.
+
+### Out of scope (explicitly not done)
+
+- No AI generation, Anthropic calls, OCR, ingestion, or question derivation. The AI service is
+  untouched.
+- No human source-rights approval, catalogue linking, or curriculum-map authoring performed.
+- No question, rubric, or map data seeded (no source currently passes the gate anyway).
+- No web UI for question authoring.
+
+### Schema decisions
+
+- **Node link, not syllabus-only grounding.** `questions.curriculum_map_node_id` is a `NOT NULL`
+  FK; `questions.syllabus_id` is also stored and must equal the node's syllabus, checked in the
+  application layer on every write.
+- **Verified-node + source gate re-run on every question write** (create, PATCH, verify, retire,
+  rubric-version create, rubric-version verify).
+- **`syllabusId` is immutable** on a question; re-point the node instead, which re-validates the
+  syllabus match.
+- **Rubric versions are append-only per question.** `UNIQUE (question_id, version)`, version
+  allocated inside the write transaction under a row lock on the question, and a DB trigger
+  rejects any `UPDATE` that changes `question_id`, `version`, `question_revision`, `rubric`, or
+  `max_marks` — only `status`/`reviewed_by`/`updated_at` may change.
+- **A rubric version is bound to the question content it was reviewed against** (review fix 1,
+  migration 0015): `questions.content_revision` increments by exactly one per successful draft
+  content update; every rubric version stores the revision current at its creation; a version
+  counts towards question verification only while the two are equal.
+- **Rubric JSONB has a validation-safe schema**, matched exactly and case-sensitively at every
+  level (review fix 2): unknown keys, case variants, duplicate keys, wrongly-typed values, and
+  trailing JSON are all rejected.
+- **A question can only be verified when it has at least one verified rubric version for its
+  current content revision** — no verified version at all is `409 missing_verified_rubric`;
+  verified versions that all predate the current content are `409
+  missing_current_verified_rubric`.
+- **Retired questions disappear from reader endpoints** (verified-only reads).
+- **`GET /questions` validates the optional node filter** (review fix 3): unknown/malformed →
+  `400 unknown_node`, a real node of another syllabus → `400 mismatched_node`.
+
+### Acceptance checks
+
+- Migrations bootstrap on an empty database and are idempotent on rerun. — met
+- Content revision increments exactly once per successful edit; never on `no_changes`, a
+  rejected write, or a lifecycle transition. — met
+- A question cannot be verified with only a rubric verified against an older revision; stale
+  versions stay verified, immutable, and readable. — met
+- Rubric JSON rejects case variants and duplicate keys at every level. — met
+- The optional node filter on listing is validated. — met
+- No seeded question or rubric text anywhere in the repository. — met
+- Question syllabus must equal the mapped node's syllabus; draft/retired/missing nodes
+  rejected. — met
+- Verified node + source gate revalidated on every question write and verification. — met
+- Question cannot be verified without a verified rubric version. — met
+- Rubric versions immutable, unique, and monotonic per question. — met
+- Lifecycle transitions enforced; invalid transitions rejected. — met
+- Question events immutable; actor is the verified Clerk subject; names-only changed fields. —
+  met
+- Full role matrix: learner/unknown denied; editor read+draft+draft-rubric; reviewer adds
+  verify/retire; admin all. — met
+- Strict JSON: unknown fields, `actorId`/`reviewerId`, `syllabusId` change, lifecycle spoofing,
+  and trailing JSON all rejected before any store call. — met
+- No raw database/internal error text returned. — met
+- Existing test suite stays green. — met
+
+### Constraints
+
+- Never stage/alter/move/delete: `DB.jpeg`, `arch.jpeg`, `Sidus.xlsx`,
+  `Sidus_Roadmap_and_Cost_Model(1).xlsx`, `Sidus_Final_MVP_Technical_Cost_Model*.xlsx`,
+  `Sidus_Final_MVP_Technical_Cost_Model_Recreated.xlsx`, `.claude/`, `.claude-flow/`, any
+  `.env.local`.
+
+### Open questions / blockers
+
+- None blocking. Carried forward: the two seeded 0610/5090 content sources are still
+  `pending`/unlinked (T-0001 approval + T-0005 linking), and no curriculum-map node has been
+  authored or verified (T-0006). Until all three happen, no question can pass the grounding
+  gate — which is why nothing is seeded.
+- `language` is an opaque non-empty string (e.g. a BCP-47 tag); no language registry exists.
+- Rubric listing is gated by its own permission (`question_rubric:read`) rather than reusing
+  `question:read`.
+- Cross-package observation, not fixed: `POST` handlers in `curriculummap`/`contentsource`/
+  `catalogue` still accept case variants of known field names (`DisallowUnknownFields` is
+  case-insensitive on struct decoding); the `question` package closes this with an explicit
+  allowlist. A malformed (non-UUID) id still yields `500` in those sibling packages, unlike
+  `question`. Both are candidates for a separate cross-package cleanup task.
+
+### Release validation (final pass, 2026-08-05)
+
+| Command | Result |
+| --- | --- |
+| `docker compose -f docker-compose.yml config` / `-f docker-compose.test.yml config` | Pass / Pass |
+| `go build ./... && go vet ./...` (Docker `golang:1.22-alpine`) | Pass |
+| `go test ./...` (unit, Docker toolchain) | Pass — core, auth, catalogue, contentsource, curriculummap, question all green |
+| `docker compose -f docker-compose.test.yml up -d` + `pg_isready` wait | Pass — `sidus-test-postgres-test-1` healthy |
+| `go run ./cmd/migrate` against disposable `sidus-test` | Pass — 15 migrations applied |
+| `go run ./cmd/migrate` rerun against the same `sidus-test` | Pass — idempotent, 0 migrations applied |
+| `go test ./... -run Integration -v` against `sidus-test` | Pass — catalogue + content-source + curriculum-map + question all green |
+| `docker compose -f docker-compose.test.yml down -v` | Pass — `sidus-test` destroyed only; dev untouched |
+| `python -m pytest -q` (services/ai) | Pass — 18 tests |
+| `npm --prefix apps/web run typecheck` | Pass |
+| `npm --prefix apps/web run build` | Pass — Proxy (Middleware) detected; 6 routes intact |
+| `npx -p typescript tsc --noEmit --strict packages/shared/src/contracts.ts` | Pass |
+| `git diff --check` | Pass — clean |
+
+### Handoff
+
+`docs/handoffs/T-0007.md`
