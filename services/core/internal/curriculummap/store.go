@@ -50,21 +50,27 @@ type Store interface {
 	CreateNode(ctx context.Context, in CreateInput) (Node, error)
 
 	// UpdateNode applies a partial update to a draft node. Only a node whose status is draft
-	// may be updated (ErrInvalidTransition otherwise). The same syllabus/parent/source gates as
-	// CreateNode apply to any changed value.
+	// may be updated (ErrInvalidTransition otherwise). The parent gate applies to any changed
+	// parent, and the source gate is re-run on every update — against the supplied source if
+	// any, otherwise the node's stored source — because a source can be un-approved, unlinked,
+	// or re-linked after the node was created. A failed gate writes nothing.
 	UpdateNode(ctx context.Context, id string, in UpdateInput) (Node, error)
 
-	// VerifyNode transitions a draft node to verified.
+	// VerifyNode transitions a draft node to verified. The node's stored source must still pass
+	// the source gate; otherwise nothing is written.
 	VerifyNode(ctx context.Context, id string, actorID string) (Node, error)
 
-	// RetireNode transitions a draft or verified node to retired.
+	// RetireNode transitions a draft or verified node to retired. The node's stored source must
+	// still pass the source gate; otherwise nothing is written.
 	RetireNode(ctx context.Context, id string, actorID string) (Node, error)
 
 	// GetNode returns a node by ID. When verifiedOnly is true, a non-verified node is reported
 	// as ErrNotFound.
 	GetNode(ctx context.Context, id string, verifiedOnly bool) (Node, error)
 
-	// ListNodesBySyllabus returns nodes for a syllabus. When verifiedOnly is true, only
-	// verified nodes.
+	// ListNodesBySyllabus returns nodes for a syllabus. The syllabus must resolve to a known,
+	// active catalogue syllabus (ErrUnknownSyllabus otherwise) — an unknown or inactive
+	// syllabus is never reported as an empty list. When verifiedOnly is true, only verified
+	// nodes are returned; a known active syllabus with no verified nodes yields an empty slice.
 	ListNodesBySyllabus(ctx context.Context, syllabusID string, verifiedOnly bool) ([]Node, error)
 }

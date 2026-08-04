@@ -60,14 +60,33 @@ OR DELETE` trigger rejects any mutation, mirroring `syllabus_events`/`content_so
   FOR UPDATE`) — not a DB trigger. This keeps `invalid_parent` error mapping under Core's
   control instead of parsing a trigger-raised message (see D-0008 "Alternatives").
 - **No cycles in the hierarchy.** Also application-layer: on any write that changes
-  `parentNodeId`, Core walks the candidate parent's ancestor chain (bounded, same transaction,
-  same row locks) and rejects if it reaches the node being written.
+  `parentNodeId`, Core walks the candidate parent's ancestor chain (bounded by
+  `maxParentHops`, same transaction) and rejects if it reaches the node being written.
+  **Every ancestor row traversed is locked `FOR UPDATE`**, not only the candidate parent — an
+  unlocked walk could read a chain another transaction is re-parenting and admit a cycle. The
+  locks are held until the writing transaction ends. Consequence: two transactions re-parenting
+  overlapping chains in opposite orders can deadlock; Postgres aborts one, which surfaces as a
+  generic `500 internal_error` with **no partial write**, and the caller may retry.
 - **No duplicate `nodeCode` within a syllabus.** DB unique index; a collision maps to `409
   duplicate_node_code`.
-- **Source FK required.** `content_source_id` is `NOT NULL`; every create, and every update
-  that changes it, re-runs the source gate.
-- **Source cannot be changed to a mismatched syllabus.** The gate re-runs against the node's
-  (immutable) syllabus on every `contentSourceId` change.
+- **Source FK required.** `content_source_id` is `NOT NULL`.
+- **The source gate re-runs on every node write.** Not only on create and not only when
+  `contentSourceId` changes: `PATCH`, `verify`, and `retire` all re-validate the node's
+  *effective* source (the supplied one if the request carries `contentSourceId`, otherwise the
+  stored one) against the node's immutable syllabus, before any node row, status change, or
+  audit event is written. A source that was approved and linked when the node was created can
+  later be un-approved, unlinked, or re-linked to a different syllabus; without this
+  re-validation a node could keep being edited and even promoted to `verified` while grounded
+  in a source that no longer passes the T-0001 rights gate.
+  - A failed gate is a stable `400` (`unknown_source` / `unapproved_source` /
+    `unlinked_source` / `mismatched_source`) and causes **no** node mutation, **no** status
+    transition, **no** audit event, and **no** `updated_at` change.
+  - **Operational consequence:** while a node's source is in a failed state the node is frozen
+    — it cannot be edited, verified, *or retired*. Restore the source (re-approve and/or
+    re-link it via the content-source API) to unfreeze the node, then retire it if that was the
+    intent.
+- **The gate is Core-only.** No other service — in particular the AI service — may create,
+  update, verify, or retire a node, or evaluate the gate.
 
 ### Why syllabus is immutable on a node
 
@@ -84,24 +103,43 @@ draft --(retire)-----------------------------^
 
 - **Create** always produces a `draft` node (status is never caller-settable at creation).
 - **PATCH** (`parentNodeId`, `nodeKind`, `nodeCode`, `label`, `contentSourceId`,
-  `sourceLocator`) only succeeds while `status = draft`; otherwise `409
+  `sourceLocator` — and nothing else) only succeeds while `status = draft`; otherwise `409
   invalid_lifecycle_transition`. `status` itself is never PATCHable — only `verify`/`retire`
   change it.
 - **Verify** (`draft → verified`) requires `curriculum_map:verify`.
 - **Retire** (`draft → retired` or `verified → retired`) requires `curriculum_map:verify`.
   Retiring an already-retired node is `409 invalid_lifecycle_transition`.
+- Every one of `PATCH`/`verify`/`retire` also re-runs the source gate (see "Safe constraints").
 - Reader endpoints (list/get) only ever return **verified** nodes — mirrors the catalogue's
   active-only reader pattern.
 
 ## API
 
 All endpoints require a Clerk session bearer token (see [auth-setup.md](auth-setup.md)). The
-audit actor is always the verified Clerk subject — request bodies carry no actor field (strict
-decoder rejects unknown fields and trailing JSON).
+audit actor is always the verified Clerk subject — request bodies carry no actor field.
+
+### Strict request decoding
+
+Both `POST` and `PATCH` accept exactly one JSON object and reject anything else with a stable
+`400 invalid_json` (the message never echoes the offending field back):
+
+- **Unknown fields are rejected**, including identity fields (`actorId`, `reviewerId`),
+  immutable fields (`syllabusId`, `id`, `createdAt`, `updatedAt`), the lifecycle field
+  (`status`), field-name typos, and case variants of a real field (`Label`).
+- **Trailing JSON values or junk after the object are rejected** (`{...}{}`, `{...}[1]`,
+  `{...}not-json`).
+- A rejected request is refused before any store call: no node mutation, no status transition,
+  no audit event.
+- `PATCH` decodes into a `map[string]json.RawMessage` so it can distinguish "field absent" from
+  "field present as `null`" for the two nullable fields. `json.Decoder.DisallowUnknownFields`
+  has **no effect on a map destination**, so `PATCH` enforces an explicit allowlist of the six
+  updatable field names (`updatablePatchFields` in `handlers.go`) in addition to a strict
+  struct decode. Only `parentNodeId` and `sourceLocator` may be explicitly `null`, which clears
+  them; an absent field is left unchanged.
 
 | Method & path | Permission | Roles | Notes |
 | --- | --- | --- | --- |
-| `GET /curriculum-map/nodes?syllabusId=...` | `curriculum_map:read` | editor, reviewer, admin | verified nodes only; `syllabusId` required |
+| `GET /curriculum-map/nodes?syllabusId=...` | `curriculum_map:read` | editor, reviewer, admin | verified nodes only; `syllabusId` required, and must resolve to an **active** catalogue syllabus |
 | `GET /curriculum-map/nodes/{id}` | `curriculum_map:read` | editor, reviewer, admin | verified only (404 otherwise) |
 | `POST /curriculum-map/nodes` | `curriculum_map:create` | editor, reviewer, admin | creates a draft |
 | `PATCH /curriculum-map/nodes/{id}` | `curriculum_map:create` | editor, reviewer, admin | draft only |
@@ -117,6 +155,17 @@ decoder rejects unknown fields and trailing JSON).
 `500 internal_error` (database, scan, transaction, or other infrastructure failure) always
 returns the same stable, generic message. Raw driver/Go error text is never forwarded to a
 client.
+
+### Listing is validated, not silently empty
+
+`GET /curriculum-map/nodes` resolves `syllabusId` against the catalogue **before** returning a
+result:
+
+- unknown id, malformed (non-UUID) id, or a `draft`/`retired` syllabus → `400 unknown_syllabus`;
+- known **active** syllabus with no verified nodes → `200` with an empty `items` list.
+
+A typo'd or retired syllabus is therefore never indistinguishable from a real syllabus whose
+map has not been authored yet — which matters while the map is empty by design.
 
 ## Roles
 

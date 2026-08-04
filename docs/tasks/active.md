@@ -36,12 +36,41 @@ seeded.
 - Shared TypeScript contracts, D-0008, `docs/curriculum-map.md`, `docs/local-setup.md` update.
 - No AI-service map authority; AI service untouched.
 
+### Review findings (fixed 2026-08-04, status stays `review`)
+
+Four findings from independent review of commit `b1677cb`, all fixed in this task's scope. No
+change to the authority model, schema purpose, role matrix, approval/provenance rules, public
+content restrictions, Clerk setup, or the "no map data seeded" stance. See D-0008 "Update
+(T-0006 review)".
+
+1. **PATCH strict-JSON bypass.** The PATCH decoder read into `map[string]json.RawMessage`, and
+   `DisallowUnknownFields` has no effect on a map — so unknown fields including `actorId`,
+   `reviewerId`, `syllabusId`, `status`, and typos passed silently. PATCH now enforces an
+   explicit allowlist of the six updatable field names plus a strict struct decode; unknown /
+   identity / immutable / lifecycle fields, case variants, and trailing JSON all return stable
+   `400 invalid_json` before any store call. Explicit `null` still clears
+   `parentNodeId`/`sourceLocator`; absent-vs-null behaviour preserved.
+2. **Source gate only ran when `contentSourceId` changed.** It now re-runs on every node write:
+   `UpdateNode` validates the effective source (supplied, else stored) and
+   `VerifyNode`/`RetireNode` validate the stored source, all before any node/status/event write.
+   A failed gate causes no mutation, no transition, no event, and no `updated_at` change.
+   Accepted consequence: a node whose source has regressed is frozen, including for retirement,
+   until the source is restored. Gate stays Core-only; AI service untouched.
+3. **`GET /curriculum-map/nodes` returned an empty `200` for an unknown/inactive syllabus.** It
+   now returns `400 unknown_syllabus` for unknown/malformed/inactive ids, and `200` with an
+   empty list only for a known active syllabus with no verified nodes.
+4. **Ancestor walk was not actually row-locked.** Only the candidate parent was locked; the walk
+   used plain `SELECT`s despite the docs claiming a row-locked chain. Every traversed ancestor
+   is now locked `FOR UPDATE` in the writing transaction. Bounded traversal and `invalid_parent`
+   mapping unchanged. Documented trade-off: opposite-order concurrent re-parents can deadlock →
+   generic `500 internal_error`, no partial write, caller may retry.
+
 ### Schema decisions
 
 - Parent-same-syllabus and no-cycle enforcement are done at the **application layer** (Go, same
-  transaction, row-locked ancestor walk) rather than a DB trigger — keeps `invalid_parent` error
-  mapping under Core's control instead of parsing trigger-raised text. See D-0008
-  "Alternatives".
+  transaction, row-locked ancestor walk — every traversed ancestor, not just the candidate
+  parent) rather than a DB trigger — keeps `invalid_parent` error mapping under Core's control
+  instead of parsing trigger-raised text. See D-0008 "Alternatives".
 - `syllabusId` is immutable after node creation (not PATCHable) — avoids re-validating an
   entire subtree's parent-syllabus invariant on a syllabus change.
 - `nodeCode` uniqueness is a DB unique index (`syllabus_id`, `node_code`); required
@@ -59,7 +88,13 @@ seeded.
   rejected. — met
 - Role matrix: learner/unknown denied; editor read+draft only; reviewer adds verify/retire;
   admin all. — met
-- Strict JSON (unknown fields / trailing JSON rejected); no caller actor/reviewer field. — met
+- Strict JSON (unknown fields / trailing JSON rejected on **both** POST and PATCH); no caller
+  actor/reviewer field. — met (review fix 1)
+- Source gate re-validated on every node write (PATCH, verify, retire), not only on
+  `contentSourceId` change. — met (review fix 2)
+- List rejects unknown/inactive syllabus with `400 unknown_syllabus`; empty list only for a
+  known active syllabus. — met (review fix 3)
+- Ancestor walk row-locks every traversed ancestor. — met (review fix 4)
 - No raw database/internal error text ever returned. — met
 - No map data seeded; two seeded 0610/5090 sources remain pending/unlinked (unchanged from
   T-0005) until a human completes rights approval + catalogue linking. — met

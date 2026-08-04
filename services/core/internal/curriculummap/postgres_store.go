@@ -40,17 +40,26 @@ type queryRower interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// syllabusIsActive reports whether id resolves to a known, active catalogue syllabus.
+// syllabusIsActive reports whether id resolves to a known, active catalogue syllabus. An id
+// that is not even a well-formed UUID is "not known" rather than an infrastructure failure, so
+// a malformed id maps to the same stable unknown_syllabus response as a missing one.
 func syllabusIsActive(ctx context.Context, q queryRower, id string) (bool, error) {
 	var status string
 	err := q.QueryRowContext(ctx, `SELECT status FROM syllabuses WHERE id = $1`, id).Scan(&status)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("check syllabus: %w", err)
 	}
 	return status == "active", nil
+}
+
+// isInvalidTextRepresentation reports whether err is Postgres 22P02 (e.g. a non-UUID string
+// supplied where a UUID column is compared).
+func isInvalidTextRepresentation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "22P02"
 }
 
 // validateSourceGate is the sole enforcement point for the curriculum-map source gate: the
@@ -62,7 +71,7 @@ func validateSourceGate(ctx context.Context, q queryRower, sourceID, syllabusID 
 	err := q.QueryRowContext(ctx,
 		`SELECT status, catalogue_syllabus_id FROM content_sources WHERE id = $1`, sourceID,
 	).Scan(&status, &catalogueSyllabusID)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return ErrUnknownSource
 	}
 	if err != nil {
@@ -83,12 +92,19 @@ func validateSourceGate(ctx context.Context, q queryRower, sourceID, syllabusID 
 // validateParent locks and checks a candidate parent: it must exist, belong to syllabusID, and
 // its ancestor chain must not reach selfID (cycle). selfID is "" for a brand-new node, for
 // which a cycle is impossible.
+//
+// Every ancestor traversed is row-locked (`SELECT ... FOR UPDATE`) in the caller's transaction,
+// not only the candidate parent: an unlocked walk could observe a chain that a concurrent
+// transaction is in the middle of re-parenting and admit a cycle. Locks are held until the
+// caller's transaction ends. Two transactions re-parenting overlapping chains in opposite
+// orders can therefore deadlock; Postgres aborts one of them, which surfaces as a generic
+// `500 internal_error` (never a partial write), and the caller may retry.
 func validateParent(ctx context.Context, tx *sql.Tx, parentID, syllabusID, selfID string) error {
 	var parentSyllabusID string
 	err := tx.QueryRowContext(ctx,
 		`SELECT syllabus_id FROM curriculum_map_nodes WHERE id = $1 FOR UPDATE`, parentID,
 	).Scan(&parentSyllabusID)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return ErrInvalidParent
 	}
 	if err != nil {
@@ -107,9 +123,15 @@ func validateParent(ctx context.Context, tx *sql.Tx, parentID, syllabusID, selfI
 			return ErrInvalidParent
 		}
 		var next sql.NullString
-		if err := tx.QueryRowContext(ctx,
-			`SELECT parent_node_id FROM curriculum_map_nodes WHERE id = $1`, current,
-		).Scan(&next); err != nil {
+		err := tx.QueryRowContext(ctx,
+			`SELECT parent_node_id FROM curriculum_map_nodes WHERE id = $1 FOR UPDATE`, current,
+		).Scan(&next)
+		if errors.Is(err, sql.ErrNoRows) {
+			// A dangling ancestor cannot exist behind the FK, but treat it as an invalid parent
+			// rather than leaking an infrastructure error.
+			return ErrInvalidParent
+		}
+		if err != nil {
 			return fmt.Errorf("walk parent chain: %w", err)
 		}
 		if !next.Valid {
@@ -195,6 +217,19 @@ func (p *PostgresStore) UpdateNode(ctx context.Context, id string, in UpdateInpu
 		return Node{}, ErrInvalidTransition
 	}
 
+	// Every node write must reference an approved source linked to the node's syllabus — not
+	// only writes that change contentSourceId. A source approved at creation can later be
+	// un-approved, unlinked, or re-linked to another syllabus, so the gate is re-run here
+	// against the effective source (the supplied one if any, otherwise the stored one) before
+	// any node or event write.
+	effectiveSourceID := current.ContentSourceID
+	if in.ContentSourceID != nil {
+		effectiveSourceID = *in.ContentSourceID
+	}
+	if err := validateSourceGate(ctx, tx, effectiveSourceID, current.SyllabusID); err != nil {
+		return Node{}, err
+	}
+
 	var setClauses []string
 	var args []any
 	var changed []string
@@ -225,9 +260,7 @@ func (p *PostgresStore) UpdateNode(ctx context.Context, id string, in UpdateInpu
 	}
 
 	if in.ContentSourceID != nil && *in.ContentSourceID != current.ContentSourceID {
-		if err := validateSourceGate(ctx, tx, *in.ContentSourceID, current.SyllabusID); err != nil {
-			return Node{}, err
-		}
+		// Already gated above as the effective source.
 		args = append(args, *in.ContentSourceID)
 		setClauses = append(setClauses, "content_source_id = $"+strconv.Itoa(len(args)))
 		changed = append(changed, "contentSourceId")
@@ -324,6 +357,13 @@ func (p *PostgresStore) transitionStatus(ctx context.Context, id, actorID string
 		return Node{}, ErrInvalidTransition
 	}
 
+	// Verify/retire are node writes too: re-run the source gate against the node's stored
+	// source before the status update and its event, so a node whose source has since become
+	// unknown/unapproved/unlinked/mismatched cannot change lifecycle state.
+	if err := validateSourceGate(ctx, tx, current.ContentSourceID, current.SyllabusID); err != nil {
+		return Node{}, err
+	}
+
 	row = tx.QueryRowContext(ctx,
 		`UPDATE curriculum_map_nodes SET status = $1, updated_at = now() WHERE id = $2 RETURNING `+nodeColumns,
 		string(next), id,
@@ -360,6 +400,17 @@ func (p *PostgresStore) GetNode(ctx context.Context, id string, verifiedOnly boo
 }
 
 func (p *PostgresStore) ListNodesBySyllabus(ctx context.Context, syllabusID string, verifiedOnly bool) ([]Node, error) {
+	// An unknown or inactive syllabus is a bad request, not an empty map: returning 200 with an
+	// empty list would make a typo'd/retired syllabus id indistinguishable from a real syllabus
+	// that has no verified nodes yet.
+	active, err := syllabusIsActive(ctx, p.db, syllabusID)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		return nil, ErrUnknownSyllabus
+	}
+
 	query := `SELECT ` + nodeColumns + ` FROM curriculum_map_nodes WHERE syllabus_id = $1`
 	if verifiedOnly {
 		query += ` AND status = 'verified'`

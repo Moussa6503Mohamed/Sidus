@@ -153,6 +153,51 @@ the D-0004 biology slice (rejected: no source has completed rights approval yet,
 node would violate the source gate this task exists to enforce).
 **Owner/date:** Claude Code agent, 2026-08-04 (T-0006).
 
+**Update (T-0006 review, 2026-08-04):** four review findings tightened the decision above; the
+authority model, schema purpose, role matrix, approval rules, and "no map data seeded" stance
+are unchanged.
+
+1. **The source gate now runs on every node write, not only writes that change
+   `contentSourceId`.** The original wording ("create, and any update that changes
+   `contentSourceId`") left a hole: a source approved and linked at creation can later be
+   un-approved, unlinked, or re-linked to a different syllabus, after which a node could still
+   be `PATCH`ed and — worse — promoted to `verified` while grounded in a source that no longer
+   passes the T-0001 rights gate. `UpdateNode` now re-validates the *effective* source (the
+   supplied one if present, otherwise the stored one) against the node's immutable syllabus,
+   and `VerifyNode`/`RetireNode` re-validate the stored source, in all cases before any node
+   row, status change, or event is written. The accepted consequence is that a node whose
+   source has regressed is frozen — including for retirement — until the source is restored;
+   freezing was preferred over letting a lifecycle write proceed against a source outside the
+   rights gate, since the gate is the reason this table exists. The gate remains Core-only; no
+   AI-service authority was added.
+2. **Strict JSON is now actually enforced on `PATCH`.** The `PATCH` decoder reads into a
+   `map[string]json.RawMessage` to distinguish "absent" from "present as null" for the two
+   nullable fields, and `json.Decoder.DisallowUnknownFields` has no effect on a map
+   destination — so unknown fields, including `actorId`, `reviewerId`, `syllabusId`, and
+   `status`, were silently ignored rather than rejected. This contradicted D-0006 (identity is
+   never body-supplied) in spirit even though the ignored values were never used. `PATCH` now
+   validates every key against an explicit allowlist of the six updatable field names *and*
+   re-decodes strictly into the request struct; unknown/identity/immutable/lifecycle fields,
+   typos, case variants, and trailing JSON all return the same stable `400 invalid_json` before
+   any store call. Explicit `null` for `parentNodeId`/`sourceLocator` still clears them.
+3. **`GET /curriculum-map/nodes` validates the syllabus.** It previously returned `200` with an
+   empty list for an unknown or inactive `syllabusId`, making a typo indistinguishable from a
+   real but unauthored map — a real risk while no map data is seeded. It now returns `400
+   unknown_syllabus` for unknown/malformed/inactive ids, and `200` with an empty list only for
+   a known active syllabus with no verified nodes.
+4. **The ancestor walk really row-locks the chain.** D-0008 claimed a "row-locked ancestor
+   walk", but only the candidate parent was locked `FOR UPDATE`; the walk itself used plain
+   `SELECT`s, so a concurrent re-parent could be interleaved and a cycle admitted. Every
+   traversed ancestor is now locked `FOR UPDATE` in the writing transaction. The accepted
+   trade-off is that two transactions re-parenting overlapping chains in opposite orders can
+   deadlock; Postgres aborts one, which surfaces as a generic `500 internal_error` with no
+   partial write, and the caller may retry. Bounded traversal (`maxParentHops`) and
+   `invalid_parent` mapping are unchanged.
+
+A malformed (non-UUID) syllabus, source, or parent id now maps to the same stable domain error
+as a missing one (`unknown_syllabus` / `unknown_source` / `invalid_parent`) instead of a
+generic `500`; it is a client error, not an infrastructure failure.
+
 ## Decision template
 
 ```md

@@ -75,6 +75,16 @@ func newMemoryStore() *memoryStore {
 	}
 }
 
+// setSourceStatus rewrites a seeded source's gate-relevant fields, so tests can simulate a
+// source that was approved+linked when a node was created but has since been un-approved,
+// unlinked, or re-linked to another syllabus.
+func (m *memoryStore) setSourceStatus(id, status string, catalogueSyllabusID *string) {
+	m.sources[id] = memorySource{status: status, catalogueSyllabusID: catalogueSyllabusID}
+}
+
+// deleteSource removes a seeded source entirely (simulating an unknown source reference).
+func (m *memoryStore) deleteSource(id string) { delete(m.sources, id) }
+
 func (m *memoryStore) newID() string {
 	m.nextID++
 	return "node-" + time.Now().Format("150405") + "-" + string(rune('a'+m.nextID))
@@ -163,6 +173,15 @@ func (m *memoryStore) UpdateNode(_ context.Context, id string, in UpdateInput) (
 	if n.Status != StatusDraft {
 		return Node{}, ErrInvalidTransition
 	}
+	// Mirrors PostgresStore: the source gate re-runs on every update, against the supplied
+	// source if any, otherwise the stored one.
+	effectiveSource := n.ContentSourceID
+	if in.ContentSourceID != nil {
+		effectiveSource = *in.ContentSourceID
+	}
+	if err := m.validateSource(effectiveSource, n.SyllabusID); err != nil {
+		return Node{}, err
+	}
 
 	var changed []string
 	if in.NodeCode != nil && *in.NodeCode != n.NodeCode {
@@ -183,9 +202,6 @@ func (m *memoryStore) UpdateNode(_ context.Context, id string, in UpdateInput) (
 		changed = append(changed, "nodeKind")
 	}
 	if in.ContentSourceID != nil && *in.ContentSourceID != n.ContentSourceID {
-		if err := m.validateSource(*in.ContentSourceID, n.SyllabusID); err != nil {
-			return Node{}, err
-		}
 		n.ContentSourceID = *in.ContentSourceID
 		changed = append(changed, "contentSourceId")
 	}
@@ -231,6 +247,9 @@ func (m *memoryStore) VerifyNode(_ context.Context, id, actorID string) (Node, e
 	if n.Status != StatusDraft {
 		return Node{}, ErrInvalidTransition
 	}
+	if err := m.validateSource(n.ContentSourceID, n.SyllabusID); err != nil {
+		return Node{}, err
+	}
 	n.Status = StatusVerified
 	n.UpdatedAt = time.Now().UTC()
 	m.nodes[id] = n
@@ -245,6 +264,9 @@ func (m *memoryStore) RetireNode(_ context.Context, id, actorID string) (Node, e
 	}
 	if n.Status != StatusDraft && n.Status != StatusVerified {
 		return Node{}, ErrInvalidTransition
+	}
+	if err := m.validateSource(n.ContentSourceID, n.SyllabusID); err != nil {
+		return Node{}, err
 	}
 	n.Status = StatusRetired
 	n.UpdatedAt = time.Now().UTC()
@@ -262,6 +284,9 @@ func (m *memoryStore) GetNode(_ context.Context, id string, verifiedOnly bool) (
 }
 
 func (m *memoryStore) ListNodesBySyllabus(_ context.Context, syllabusID string, verifiedOnly bool) ([]Node, error) {
+	if !m.activeSyllabuses[syllabusID] {
+		return nil, ErrUnknownSyllabus
+	}
 	out := []Node{}
 	for _, n := range m.nodes {
 		if n.SyllabusID != syllabusID {
@@ -734,6 +759,315 @@ func TestUpdateNode_Success_RecordsEvent(t *testing.T) {
 	}
 	if len(store.events) != 2 || store.events[1].EventType != EventNodeUpdated {
 		t.Fatalf("expected node_updated event, got %+v", store.events)
+	}
+}
+
+// --- Strict PATCH decoding (identity / immutable / lifecycle / unknown fields) ---
+
+// patchRaw sends a PATCH with a raw (possibly malformed) body, bypassing json.Marshal.
+func patchRaw(t *testing.T, url, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPatch, url, bytes.NewReader([]byte(body)))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	return resp
+}
+
+// snapshot captures the mutable state a rejected request must leave untouched.
+type storeSnapshot struct {
+	node   Node
+	events int
+}
+
+func snapshotOf(t *testing.T, store *memoryStore, id string) storeSnapshot {
+	t.Helper()
+	n, ok := store.nodes[id]
+	if !ok {
+		t.Fatalf("node %q missing from store", id)
+	}
+	return storeSnapshot{node: n, events: len(store.events)}
+}
+
+// assertUnchanged fails if a node was mutated, transitioned, re-timestamped, or audited.
+func assertUnchanged(t *testing.T, store *memoryStore, id string, before storeSnapshot) {
+	t.Helper()
+	after, ok := store.nodes[id]
+	if !ok {
+		t.Fatalf("node %q disappeared from store", id)
+	}
+	if after != before.node {
+		t.Fatalf("node mutated by a rejected request:\n before = %+v\n after  = %+v", before.node, after)
+	}
+	if !after.UpdatedAt.Equal(before.node.UpdatedAt) {
+		t.Fatalf("updatedAt changed by a rejected request: %v -> %v", before.node.UpdatedAt, after.UpdatedAt)
+	}
+	if len(store.events) != before.events {
+		t.Fatalf("event count = %d, want %d (a rejected request must write no event)", len(store.events), before.events)
+	}
+}
+
+// TestUpdateNode_ForbiddenAndUnknownFields_Returns400 covers every identity, immutable, and
+// lifecycle field a caller might try to smuggle through PATCH, plus generic unknown fields and
+// typos. DisallowUnknownFields has no effect on the map decode PATCH uses, so these are
+// rejected by the explicit field allowlist.
+func TestUpdateNode_ForbiddenAndUnknownFields_Returns400(t *testing.T) {
+	cases := map[string]string{
+		"actorId":         `{"label":"new","actorId":"someone-else"}`,
+		"reviewerId":      `{"label":"new","reviewerId":"someone-else"}`,
+		"syllabusId":      `{"label":"new","syllabusId":"syl-other-active"}`,
+		"status":          `{"label":"new","status":"verified"}`,
+		"id":              `{"label":"new","id":"other-node"}`,
+		"createdAt":       `{"label":"new","createdAt":"2020-01-01T00:00:00Z"}`,
+		"updatedAt":       `{"label":"new","updatedAt":"2020-01-01T00:00:00Z"}`,
+		"unknown field":   `{"label":"new","totallyUnknown":"x"}`,
+		"typo field":      `{"labell":"new"}`,
+		"case variant":    `{"Label":"new"}`,
+		"forbidden alone": `{"status":"retired"}`,
+	}
+
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+
+			node := decodeJSON[Node](t, doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", validCreateReq()))
+			before := snapshotOf(t, store, node.ID)
+
+			resp := patchRaw(t, srv.URL+"/curriculum-map/nodes/"+node.ID, body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			respBody := decodeJSON[map[string]string](t, resp)
+			if respBody["error"] != "invalid_json" {
+				t.Fatalf("error = %q, want invalid_json", respBody["error"])
+			}
+			assertUnchanged(t, store, node.ID, before)
+		})
+	}
+}
+
+// TestUpdateNode_TrailingJSON_Returns400 rejects a second JSON value and non-JSON junk after
+// the body object.
+func TestUpdateNode_TrailingJSON_Returns400(t *testing.T) {
+	cases := map[string]string{
+		"trailing object": `{"label":"new"}{}`,
+		"trailing array":  `{"label":"new"}[1]`,
+		"trailing junk":   `{"label":"new"}not-json`,
+		"trailing string": `{"label":"new"}"extra"`,
+	}
+
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+
+			node := decodeJSON[Node](t, doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", validCreateReq()))
+			before := snapshotOf(t, store, node.ID)
+
+			resp := patchRaw(t, srv.URL+"/curriculum-map/nodes/"+node.ID, body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			respBody := decodeJSON[map[string]string](t, resp)
+			if respBody["error"] != "invalid_json" {
+				t.Fatalf("error = %q, want invalid_json", respBody["error"])
+			}
+			assertUnchanged(t, store, node.ID, before)
+		})
+	}
+}
+
+// TestUpdateNode_NullableFieldsStillClearable confirms the strict allowlist did not break the
+// absent-vs-null distinction for the two nullable PATCH fields.
+func TestUpdateNode_NullableFieldsStillClearable(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	req := validCreateReq()
+	req.SourceLocator = strPtr("section-1")
+	node := decodeJSON[Node](t, doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", req))
+	if node.SourceLocator == nil {
+		t.Fatal("expected sourceLocator to be set on create")
+	}
+
+	// Explicit null clears; absent leaves alone (asserted by the follow-up no_changes PATCH).
+	resp := patchRaw(t, srv.URL+"/curriculum-map/nodes/"+node.ID, `{"sourceLocator":null}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	cleared := decodeJSON[Node](t, resp)
+	if cleared.SourceLocator != nil {
+		t.Fatalf("sourceLocator = %v, want nil after explicit null", *cleared.SourceLocator)
+	}
+
+	repeat := patchRaw(t, srv.URL+"/curriculum-map/nodes/"+node.ID, `{"sourceLocator":null}`)
+	if repeat.StatusCode != http.StatusBadRequest {
+		t.Fatalf("repeat clear status = %d, want 400 no_changes", repeat.StatusCode)
+	}
+	repeatBody := decodeJSON[map[string]string](t, repeat)
+	if repeatBody["error"] != "no_changes" {
+		t.Fatalf("error = %q, want no_changes", repeatBody["error"])
+	}
+}
+
+// --- Source gate re-validated on every node write ---
+
+// brokenSourceCases mutates the node's already-referenced source into each failed state and
+// names the stable error code Core must return.
+var brokenSourceCases = map[string]struct {
+	breakSource func(store *memoryStore, sourceID string)
+	wantError   string
+}{
+	"unapproved source": {
+		breakSource: func(s *memoryStore, id string) { s.setSourceStatus(id, "pending", strPtr("syl-active")) },
+		wantError:   "unapproved_source",
+	},
+	"unlinked source": {
+		breakSource: func(s *memoryStore, id string) { s.setSourceStatus(id, "approved", nil) },
+		wantError:   "unlinked_source",
+	},
+	"mismatched source": {
+		breakSource: func(s *memoryStore, id string) { s.setSourceStatus(id, "approved", strPtr("syl-other-active")) },
+		wantError:   "mismatched_source",
+	},
+	"unknown source": {
+		breakSource: func(s *memoryStore, id string) { s.deleteSource(id) },
+		wantError:   "unknown_source",
+	},
+}
+
+// runBrokenSourceCases creates a draft node with a good source, breaks that source, then runs
+// do — which must be rejected with the expected code and leave the node and audit trail intact.
+func runBrokenSourceCases(t *testing.T, do func(t *testing.T, srvURL string, node Node) *http.Response, prepare func(t *testing.T, srvURL string, node Node)) {
+	t.Helper()
+	for name, tc := range brokenSourceCases {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+
+			node := decodeJSON[Node](t, doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", validCreateReq()))
+			if prepare != nil {
+				prepare(t, srv.URL, node)
+			}
+			tc.breakSource(store, node.ContentSourceID)
+			before := snapshotOf(t, store, node.ID)
+
+			resp := do(t, srv.URL, node)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			body := decodeJSON[map[string]string](t, resp)
+			if body["error"] != tc.wantError {
+				t.Fatalf("error = %q, want %q", body["error"], tc.wantError)
+			}
+			assertUnchanged(t, store, node.ID, before)
+		})
+	}
+}
+
+// TestUpdateNode_RevalidatesSourceGate proves PATCH re-runs the source gate even when the
+// request does not touch contentSourceId.
+func TestUpdateNode_RevalidatesSourceGate(t *testing.T) {
+	runBrokenSourceCases(t, func(t *testing.T, srvURL string, node Node) *http.Response {
+		return doJSON(t, http.MethodPatch, srvURL+"/curriculum-map/nodes/"+node.ID, map[string]any{"label": "Updated label"})
+	}, nil)
+}
+
+// TestVerifyNode_RevalidatesSourceGate proves verify re-runs the source gate before the status
+// transition and its audit event.
+func TestVerifyNode_RevalidatesSourceGate(t *testing.T) {
+	runBrokenSourceCases(t, func(t *testing.T, srvURL string, node Node) *http.Response {
+		return doJSONAs(t, http.MethodPost, srvURL+"/curriculum-map/nodes/"+node.ID+"/verify", reviewerToken, nil)
+	}, nil)
+}
+
+// TestRetireNode_RevalidatesSourceGate proves retire re-runs the source gate from draft.
+func TestRetireNode_RevalidatesSourceGate(t *testing.T) {
+	runBrokenSourceCases(t, func(t *testing.T, srvURL string, node Node) *http.Response {
+		return doJSONAs(t, http.MethodPost, srvURL+"/curriculum-map/nodes/"+node.ID+"/retire", reviewerToken, nil)
+	}, nil)
+}
+
+// TestRetireNode_VerifiedNode_RevalidatesSourceGate proves the gate also applies on the
+// verified → retired transition.
+func TestRetireNode_VerifiedNode_RevalidatesSourceGate(t *testing.T) {
+	runBrokenSourceCases(t, func(t *testing.T, srvURL string, node Node) *http.Response {
+		return doJSONAs(t, http.MethodPost, srvURL+"/curriculum-map/nodes/"+node.ID+"/retire", reviewerToken, nil)
+	}, func(t *testing.T, srvURL string, node Node) {
+		resp := doJSONAs(t, http.MethodPost, srvURL+"/curriculum-map/nodes/"+node.ID+"/verify", reviewerToken, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("prepare verify status = %d, want 200", resp.StatusCode)
+		}
+	})
+}
+
+// TestUpdateNode_RepointToBadSource_Returns400 keeps the original "changed contentSourceId"
+// path covered alongside the new always-on revalidation.
+func TestUpdateNode_RepointToBadSource_Returns400(t *testing.T) {
+	for sourceID, wantError := range map[string]string{
+		"src-pending":           "unapproved_source",
+		"src-approved-unlinked": "unlinked_source",
+		"src-approved-other":    "mismatched_source",
+		"src-does-not-exist":    "unknown_source",
+	} {
+		t.Run(sourceID, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+
+			node := decodeJSON[Node](t, doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", validCreateReq()))
+			before := snapshotOf(t, store, node.ID)
+
+			resp := doJSON(t, http.MethodPatch, srv.URL+"/curriculum-map/nodes/"+node.ID,
+				map[string]any{"contentSourceId": sourceID})
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			body := decodeJSON[map[string]string](t, resp)
+			if body["error"] != wantError {
+				t.Fatalf("error = %q, want %q", body["error"], wantError)
+			}
+			assertUnchanged(t, store, node.ID, before)
+		})
+	}
+}
+
+// --- Syllabus validation on list ---
+
+func TestListNodes_UnknownSyllabus_Returns400(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	resp := doJSON(t, http.MethodGet, srv.URL+"/curriculum-map/nodes?syllabusId=syl-does-not-exist", nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	body := decodeJSON[map[string]string](t, resp)
+	if body["error"] != "unknown_syllabus" {
+		t.Fatalf("error = %q, want unknown_syllabus", body["error"])
+	}
+}
+
+func TestListNodes_ActiveSyllabusWithNoVerifiedNodes_Returns200Empty(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	// A draft node exists but readers see verified only — still a 200 with an empty list.
+	doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", validCreateReq())
+
+	resp := doJSON(t, http.MethodGet, srv.URL+"/curriculum-map/nodes?syllabusId=syl-active", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body := decodeJSON[map[string][]Node](t, resp)
+	if len(body["items"]) != 0 {
+		t.Fatalf("items = %d, want 0", len(body["items"]))
 	}
 }
 

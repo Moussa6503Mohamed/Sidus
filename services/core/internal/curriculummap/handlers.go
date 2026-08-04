@@ -1,6 +1,7 @@
 package curriculummap
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -40,17 +41,23 @@ func actorFromContext(r *http.Request) (string, bool) {
 	return claims.Subject, true
 }
 
+// writeInvalidJSON writes the single, stable strict-decoding rejection. The message never
+// echoes the offending field name back to the caller.
+func writeInvalidJSON(w http.ResponseWriter) {
+	writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
+}
+
 // decodeStrict decodes exactly one JSON value into dst, rejecting unknown fields and trailing
 // data, so no caller-controlled identity/actor field can be smuggled in.
 func decodeStrict(w http.ResponseWriter, r *http.Request, dst any) bool {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
+		writeInvalidJSON(w)
 		return false
 	}
 	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
-		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
+		writeInvalidJSON(w)
 		return false
 	}
 	return true
@@ -63,6 +70,10 @@ func (h *handler) listNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nodes, err := h.store.ListNodesBySyllabus(r.Context(), syllabusID, true)
+	if mapped, ok := mapNodeError(err); ok {
+		writeNodeError(w, mapped)
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
 		return
@@ -163,6 +174,24 @@ type updateNodeRequest struct {
 	SourceLocator   *string `json:"sourceLocator"`
 }
 
+// updatablePatchFields is the exact, case-sensitive set of PATCH-able JSON field names.
+//
+// PATCH decodes into a map[string]json.RawMessage to tell "field absent" from "field present as
+// null" for the nullable fields, and json.Decoder.DisallowUnknownFields has NO effect when the
+// destination is a map. This allowlist is therefore the strict-JSON enforcement point for
+// PATCH: any other key — identity fields (`actorId`, `reviewerId`), immutable fields
+// (`syllabusId`, `id`), lifecycle fields (`status`, only settable via verify/retire), field-name
+// typos, and case variants — is rejected as a stable 400 `invalid_json` before any store call,
+// so no rejected request can mutate a node or write an event.
+var updatablePatchFields = map[string]struct{}{
+	"parentNodeId":    {},
+	"nodeKind":        {},
+	"nodeCode":        {},
+	"label":           {},
+	"contentSourceId": {},
+	"sourceLocator":   {},
+}
+
 func (h *handler) updateNode(w http.ResponseWriter, r *http.Request) {
 	actor, ok := actorFromContext(r)
 	if !ok {
@@ -174,19 +203,29 @@ func (h *handler) updateNode(w http.ResponseWriter, r *http.Request) {
 	// since ParentNodeID/SourceLocator are nullable fields that can be explicitly cleared.
 	raw := map[string]json.RawMessage{}
 	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(&raw); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
+		writeInvalidJSON(w)
 		return
 	}
+	// Trailing values/junk after the single JSON object are rejected.
 	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
-		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
+		writeInvalidJSON(w)
 		return
+	}
+	// DisallowUnknownFields does nothing for a map destination, so unknown/forbidden keys are
+	// rejected here — before any store call, so a rejected PATCH never mutates a node or event.
+	for name := range raw {
+		if _, ok := updatablePatchFields[name]; !ok {
+			writeInvalidJSON(w)
+			return
+		}
 	}
 
 	var req updateNodeRequest
-	if err := json.Unmarshal(mustMarshal(raw), &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON with no unknown fields")
+	strictDec := json.NewDecoder(bytes.NewReader(mustMarshal(raw)))
+	strictDec.DisallowUnknownFields()
+	if err := strictDec.Decode(&req); err != nil {
+		writeInvalidJSON(w)
 		return
 	}
 
