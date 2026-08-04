@@ -54,6 +54,18 @@ const (
 	PermCreateCurriculumMap Permission = "curriculum_map:create"
 	// PermVerifyCurriculumMap covers verifying and retiring curriculum-map nodes.
 	PermVerifyCurriculumMap Permission = "curriculum_map:verify"
+	// PermReadQuestion covers listing/getting verified original questions.
+	PermReadQuestion Permission = "question:read"
+	// PermCreateQuestion covers creating/PATCHing draft questions and creating draft rubric
+	// versions.
+	PermCreateQuestion Permission = "question:create"
+	// PermVerifyQuestion covers verifying a rubric version, verifying a question, and retiring a
+	// question.
+	PermVerifyQuestion Permission = "question:verify"
+	// PermReadQuestionRubric covers listing a question's rubric versions. It is separate from
+	// PermReadQuestion because that listing exposes draft rubric structure, not just verified
+	// questions.
+	PermReadQuestionRubric Permission = "question_rubric:read"
 )
 
 // rolePermissions is the least-privilege matrix. A role absent from this map, or the
@@ -67,6 +79,9 @@ var rolePermissions = map[Role]map[Permission]bool{
 		PermReadCatalogue:       true,
 		PermReadCurriculumMap:   true,
 		PermCreateCurriculumMap: true,
+		PermReadQuestion:        true,
+		PermCreateQuestion:      true,
+		PermReadQuestionRubric:  true,
 	},
 	RoleReviewer: {
 		PermReadSource:          true,
@@ -77,6 +92,10 @@ var rolePermissions = map[Role]map[Permission]bool{
 		PermReadCurriculumMap:   true,
 		PermCreateCurriculumMap: true,
 		PermVerifyCurriculumMap: true,
+		PermReadQuestion:        true,
+		PermCreateQuestion:      true,
+		PermVerifyQuestion:      true,
+		PermReadQuestionRubric:  true,
 	},
 	RoleAdmin: {
 		PermReadSource:          true,
@@ -88,6 +107,10 @@ var rolePermissions = map[Role]map[Permission]bool{
 		PermReadCurriculumMap:   true,
 		PermCreateCurriculumMap: true,
 		PermVerifyCurriculumMap: true,
+		PermReadQuestion:        true,
+		PermCreateQuestion:      true,
+		PermVerifyQuestion:      true,
+		PermReadQuestionRubric:  true,
 	},
 }
 

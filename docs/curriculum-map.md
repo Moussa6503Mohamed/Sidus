@@ -198,6 +198,14 @@ No code change is required for a new syllabus's map content. The sequence:
 6. **Retire** (as needed) — a reviewer/admin calls `POST /curriculum-map/nodes/{id}/retire` to
    withdraw a node while keeping its history in `curriculum_map_events`.
 
+## What consumes a verified node
+
+Original questions (T-0007) are grounded in exactly one **verified** node: a question stores a
+required `curriculum_map_node_id`, and every question write re-validates that the node is still
+verified, still belongs to the question's syllabus, and that its content source still passes the
+source gate above. Retiring a node therefore freezes the questions grounded in it. See
+[question-rubric-model.md](question-rubric-model.md).
+
 **No data is seeded.** The two pre-existing 0610/5090 content sources remain `pending`/unlinked
 until a human completes steps 1–2 above; until then, no curriculum-map node can pass the source
 gate for either syllabus.

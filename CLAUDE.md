@@ -63,4 +63,10 @@ cd services/ai && python -m pytest
   future private approved workflow. Four review findings were fixed on top of `b1677cb`
   (strict PATCH decoding, source gate re-validated on every node write, syllabus validation on
   map list, real ancestor row locking) — see D-0008 "Update (T-0006 review)".
-- No active task. See `docs/tasks/active.md` / `docs/tasks/history.md`.
+- Original question and versioned rubric foundation (private, metadata/code-only infrastructure
+  for a future Exam Mode) built in T-0007; see `docs/question-rubric-model.md` and D-0009. Core
+  owns `questions`/`question_rubric_versions`/`question_events` (migrations 0012–0014). Every
+  question must trace to a **verified** curriculum-map node whose approved source still passes the
+  T-0006 source gate — re-checked on every write. No question, rubric, or map data is seeded, and
+  no AI/OCR/ingestion path is involved.
+- Active task: T-0007 (status `review`). See `docs/tasks/active.md` / `docs/tasks/history.md`.

@@ -335,3 +335,126 @@ export interface CurriculumMapEvent {
   changedFields: string[];
   createdAt: string;
 }
+
+// --- Original questions and versioned rubrics (T-0007) ---
+// Private infrastructure for a future Exam Mode. Question prompts and rubric structures are
+// ORIGINAL content authored at runtime by a future private, approved editorial workflow — never
+// copied or lightly rewritten source material, and never committed to this repository. Core is
+// the sole authority: on every write it re-validates that the question's curriculum-map node is
+// verified, belongs to the question's syllabus, and that the node's content source still passes
+// the T-0006 source gate. Mirrors services/core/internal/question. Reads of verified questions
+// require question:read; draft create/update and draft rubric-version create require
+// question:create; verify/retire require question:verify; listing rubric versions requires
+// question_rubric:read. Learner and unknown roles are denied. No AI generation, OCR, ingestion,
+// or question derivation is involved.
+
+/** Shape of answer a question expects. */
+export type QuestionResponseType =
+  | "multiple_choice"
+  | "short_answer"
+  | "structured_response";
+
+/** Lifecycle state of a question. Retired questions are hidden from every reader endpoint. */
+export type QuestionStatus = "draft" | "verified" | "retired";
+
+/** Lifecycle state of a rubric version. A version is superseded by a new version, never retired. */
+export type RubricVersionStatus = "draft" | "verified";
+
+/** An original question record. */
+export interface Question {
+  id: string;
+  syllabusId: string;
+  /** Verified curriculum-map node this question traces to; must belong to syllabusId. */
+  curriculumMapNodeId: string;
+  responseType: QuestionResponseType;
+  /** Opaque language tag (e.g. "en"). */
+  language: string;
+  /** ORIGINAL question body, authored privately at runtime. */
+  prompt: string;
+  status: QuestionStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One marking criterion. `descriptor` is original editorial wording, never a mark scheme. */
+export interface RubricCriterion {
+  id: string;
+  /** Positive integer; criterion marks must sum exactly to the version's maxMarks. */
+  marks: number;
+  descriptor?: string;
+}
+
+/** The validation-safe rubric structure Core accepts. Unknown fields are rejected. */
+export interface RubricStructure {
+  criteria: RubricCriterion[];
+}
+
+/**
+ * An immutable, numbered rubric for a question. Its question, version, structure, maximum marks,
+ * and creator never change after creation (enforced by a database trigger); only verification
+ * metadata does.
+ */
+export interface QuestionRubricVersion {
+  id: string;
+  questionId: string;
+  /** Positive, allocated server-side per question — never caller-supplied. */
+  version: number;
+  rubric: RubricStructure;
+  maxMarks: number;
+  status: RubricVersionStatus;
+  /** Verified Clerk subject that created the version. */
+  createdBy: string;
+  /** Verified Clerk subject that verified it; null while draft. */
+  reviewedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Create a draft question (editor/reviewer/admin). Status is never caller-settable. */
+export interface CreateQuestionRequest {
+  syllabusId: string;
+  curriculumMapNodeId: string;
+  responseType: QuestionResponseType;
+  language: string;
+  prompt: string;
+}
+
+/**
+ * Update a draft question (editor/reviewer/admin). Only a draft question may be updated. At
+ * least one field must be supplied and every supplied field must be non-empty. `syllabusId` is
+ * immutable — re-point `curriculumMapNodeId` instead, which re-validates the syllabus match.
+ */
+export interface UpdateQuestionRequest {
+  curriculumMapNodeId?: string;
+  responseType?: QuestionResponseType;
+  language?: string;
+  prompt?: string;
+}
+
+/** Append a draft rubric version to a draft question. The version number is server-allocated. */
+export interface CreateQuestionRubricVersionRequest {
+  rubric: RubricStructure;
+  maxMarks: number;
+}
+
+export type QuestionEventType =
+  | "question_created"
+  | "question_updated"
+  | "question_verified"
+  | "question_retired"
+  | "rubric_version_created"
+  | "rubric_version_verified";
+
+/**
+ * Immutable audit record of a question or rubric-version mutation. Records which fields changed
+ * (names only) and who changed them — never field values, never a prompt, never rubric structure.
+ */
+export interface QuestionEvent {
+  id: string;
+  questionId: string;
+  eventType: QuestionEventType;
+  actorId: string;
+  eventTime: string;
+  changedFields: string[];
+  createdAt: string;
+}

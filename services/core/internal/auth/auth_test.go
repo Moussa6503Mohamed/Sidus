@@ -58,6 +58,38 @@ func TestRolePermissionMatrix(t *testing.T) {
 	}
 }
 
+// TestQuestionPermissionMatrix pins the least-privilege split for the T-0007 question and rubric
+// surface: learner/unknown have nothing; editor may read and draft (including draft rubric
+// versions) but never verify or retire; reviewer and admin may do everything.
+func TestQuestionPermissionMatrix(t *testing.T) {
+	all := []Permission{PermReadQuestion, PermCreateQuestion, PermVerifyQuestion, PermReadQuestionRubric}
+
+	for _, r := range []Role{RoleLearner, RoleUnknown} {
+		for _, p := range all {
+			if r.Can(p) {
+				t.Fatalf("%q must not have %q", r, p)
+			}
+		}
+	}
+
+	for _, p := range []Permission{PermReadQuestion, PermCreateQuestion, PermReadQuestionRubric} {
+		if !RoleEditor.Can(p) {
+			t.Fatalf("editor must have %q", p)
+		}
+	}
+	if RoleEditor.Can(PermVerifyQuestion) {
+		t.Fatal("editor must not have question:verify")
+	}
+
+	for _, r := range []Role{RoleReviewer, RoleAdmin} {
+		for _, p := range all {
+			if !r.Can(p) {
+				t.Fatalf("%q must have %q", r, p)
+			}
+		}
+	}
+}
+
 // stubVerifier maps a fixed token to fixed claims for middleware tests.
 type stubVerifier struct {
 	token  string

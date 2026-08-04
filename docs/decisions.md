@@ -198,6 +198,68 @@ A malformed (non-UUID) syllabus, source, or parent id now maps to the same stabl
 as a missing one (`unknown_syllabus` / `unknown_source` / `invalid_parent`) instead of a
 generic `500`; it is a client error, not an infrastructure failure.
 
+## D-0009 — Original question and versioned rubric authority
+
+**Status:** Approved
+**Decision:** Sidus Core owns private, original-question and versioned-rubric infrastructure for a
+future Exam Mode: `questions`, `question_rubric_versions`, and an immutable `question_events`
+audit trail (migrations 0012–0014), served by `services/core/internal/question`. A question
+carries a stable id, syllabus FK, a **required** `curriculum_map_nodes` FK, a response type
+(`multiple_choice`/`short_answer`/`structured_response`), an opaque language tag, the **original**
+question prompt, a lifecycle status (`draft`/`verified`/`retired`), and timestamps. A rubric
+version carries a stable id, question FK, an immutable positive per-question version number
+allocated server-side, a validation-safe `rubric` JSONB structure, maximum marks, a status
+(`draft`/`verified`), the creating and reviewing **verified Clerk subjects**, and timestamps.
+**The public repository holds schema, code, contracts, docs, and tests only.** Prompts and rubric
+structures are original content that exists solely in a runtime database, written by a future
+private, approved editorial workflow; nothing is seeded, and no past-paper question, mark scheme,
+syllabus text, extract, diagram, or OCR output is stored anywhere. This task performs no AI
+generation, no Anthropic call, no OCR, no ingestion, and no question derivation.
+
+Core is the sole authority for a question's **grounding gate**, re-validated inside the write
+transaction before any row is written, on **every** question write — create, `PATCH`, rubric-
+version create, rubric-version verify, question verify, and question retire: the referenced
+curriculum-map node must exist, be `verified`, and belong to the question's syllabus, and the
+node's content source must still pass the T-0006 source gate (exists, `approved`,
+`catalogue_syllabus_id` equal to the syllabus). `syllabusId` is immutable on a question; the node
+link is repointable and re-validates the syllabus match. A question may only be verified when it
+has at least one **verified** rubric version. Rubric-version content is immutable at the database
+level: a `BEFORE UPDATE OR DELETE` trigger rejects deletes and any change to `question_id`,
+`version`, `rubric`, `max_marks`, `created_by`, or `created_at`, so only verification metadata can
+change; `UNIQUE (question_id, version)` plus allocation under a row lock on the parent question
+keeps numbers unique and monotonic. Retired questions vanish from every reader endpoint (reads are
+verified-only). `question_events` mirrors the existing audit tables: append-only, trigger-enforced,
+verified-Clerk-subject actor, changed-field **names** only — never a prompt, rubric, or mark
+value. Least-privilege permissions `question:read`, `question:create` (draft question + draft
+rubric version), `question:verify` (verify rubric, verify question, retire question), and
+`question_rubric:read` (rubric listing, which exposes draft rubric structure) are added to the
+role matrix: editor gets read/create/rubric-read, reviewer adds verify, admin has all; learner and
+unknown are denied. Requests are strictly decoded through an explicit case-sensitive field
+allowlist on both `POST` and `PATCH`, so unknown fields, `actorId`/`reviewerId`, `syllabusId`
+changes, `status` spoofing, case variants, and trailing JSON all return one stable `400
+invalid_json` before any store call. Infrastructure failures always return a single generic
+`internal_error`; raw driver or scan text is never forwarded.
+**Reason:** Exam Mode needs questions and rubrics that can be authored, reviewed, versioned, and
+audited without ever letting copyrighted material into the repository (D-0005) or letting a
+question rest on grounding that no longer passes the rights gate (D-0008); the "verified node +
+still-approved source" pair is a point-in-time fact about other tables that a bare FK cannot
+express, so a single explicit server-side gate is required; immutable numbered rubrics are what
+makes marking reproducible and the canonical explanation cache key (`question + syllabus + rubric
++ language + explanation version`, per D-0003) meaningful; the editor/reviewer split mirrors the
+existing content-source and curriculum-map surfaces.
+**Alternatives:** Ground a question on a syllabus alone (rejected: loses the objective-level
+traceability the curriculum map exists to provide, and skips the source gate); mutate a rubric in
+place instead of versioning it (rejected: a marked answer could no longer be explained by the
+rubric that produced it, and the explanation cache key would be ambiguous); enforce the grounding
+gate with a database trigger (rejected: raw `RAISE EXCEPTION` text would leak or force fragile
+message parsing — same reasoning as D-0008); let a caller supply the rubric version number
+(rejected: races and gaps, and a caller could overwrite history); let the AI service create or
+verify questions (rejected: Core stays the single content authority, and this task adds no AI
+path at all); seed example questions or rubrics for the D-0004 biology slice (rejected: no source
+has completed rights approval, no map node exists, and seeded content in a public repository is
+exactly what D-0005 forbids).
+**Owner/date:** Claude Code agent, 2026-08-04 (T-0007).
+
 ## Decision template
 
 ```md
