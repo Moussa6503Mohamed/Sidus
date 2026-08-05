@@ -117,5 +117,6 @@ cd services/ai && python -m pytest
   with optional status filter so staff can reopen drafts; write rules, grounding/source gates,
   revisions, rubric versioning, permissions, schema, migrations, and runtime data remain unchanged.
   See `docs/editorial-question-rubric-workflow.md`, D-0014, and `docs/handoffs/T-0012.md`.
-  T-0012 remains `review` pending independent approval.
+  Full release validation passed on 2026-08-05. T-0012 moved to `docs/tasks/history.md` as
+  `done / released`.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.

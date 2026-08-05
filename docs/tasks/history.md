@@ -1,5 +1,60 @@
 # Task history
 
+## T-0012 — Private editorial question and rubric workflow
+
+**Status:** done / released
+**Owner:** Codex
+**Priority:** P1
+**Depends on:** T-0007 (done), T-0009 (done), T-0010 (done)
+
+### Goal
+
+Add secure same-origin editorial workflow for existing Core question and versioned-rubric
+operations. Keep Core authoritative and create or change no runtime content automatically.
+
+### Delivered
+
+- Protected `/dashboard/editorial/questions` workflow for editor/reviewer/admin roles, with denied
+  learner/unknown state making zero workflow API calls.
+- Fixed-operation question/rubric BFF with strict pre-auth path/query/body validation, server-only
+  Clerk token forwarding, generic Core `5xx` handling, and redirect refusal.
+- Question and rubric authoring/review UI covering all lifecycle states, revision freshness,
+  confirmations, safe domain errors, and empty/loading/retry/mobile states.
+- Minimal Core read correction: authorized editorial reads return draft/verified/retired records;
+  list accepts validated `draft`/`verified`/`retired`/`all`. Write rules and permissions unchanged.
+
+### Release validation (final pass, 2026-08-05)
+
+| Check | Result |
+| --- | --- |
+| Docker daemon | Pass — client/server 29.4.2 |
+| Dev/test Compose config | Pass / Pass |
+| Web Vitest | Pass — 21 files, 176 tests |
+| Focused question BFF policy | Pass — 2 files, 72 tests |
+| Web typecheck / production build | Pass / Pass — 22 dynamic routes |
+| Strict shared-contract TypeScript | Pass |
+| Go build / vet / changed-file gofmt | Pass / Pass / Pass (Docker `golang:1.22-alpine`) |
+| Full Go unit tests | Pass — all packages green |
+| Core question lifecycle/filter/role matrix | Pass — unit and integration coverage green |
+| Fresh disposable migrate / rerun | Pass — 16 applied / 0 applied |
+| Full integration tests | Pass — catalogue, contentsource, curriculummap, question green |
+| Disposable `sidus-test` teardown | Pass — `down -v`; container/network removed |
+| Python pytest | Pass — 18 tests |
+| `git diff --check` | Pass |
+
+### Constraints and remaining manual gates
+
+- No question/rubric prose, source material, PDF, secret, design artifact, runtime data, or
+  `.env.local` file was staged or committed.
+- Protected untracked user files remain untouched: `.claude/`, `.claude-flow/`, `DB.jpeg`,
+  `arch.jpeg`, and `Sidus*.xlsx`.
+- Runtime Clerk/Core environment configuration remains operator gate. Human editorial users must
+  explicitly author and review any question or rubric content.
+
+### Handoff
+
+`docs/handoffs/T-0012.md`. See D-0014 in `docs/decisions.md`.
+
 ## T-0011 — Biology vertical-slice scope realignment
 
 **Status:** done / released
