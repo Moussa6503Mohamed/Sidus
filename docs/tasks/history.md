@@ -1,5 +1,65 @@
 # Task history
 
+## T-0011 — Biology vertical-slice scope realignment
+
+**Status:** done / released
+**Owner:** Codex
+**Priority:** P1
+**Depends on:** T-0004 (superseded), T-0005 (done)
+
+### Goal
+
+Replace Cambridge O Level Biology 5090 in active product scope with one combined,
+metadata-only Cambridge International AS & A Level Biology 9700 catalogue row. Preserve 5090
+catalogue identity, history, provenance, and downstream records.
+
+### Delivered
+
+- Additive migration 0016 makes 0610 Extended and exactly one combined 9700 row active.
+- Existing 5090 catalogue row remains present as retired historical metadata; no deletion or
+  downstream mutation.
+- Migration conflict path uses `DO NOTHING`, preserving human-edited existing 9700 data on direct
+  historical SQL rerun.
+- Integration coverage proves fresh scope, active resolution, retained retirement history, zero
+  seeded 9700 content, migration idempotence, and direct-rerun preservation.
+- Project scope, catalogue, curriculum, provenance, question-model, setup, and decision docs align
+  with D-0013.
+
+### Release validation (final pass, 2026-08-05)
+
+| Check | Result |
+| --- | --- |
+| Docker daemon | Pass — Docker Desktop 29.4.2 server reachable and healthy |
+| Dev/test Compose config | Pass / Pass |
+| Web Vitest | Pass — 16 files, 123 tests |
+| Web typecheck / production build | Pass / Pass |
+| Strict shared-contract TypeScript | Pass |
+| Go build / vet | Pass / Pass (Docker `golang:1.22-alpine`) |
+| Changed-file gofmt | Pass — no changed Go file listed |
+| Full Go unit tests | Pass — all packages green |
+| Fresh disposable migrate / rerun | Pass — 16 applied / 0 applied |
+| Fresh Biology scope | Pass — 0610 + 9700 active; 5090 retained retired |
+| Fresh 9700 content absence | Pass — zero sources, nodes, questions, rubrics |
+| Direct 0016 human-edit preservation | Pass |
+| Full integration tests | Pass — catalogue, contentsource, curriculummap, question green |
+| Disposable `sidus-test` teardown | Pass — `down -v`; container/network removed |
+| Python pytest | Pass — 18 tests |
+| `git diff --check` | Pass |
+
+### Constraints and remaining manual gates
+
+- No PDF read/import, source/node/question/rubric content, secrets, design bundle artifact, or
+  `.env.local` file was staged or committed.
+- Protected untracked user files remain untouched: `.claude/`, `.claude-flow/`, `DB.jpeg`,
+  `arch.jpeg`, `Sidus*.xlsx`; ignored local PDF and `.env.local` files also remain untouched.
+- Human editor/admin must register any future 9700 source, verify rights/provenance, approve and
+  catalogue-link it, then author and review downstream metadata. Runtime Clerk/Core configuration
+  remains operator gate.
+
+### Handoff
+
+`docs/handoffs/T-0011.md`. See D-0013 in `docs/decisions.md`.
+
 ## T-0010 — Private editorial curriculum-map workflow
 
 **Status:** done / released

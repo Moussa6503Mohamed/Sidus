@@ -109,5 +109,6 @@ cd services/ai && python -m pytest
 - Biology catalogue scope realigned in T-0011: 0610 Extended and one combined metadata-only 9700
   syllabus are active; 5090 remains present as retired historical catalogue metadata. Migration
   creates no 9700 content source, node, question, or rubric and changes no existing provenance or
-  content records.
+  content records. Full release validation passed on 2026-08-05; see D-0013 and
+  `docs/handoffs/T-0011.md`. T-0011 moved to `docs/tasks/history.md` as `done / released`.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.
