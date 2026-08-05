@@ -87,5 +87,8 @@ cd services/ai && python -m pytest
   fail-closed on missing config/token. Core stays the sole authorization authority; the web
   role check only hides/shows controls. No Core/AI/migration/business-rule change, and no
   approval/link of the seeded 0610/5090 sources was performed (that is now a human action
-  through the new UI).
+  through the new UI). A review fix on top of `15d5936` (commit `f31a8a5`) sanitizes any Core
+  `5xx` response to a generic `502` before it reaches the browser and sets the upstream `fetch`
+  to fail closed on redirects (`redirect: "error"`) — see D-0011 "Update (T-0009 review)" and
+  `docs/handoffs/T-0009.md`. T-0009 released and moved to `docs/tasks/history.md` as `done`.
 - No active task. See `docs/tasks/active.md` / `docs/tasks/history.md`.
