@@ -72,6 +72,17 @@ target URL. Requests to Core carry a 10s timeout (`AbortController`). Nothing in
 ever logs a bearer token, the Core URL, a source field value, or approval/rejection data —
 there is no logging call in `lib/editorial/*` or `app/api/editorial/*` at all.
 
+**Core 5xx and redirects (T-0009 review, D-0011 update):** any Core response with
+`status >= 500` is never returned to the browser — its body is read (to release the
+connection) and discarded, never logged, and `callCore` throws the same generic
+`502 upstream_error` / "the editorial service is temporarily unavailable" regardless of what
+Core actually sent. This closes the leak where a raw Go panic or Postgres driver error could
+otherwise reach the browser unchanged. Core `401`/`403` and validation/domain `4xx` responses
+are still passed through unchanged — only `5xx` is intercepted. The upstream `fetch` call sets
+`redirect: "error"`, so a Core redirect is never followed and the bearer token is never
+forwarded to a redirect target; it surfaces as the same generic `502 upstream_unavailable`
+fetch-failure path above.
+
 ## Roles
 
 Mirrors the existing content-source/catalogue role matrix (D-0006, `docs/auth-setup.md`) —

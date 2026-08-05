@@ -174,6 +174,61 @@ describe("callCore", () => {
     expect((err as ProxyError).status).toBe(502);
   });
 
+  it("maps a Core 500 to a safe generic 502 and never exposes the raw body", async () => {
+    mockSignedIn();
+    fetchSpy.mockResolvedValue(
+      jsonResponse(500, {
+        error: "internal_error",
+        message: "pq: connection to server at \"10.0.0.5\" failed: dial tcp 10.0.0.5:5432",
+      }),
+    );
+
+    const err = await callCore({ kind: "listSyllabuses" }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ProxyError);
+    expect((err as ProxyError).status).toBe(502);
+    expect((err as ProxyError).code).toBe("upstream_error");
+    expect((err as ProxyError).message).not.toContain("10.0.0.5");
+    expect((err as ProxyError).message).not.toContain("pq:");
+    expect((err as ProxyError).message).not.toContain("dial tcp");
+  });
+
+  it.each([502, 503])("maps a Core %d to the same safe generic 502", async (upstreamStatus) => {
+    mockSignedIn();
+    fetchSpy.mockResolvedValue(jsonResponse(upstreamStatus, { error: "bad_gateway", message: "db down" }));
+
+    const err = await callCore({ kind: "listSyllabuses" }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ProxyError);
+    expect((err as ProxyError).status).toBe(502);
+    expect((err as ProxyError).code).toBe("upstream_error");
+    expect((err as ProxyError).message).not.toContain("db down");
+  });
+
+  it.each([400, 401, 403, 409])("passes Core's safe %d body and status through unchanged", async (status) => {
+    mockSignedIn();
+    fetchSpy.mockResolvedValue(jsonResponse(status, { error: "domain_error", message: "safe message" }));
+
+    const result = await callCore({ kind: "listSyllabuses" });
+
+    expect(result.status).toBe(status);
+    expect(result.body).toEqual({ error: "domain_error", message: "safe message" });
+  });
+
+  it("fails closed on a Core redirect without following it or requesting the redirect target", async () => {
+    mockSignedIn("secret-token-value");
+    fetchSpy.mockImplementation(async (_url, init: RequestInit) => {
+      expect(init.redirect).toBe("error");
+      throw new TypeError("Failed to fetch");
+    });
+
+    const err = await callCore({ kind: "listSyllabuses" }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ProxyError);
+    expect((err as ProxyError).status).toBe(502);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("never logs the bearer token or forwards it in any thrown message", async () => {
     mockSignedIn("super-secret-token");
     fetchSpy.mockRejectedValue(new Error("boom"));

@@ -395,6 +395,22 @@ a nav link; reading the already-verified session claim server-side in the existi
 is one `auth()` call with no additional round trip).
 **Owner/date:** Claude Code agent, 2026-08-05 (T-0009).
 
+**Update (T-0009 review):** `callCore`'s Core-response handling had two gaps closed. (1)
+Any Core response with `status >= 500` was previously passed through unchanged like any other
+status — Core's existing handlers can return raw Go/database driver error text in a `500`
+body, which would have reached the browser verbatim. Now every `5xx` is intercepted before
+`resolveRoute`'s caller sees it: the body is read and discarded (never logged, never returned)
+and `callCore` throws the same generic `502 upstream_error` / "the editorial service is
+temporarily unavailable" regardless of what Core sent. Core `401`/`403` and validation/domain
+`4xx` responses are unaffected — only `5xx` is intercepted. (2) The upstream `fetch` call had
+no explicit redirect policy, so it defaulted to following redirects — a compromised or
+misconfigured Core could have redirected a request to another host and received the forwarded
+bearer token. `fetch` now sets `redirect: "error"`, so a Core redirect is never followed and
+surfaces as the same generic fetch-failure `502 upstream_unavailable` path, with the token
+never sent to the redirect target. No Core, AI, database, migration, auth-role, or UI change;
+`docs/editorial-source-workflow.md` and `docs/handoffs/T-0009.md` updated to match.
+**Owner/date:** Claude Code agent, 2026-08-05 (T-0009 review).
+
 ## Decision template
 
 ```md

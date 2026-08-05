@@ -103,13 +103,22 @@ export async function callCore(op: EditorialOperation, rawBody?: string): Promis
         ...(rawBody !== undefined ? { "Content-Type": "application/json" } : {}),
       },
       body: rawBody,
+      redirect: "error",
       signal: controller.signal,
     });
   } catch {
-    // Never forward the underlying fetch error (may contain the target URL or a stack trace).
+    // Covers network failure and a Core redirect (redirect: "error" makes fetch throw instead
+    // of following it or forwarding the bearer token to the redirect target).
     throw new ProxyError(502, "upstream_unavailable", "the editorial service is temporarily unavailable");
   } finally {
     clearTimeout(timeout);
+  }
+
+  // Never forward a Core 5xx body: it may contain raw Go/database/driver error text. Consume it
+  // (so the connection is released) but discard it — do not log it, the target URL, or the token.
+  if (response.status >= 500) {
+    await response.text().catch(() => undefined);
+    throw new ProxyError(502, "upstream_error", "the editorial service is temporarily unavailable");
   }
 
   const text = await response.text();
