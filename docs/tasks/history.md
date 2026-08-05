@@ -1,5 +1,63 @@
 # Task history
 
+## T-0013 — Deterministic MCQ delivery schema
+
+**Status:** done / released
+**Owner:** Codex
+**Priority:** P1
+**Depends on:** T-0007 (done), T-0012 (done)
+
+### Goal
+
+Add safe question-owned multiple-choice options and rubric-versioned canonical correct-option
+support without adding learner delivery or marking behavior.
+
+### Delivered
+
+- Additive, rerunnable migration 0017 adds nullable `questions.options`; existing rows remain valid
+  with `NULL`, and no content is seeded.
+- Core and shared contracts enforce exact ordered 2–6 stable-ID/original-label options for MCQ and
+  prohibit options for non-MCQ questions.
+- MCQ rubric versions require `answerKey.correctOptionId`, bound under question row lock to current
+  options. Non-MCQ rubrics reject answer keys.
+- Option edits increment `content_revision` once, stale older rubrics, and record field names only;
+  rejected and no-op writes do not mutate.
+- Existing fixed-operation editorial BFF forwards bodies verbatim. Draft UI supports option
+  add/remove/reorder and current-option answer-key selection without default content.
+
+### Release validation (final pass, 2026-08-06)
+
+| Check | Result |
+| --- | --- |
+| Docker daemon | Pass — Docker Desktop client/server 29.4.2 |
+| Dev/test Compose config | Pass / Pass |
+| Web Vitest | Pass — 21 files, 181 tests |
+| Focused MCQ BFF/UI validation | Pass — 3 files, 22 tests |
+| Web typecheck / production build | Pass / Pass — no learner route added |
+| Strict shared-contract TypeScript | Pass |
+| Go build / vet / changed-file gofmt | Pass / Pass / Pass (Docker `golang:1.22-alpine`) |
+| Full Go unit tests | Pass — all packages green |
+| Fresh disposable migrate / runner rerun | Pass — 17 applied / 0 applied |
+| Direct 0017 rerun | Pass — two direct reruns |
+| Options revision / answer-key binding | Pass — unit and PostgreSQL integration coverage green |
+| Full integration tests | Pass — catalogue, contentsource, curriculummap, question green |
+| Disposable `sidus-test` teardown | Pass — `down -v`; container/network removed |
+| Python pytest | Pass — 18 tests; dependency deprecation warnings only |
+| `git diff --check` | Pass |
+
+### Constraints and remaining manual gates
+
+- Release commit contains documentation only. No question/rubric/source material, PDF, secret,
+  design artifact, runtime data, or `.env.local` file was staged or committed.
+- Protected untracked user files remain untouched: `.claude/`, `.claude-flow/`, `DB.jpeg`,
+  `arch.jpeg`, and `Sidus*.xlsx`.
+- Runtime Clerk/Core environment configuration remains operator gate. Human editorial users must
+  author and review content. Any learner delivery must use a separate answer-key-free projection.
+
+### Handoff
+
+`docs/handoffs/T-0013.md`. See D-0015 in `docs/decisions.md`.
+
 ## T-0012 — Private editorial question and rubric workflow
 
 **Status:** done / released

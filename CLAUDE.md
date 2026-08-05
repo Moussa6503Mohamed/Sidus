@@ -125,5 +125,6 @@ cd services/ai && python -m pytest
   add/remove/reorder options and select current correct option. Existing grounding, revisions,
   immutable rubrics, audit-names-only, roles, and fail-closed BFF remain authoritative. No learner
   endpoint, attempt/session, marking, AI, explanation, timer, Exam Mode, or seeded content exists.
-  See `docs/question-delivery-schema.md`, D-0015, and `docs/handoffs/T-0013.md`. Status: review.
+  Full release validation passed on 2026-08-06; see `docs/question-delivery-schema.md`, D-0015, and
+  `docs/handoffs/T-0013.md`. T-0013 moved to `docs/tasks/history.md` as `done / released`.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.
