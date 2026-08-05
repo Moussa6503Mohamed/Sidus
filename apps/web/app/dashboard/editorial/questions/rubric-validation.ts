@@ -1,4 +1,4 @@
-import type { CreateQuestionRubricVersionRequest, RubricCriterion } from "./types";
+import type { CreateQuestionRubricVersionRequest, Question, RubricCriterion } from "./types";
 
 export interface RubricCriterionValues {
   id: string;
@@ -9,6 +9,8 @@ export interface RubricCriterionValues {
 export function validateRubricDraft(
   criteria: RubricCriterionValues[],
   maxMarksRaw: string,
+  question: Pick<Question, "responseType" | "options">,
+  correctOptionId: string,
 ): { input: CreateQuestionRubricVersionRequest } | { error: string } {
   if (criteria.length === 0 || criteria.length > 200) {
     return { error: "Add between 1 and 200 criteria." };
@@ -40,5 +42,11 @@ export function validateRubricDraft(
     });
   }
   if (total !== maxMarks) return { error: "Maximum marks must equal sum of criterion marks." };
+  if (question.responseType === "multiple_choice") {
+    if (!question.options?.some((option) => option.id === correctOptionId)) {
+      return { error: "Select a correct option from current question options." };
+    }
+    return { input: { rubric: { criteria: normalized, answerKey: { correctOptionId } }, maxMarks } };
+  }
   return { input: { rubric: { criteria: normalized }, maxMarks } };
 }

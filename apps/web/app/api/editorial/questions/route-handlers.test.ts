@@ -81,6 +81,18 @@ describe("question route delegation", () => {
     }, "{}");
   });
 
+  it("forwards MCQ options and answer key bodies verbatim through fixed operations", async () => {
+    const questionBody = `{"syllabusId":"s","curriculumMapNodeId":"n","responseType":"multiple_choice","language":"en","prompt":"runtime","options":[{"id":"one","label":"runtime one"},{"id":"two","label":"runtime two"}]}`;
+    mockedReadBody.mockResolvedValueOnce(questionBody);
+    await create(new Request("http://localhost/x", { method: "POST", body: questionBody }));
+    expect(mockedCallCore).toHaveBeenLastCalledWith({ kind: "createQuestion" }, questionBody);
+
+    const rubricBody = `{"rubric":{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"one"}},"maxMarks":1}`;
+    mockedReadBody.mockResolvedValueOnce(rubricBody);
+    await createRubric(new Request("http://localhost/x", { method: "POST", body: rubricBody }), idParams);
+    expect(mockedCallCore).toHaveBeenLastCalledWith({ kind: "createQuestionRubricVersion", id: "question-1" }, rubricBody);
+  });
+
   it("returns safe proxy errors and stops after body rejection", async () => {
     mockedReadBody.mockRejectedValueOnce(new ProxyError(413, "payload_too_large", "request body is too large"));
     const bodyResponse = await create(new Request("http://localhost/x", { method: "POST", body: "{}" }));

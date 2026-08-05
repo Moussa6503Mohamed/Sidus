@@ -51,6 +51,7 @@ columns described below.
 | `response_type` | TEXT | `multiple_choice` \| `short_answer` \| `structured_response` |
 | `language` | TEXT | opaque non-empty tag (e.g. `en`); no language registry exists yet |
 | `prompt` | TEXT | **original** question body, written at runtime by the private workflow |
+| `options` | JSONB, nullable | ordered original `{id,label}` options; Core requires them only for new `multiple_choice` writes |
 | `status` | TEXT | `draft` \| `verified` \| `retired` (default `draft`) |
 | `content_revision` | INTEGER, `CHECK (> 0)` | starts at 1; **+1 per successful content update** |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
@@ -88,7 +89,7 @@ current text.
 
 - `questions.content_revision` starts at **1** and is incremented by **exactly one**, inside the
   transaction of every **successful** draft content update (`curriculumMapNodeId`, `responseType`,
-  `language`, `prompt`). `no_changes`, a validation failure, a grounding failure, a strict-decoding
+  `language`, `prompt`, `options`). `no_changes`, a validation failure, a grounding failure, a strict-decoding
   rejection, and a lifecycle transition (verify/retire) all leave it untouched. It is never
   caller-settable.
 - Every rubric version stores the `content_revision` that was current when it was created, under
@@ -119,7 +120,17 @@ Append-only trail: `question_id`, `event_type` (`question_created`/`question_upd
 `syllabus_events` / `curriculum_map_events`.
 
 **The audit trail never stores a prompt, a rubric, a mark value, or any other field value** — only
-field names such as `prompt`, `status`, `rubricVersion`.
+  field names such as `prompt`, `options`, `contentRevision`, `status`, `rubricVersion`.
+
+## Multiple-choice options
+
+`options` is required on new `multiple_choice` writes and prohibited on `short_answer` and
+`structured_response`. It is an ordered array of 2–6 exact `{ "id", "label" }` objects. IDs are
+non-blank, unique, and at most 64 Unicode code points; labels are non-blank original editorial text
+and at most 1,000 code points. Unknown keys, case variants, duplicates, wrong types, and trailing
+JSON are rejected. Existing pre-T-0013 rows remain valid with `NULL` options until edited. Changing
+options, including order/ID/label, is one content update. Switching MCQ to non-MCQ clears options;
+switching to MCQ requires valid options in same write. See [question-delivery-schema.md](question-delivery-schema.md).
 
 ## Rubric structure
 
@@ -130,12 +141,14 @@ The only accepted shape, validated in full before any write:
   "criteria": [
     { "id": "c1", "marks": 2, "descriptor": "original editorial wording" },
     { "id": "c2", "marks": 1 }
-  ]
+  ],
+  "answerKey": { "correctOptionId": "stable-option-id" }
 }
 ```
 
-- **Every key is matched exactly and case-sensitively.** The document accepts `criteria` and
-  nothing else; a criterion accepts `id`, `marks`, and `descriptor` and nothing else. `Criteria`,
+- **Every key is matched exactly and case-sensitively.** The document accepts `criteria` and optional
+  `answerKey`; a criterion accepts `id`, `marks`, and `descriptor`, while answer key accepts only
+  `correctOptionId`. `Criteria`,
   `ID`, `Marks`, `Descriptor`, a key with stray whitespace, an unknown key, a key at the wrong
   level, and a **duplicate** key are all rejected.
 - `criteria` must be a non-empty array (bounded at 200 entries) of **objects**.
@@ -145,6 +158,10 @@ The only accepted shape, validated in full before any write:
 - Trailing JSON after the document is rejected.
 - **Criterion marks must sum exactly to `maxMarks`**, so a rubric can never award more or fewer
   marks than the question is worth.
+- MCQ creation requires `answerKey.correctOptionId` to equal one current stable option ID under
+  question row lock. Non-MCQ creation rejects `answerKey`; those response types remain criteria-only.
+- Answer key is immutable with rest of rubric JSON. It is visible only through current editorial
+  rubric reads; no learner route exists, and future learner projections must omit it.
 
 Validation is written against `encoding/json`'s token API rather than a struct or map decode,
 because neither of those can enforce the schema: Go matches struct field names **case-insensitively**
@@ -152,9 +169,10 @@ because neither of those can enforce the schema: Go matches struct field names *
 silently keep the last value of a duplicated key instead of rejecting it. This mirrors the
 case-sensitive allowlist the HTTP handlers already apply to request bodies.
 
-A rubric is validated twice: when the version is created, and again when it is verified (the point
-at which it becomes usable). Failures return `400 invalid_rubric` or `400 invalid_max_marks` and
-write nothing.
+A rubric is structurally validated when created and verified. Response-type/option matching occurs
+at creation under question lock; current-revision verification later guarantees usable rubric was
+created against same question content. Failures return `400 invalid_rubric` or `400 invalid_max_marks`
+and write nothing.
 
 ## The grounding gate
 
@@ -198,7 +216,7 @@ rubric version: draft --(verify)--> verified   (superseded by a new version, nev
 ```
 
 - **Create** always produces a `draft` question; `status` is never caller-settable.
-- **PATCH** (`curriculumMapNodeId`, `responseType`, `language`, `prompt` — and nothing else) only
+- **PATCH** (`curriculumMapNodeId`, `responseType`, `language`, `prompt`, `options` — and nothing else) only
   succeeds while `status = draft`; otherwise `409 invalid_lifecycle_transition`. `status` itself is
   never PATCHable. A successful PATCH increments `content_revision` by one and so stales every
   existing rubric version for verification purposes.
@@ -235,6 +253,7 @@ invalid_json` (the message never echoes the offending field back):
   the server-allocated `version`, typos, and **case variants** of a real field (`Prompt`).
 - **Trailing JSON values or junk after the object are rejected** (`{...}{}`, `{...}[1]`,
   `{...}not-json`).
+- **Duplicate keys are rejected**, at request, option, rubric, criterion, and answer-key levels.
 - A rejected request is refused before any store call: no row mutation, no status transition, no
   audit event.
 
@@ -261,6 +280,7 @@ no effect at all on the `map[string]json.RawMessage` decode used to tell "field 
 (`missing_required_fields`, `blank_fields`, `invalid_response_type`, `invalid_json`,
 `no_updatable_fields`, `no_changes`, `unknown_syllabus`, `unknown_node`, `unverified_node`,
 `mismatched_node`, `unknown_source`, `unapproved_source`, `unlinked_source`, `mismatched_source`,
+`invalid_options`,
 `invalid_rubric`, `invalid_max_marks`, `invalid_status`); `409` conflict (`invalid_lifecycle_transition`,
 `missing_verified_rubric`, `missing_current_verified_rubric`, `duplicate_rubric_version`); `404`
 not found.

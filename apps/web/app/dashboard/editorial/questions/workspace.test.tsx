@@ -44,6 +44,7 @@ function question(overrides: Partial<Question> = {}): Question {
     responseType: "short_answer",
     language: "lang-1",
     prompt: crypto.randomUUID(),
+    options: null,
     status: "draft",
     contentRevision: 2,
     createdAt: "2026-08-05T00:00:00Z",
@@ -117,6 +118,39 @@ describe("QuestionsWorkspace editing and review", () => {
     }));
   });
 
+  it("shows empty option editor only for MCQ and submits editor-authored options", async () => {
+    const runtimePrompt = crypto.randomUUID();
+    const optionOne = crypto.randomUUID();
+    const optionTwo = crypto.randomUUID();
+    const created = question({ responseType: "multiple_choice", prompt: runtimePrompt, options: [{ id: "one", label: optionOne }, { id: "two", label: optionTwo }], contentRevision: 1 });
+    vi.mocked(api.createQuestion).mockResolvedValue(created);
+    render(<QuestionsWorkspace role="editor" />);
+    await screen.findByText(/no questions yet/i);
+    fireEvent.click(screen.getByRole("button", { name: /new question/i }));
+    expect(screen.queryByText(/multiple-choice options/i)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/verified curriculum node/i), { target: { value: node.id } });
+    fireEvent.change(screen.getByLabelText(/response type/i), { target: { value: "multiple_choice" } });
+    expect(screen.getByText(/no options added/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/language/i), { target: { value: "lang-1" } });
+    fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: runtimePrompt } });
+    fireEvent.click(screen.getByRole("button", { name: /add option/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add option/i }));
+    const ids = screen.getAllByLabelText("Option id");
+    const labels = screen.getAllByLabelText("Original editorial label");
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toHaveValue("");
+    expect(labels[0]).toHaveValue("");
+    fireEvent.change(ids[0], { target: { value: "one" } });
+    fireEvent.change(labels[0], { target: { value: optionOne } });
+    fireEvent.change(ids[1], { target: { value: "two" } });
+    fireEvent.change(labels[1], { target: { value: optionTwo } });
+    fireEvent.click(screen.getByRole("button", { name: /create draft/i }));
+    await waitFor(() => expect(api.createQuestion).toHaveBeenCalledWith(expect.objectContaining({
+      responseType: "multiple_choice",
+      options: [{ id: "one", label: optionOne }, { id: "two", label: optionTwo }],
+    })));
+  });
+
   it("edits draft with minimal patch and shows provenance warning", async () => {
     const draft = question();
     vi.mocked(api.listQuestions).mockResolvedValue({ items: [draft] });
@@ -160,6 +194,36 @@ describe("QuestionsWorkspace editing and review", () => {
       rubric: { criteria: [{ id: criterionId, marks: 2 }] },
       maxMarks: 2,
     }));
+  });
+
+  it("selects MCQ answer key only from current question options", async () => {
+    const draft = question({ responseType: "multiple_choice", options: [{ id: "one", label: crypto.randomUUID() }, { id: "two", label: crypto.randomUUID() }] });
+    vi.mocked(api.listQuestions).mockResolvedValue({ items: [draft] });
+    vi.mocked(api.createRubricVersion).mockResolvedValue({ ...version(2, "draft", 1), rubric: { criteria: [{ id: "c1", marks: 1 }], answerKey: { correctOptionId: "two" } } });
+    render(<QuestionsWorkspace role="editor" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Question 1" }));
+    await screen.findByText(/no rubric versions yet/i);
+    fireEvent.change(screen.getByLabelText(/maximum marks/i), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: /add criterion/i }));
+    fireEvent.change(screen.getByLabelText("Criterion id"), { target: { value: "c1" } });
+    fireEvent.change(screen.getByLabelText("Marks"), { target: { value: "1" } });
+    const selector = screen.getByLabelText(/correct option/i);
+    expect(selector.querySelectorAll("option")).toHaveLength(3);
+    fireEvent.change(selector, { target: { value: "two" } });
+    fireEvent.click(screen.getByRole("button", { name: /create rubric version/i }));
+    await waitFor(() => expect(api.createRubricVersion).toHaveBeenCalledWith(draft.id, {
+      rubric: { criteria: [{ id: "c1", marks: 1 }], answerKey: { correctOptionId: "two" } },
+      maxMarks: 1,
+    }));
+  });
+
+  it("disables option editing outside draft lifecycle", async () => {
+    const verified = question({ status: "verified", responseType: "multiple_choice", options: [{ id: "one", label: crypto.randomUUID() }, { id: "two", label: crypto.randomUUID() }] });
+    vi.mocked(api.listQuestions).mockResolvedValue({ items: [verified] });
+    render(<QuestionsWorkspace role="admin" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Question 1" }));
+    expect(screen.getAllByLabelText("Option id")[0]).toBeDisabled();
+    expect(screen.getByRole("button", { name: /add option/i })).toBeDisabled();
   });
 
   it("requires confirmation before question verification and retirement", async () => {

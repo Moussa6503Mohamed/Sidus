@@ -354,6 +354,12 @@ export type QuestionResponseType =
   | "short_answer"
   | "structured_response";
 
+/** Original editorial MCQ option. Stable id anchors rubric answer keys across label edits. */
+export interface MultipleChoiceOption {
+  id: string;
+  label: string;
+}
+
 /** Lifecycle state of a question. Retired questions remain visible only to editorial readers. */
 export type QuestionStatus = "draft" | "verified" | "retired";
 
@@ -371,6 +377,8 @@ export interface Question {
   language: string;
   /** ORIGINAL question body, authored privately at runtime. */
   prompt: string;
+  /** Present only for multiple_choice; pre-T-0013 rows can return null until edited. */
+  options: MultipleChoiceOption[] | null;
   status: QuestionStatus;
   /**
    * Revision of the question's content. Starts at 1 and increases by exactly one on every
@@ -402,6 +410,12 @@ export interface RubricCriterion {
  */
 export interface RubricStructure {
   criteria: RubricCriterion[];
+  /** Required for MCQ rubrics and prohibited for other response types. Editorial reads only. */
+  answerKey?: RubricAnswerKey;
+}
+
+export interface RubricAnswerKey {
+  correctOptionId: string;
 }
 
 /**
@@ -432,14 +446,19 @@ export interface QuestionRubricVersion {
   updatedAt: string;
 }
 
-/** Create a draft question (editor/reviewer/admin). Status is never caller-settable. */
-export interface CreateQuestionRequest {
+/** Fields shared by every draft-question create. Status is never caller-settable. */
+interface CreateQuestionRequestBase {
   syllabusId: string;
   curriculumMapNodeId: string;
-  responseType: QuestionResponseType;
   language: string;
   prompt: string;
 }
+
+/** Create shape enforces options only for MCQ at compile time; Core remains runtime authority. */
+export type CreateQuestionRequest = CreateQuestionRequestBase & (
+  | { responseType: "multiple_choice"; options: MultipleChoiceOption[] }
+  | { responseType: "short_answer" | "structured_response"; options?: never }
+);
 
 /**
  * Update a draft question (editor/reviewer/admin). Only a draft question may be updated. At
@@ -451,6 +470,7 @@ export interface UpdateQuestionRequest {
   responseType?: QuestionResponseType;
   language?: string;
   prompt?: string;
+  options?: MultipleChoiceOption[];
 }
 
 /** Append a draft rubric version to a draft question. The version number is server-allocated. */

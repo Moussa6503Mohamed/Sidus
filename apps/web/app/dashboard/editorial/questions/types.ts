@@ -2,10 +2,12 @@ export type {
   CreateQuestionRequest,
   CreateQuestionRubricVersionRequest,
   CurriculumMapNode,
+  MultipleChoiceOption,
   Question,
   QuestionResponseType,
   QuestionRubricVersion,
   RubricCriterion,
+  RubricAnswerKey,
   Syllabus,
   UpdateQuestionRequest,
 } from "@sidus/shared";

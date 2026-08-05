@@ -63,6 +63,9 @@ var ErrInvalidRubric = errors.New("rubric structure is invalid")
 // the rubric's criterion marks.
 var ErrInvalidMaxMarks = errors.New("maximum marks are invalid for this rubric")
 
+// ErrInvalidOptions is returned when question options violate the response-type-specific schema.
+var ErrInvalidOptions = errors.New("multiple-choice options are invalid")
+
 // ErrDuplicateRubricVersion is returned when a rubric version number collides for a question.
 // Version numbers are allocated server-side under a row lock, so this indicates a concurrent
 // allocation that lost the race, never a caller-supplied number.

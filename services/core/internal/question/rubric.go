@@ -21,8 +21,9 @@ const maxRubricCriteria = 200
 // does not match the documented schema, and does not match what the TypeScript contract or a
 // future marking consumer expects, be stored as a verified rubric.
 var (
-	rubricDocumentFields  = map[string]struct{}{"criteria": {}}
+	rubricDocumentFields  = map[string]struct{}{"criteria": {}, "answerKey": {}}
 	rubricCriterionFields = map[string]struct{}{"id": {}, "marks": {}, "descriptor": {}}
+	rubricAnswerKeyFields = map[string]struct{}{"correctOptionId": {}}
 )
 
 // rubricDocument and rubricCriterion document the accepted shape and are used to construct
@@ -31,7 +32,12 @@ var (
 // The descriptor is original editorial text supplied at runtime by a private, approved workflow.
 // It is never seeded, never copied from a mark scheme, and never recorded in the audit trail.
 type rubricDocument struct {
-	Criteria []rubricCriterion `json:"criteria"`
+	Criteria  []rubricCriterion `json:"criteria"`
+	AnswerKey *rubricAnswerKey  `json:"answerKey,omitempty"`
+}
+
+type rubricAnswerKey struct {
+	CorrectOptionID string `json:"correctOptionId"`
 }
 
 type rubricCriterion struct {
@@ -105,7 +111,62 @@ func ValidateRubric(raw json.RawMessage, maxMarks int) error {
 	if total != maxMarks {
 		return ErrInvalidMaxMarks
 	}
+	if answerKeyRaw, ok := fields["answerKey"]; ok {
+		if _, err := validateAnswerKey(answerKeyRaw); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// ValidateRubricForQuestion adds response-type and option-reference rules to structural rubric
+// validation. Call while holding question row lock so answer key and options are one revision.
+func ValidateRubricForQuestion(raw json.RawMessage, maxMarks int, responseType ResponseType, options []MultipleChoiceOption) error {
+	if err := ValidateRubric(raw, maxMarks); err != nil {
+		return err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	fields, err := decodeExactObject(dec, rubricDocumentFields)
+	if err != nil || requireEOF(dec) != nil {
+		return ErrInvalidRubric
+	}
+	answerKeyRaw, hasAnswerKey := fields["answerKey"]
+	if responseType != ResponseMultipleChoice {
+		if hasAnswerKey {
+			return ErrInvalidRubric
+		}
+		return nil
+	}
+	if !hasAnswerKey {
+		return ErrInvalidRubric
+	}
+	correctOptionID, err := validateAnswerKey(answerKeyRaw)
+	if err != nil {
+		return err
+	}
+	for _, option := range options {
+		if option.ID == correctOptionID {
+			return nil
+		}
+	}
+	return ErrInvalidRubric
+}
+
+func validateAnswerKey(raw json.RawMessage) (string, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	fields, err := decodeExactObject(dec, rubricAnswerKeyFields)
+	if err != nil || requireEOF(dec) != nil || len(fields) != 1 {
+		return "", ErrInvalidRubric
+	}
+	var id string
+	if json.Unmarshal(fields["correctOptionId"], &id) != nil {
+		return "", ErrInvalidRubric
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || len([]rune(id)) > maxOptionIDLength {
+		return "", ErrInvalidRubric
+	}
+	return id, nil
 }
 
 // validateCriterion checks one criterion object and returns its trimmed id and marks.

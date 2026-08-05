@@ -28,6 +28,7 @@ export function RubricWorkspace(props: Props) {
   const { role, question, versions, loadingError, mutationError, submitting, onRetry, onCreate, onVerify } = props;
   const [criteria, setCriteria] = useState<RubricCriterionValues[]>([]);
   const [maxMarks, setMaxMarks] = useState("");
+  const [correctOptionId, setCorrectOptionId] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [pendingVersion, setPendingVersion] = useState<number | null>(null);
 
@@ -42,7 +43,7 @@ export function RubricWorkspace(props: Props) {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setValidationError(null);
-    const result = validateRubricDraft(criteria, maxMarks);
+    const result = validateRubricDraft(criteria, maxMarks, question, correctOptionId);
     if ("error" in result) return setValidationError(result.error);
     onCreate(result.input);
   }
@@ -85,6 +86,13 @@ export function RubricWorkspace(props: Props) {
             <label htmlFor="rubric-max-marks">Maximum marks (required)</label>
             <input id="rubric-max-marks" inputMode="numeric" value={maxMarks} onChange={(event) => setMaxMarks(event.target.value)} />
           </div>
+          {question.responseType === "multiple_choice" && <div className={sourceStyles.field}>
+            <label htmlFor="rubric-correct-option">Correct option (required)</label>
+            <select id="rubric-correct-option" value={correctOptionId} onChange={(event) => setCorrectOptionId(event.target.value)} aria-required>
+              <option value="">— select current option —</option>
+              {(question.options ?? []).map((option) => <option key={option.id} value={option.id}>{option.id} — {option.label}</option>)}
+            </select>
+          </div>}
           <div className={styles.criteriaHeader}>
             <strong>Structured criteria</strong>
             <button type="button" className={sourceStyles.buttonSecondary} onClick={addCriterion}>Add criterion</button>

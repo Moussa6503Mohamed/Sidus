@@ -71,7 +71,10 @@ type Question struct {
 	ResponseType        ResponseType `json:"responseType"`
 	Language            string       `json:"language"`
 	Prompt              string       `json:"prompt"`
-	Status              Status       `json:"status"`
+	// Options is question content. It is non-nil only for multiple-choice questions; nil is
+	// serialized as null so pre-T-0013 rows remain explicit and backward compatible.
+	Options []MultipleChoiceOption `json:"options"`
+	Status  Status                 `json:"status"`
 	// ContentRevision starts at 1 and increases by exactly one on every successful draft-content
 	// update. It is never caller-settable. A rubric version is only current — and so only counts
 	// towards question verification — while its QuestionRevision equals this value.
@@ -134,6 +137,7 @@ type CreateInput struct {
 	ResponseType        ResponseType
 	Language            string
 	Prompt              string
+	Options             []MultipleChoiceOption
 }
 
 // UpdateInput is the payload for PATCHing a draft Question. Every field is an optional pointer:
@@ -145,6 +149,14 @@ type UpdateInput struct {
 	ResponseType        *ResponseType
 	Language            *string
 	Prompt              *string
+	Options             *[]MultipleChoiceOption
+}
+
+// MultipleChoiceOption is original editorial question content. ID is stable across label edits
+// and ordering changes so rubric answer keys can refer to an option without copying its label.
+type MultipleChoiceOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
 }
 
 // CreateRubricVersionInput is the payload for appending a draft rubric version to a question.

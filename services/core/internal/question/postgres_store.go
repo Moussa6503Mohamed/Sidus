@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -22,7 +23,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
-const questionColumns = `id, syllabus_id, curriculum_map_node_id, response_type, language, prompt, status, content_revision, created_at, updated_at`
+const questionColumns = `id, syllabus_id, curriculum_map_node_id, response_type, language, prompt, options, status, content_revision, created_at, updated_at`
 
 const rubricColumns = `id, question_id, version, question_revision, rubric, max_marks, status, created_by, reviewed_by, created_at, updated_at`
 
@@ -30,10 +31,14 @@ type scanner interface{ Scan(...any) error }
 
 func scanQuestion(row scanner) (Question, error) {
 	var q Question
+	var options []byte
 	err := row.Scan(
 		&q.ID, &q.SyllabusID, &q.CurriculumMapNodeID, &q.ResponseType, &q.Language, &q.Prompt,
-		&q.Status, &q.ContentRevision, &q.CreatedAt, &q.UpdatedAt,
+		&options, &q.Status, &q.ContentRevision, &q.CreatedAt, &q.UpdatedAt,
 	)
+	if err == nil && options != nil {
+		err = json.Unmarshal(options, &q.Options)
+	}
 	return q, err
 }
 
@@ -151,6 +156,9 @@ func validateNodeFilter(ctx context.Context, q queryRower, nodeID, syllabusID st
 }
 
 func (p *PostgresStore) CreateQuestion(ctx context.Context, in CreateInput) (Question, error) {
+	if !IsValidResponseType(in.ResponseType) || validateOptionsForResponseType(in.ResponseType, in.Options) != nil {
+		return Question{}, ErrInvalidOptions
+	}
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Question{}, fmt.Errorf("begin tx: %w", err)
@@ -169,11 +177,19 @@ func (p *PostgresStore) CreateQuestion(ctx context.Context, in CreateInput) (Que
 		return Question{}, err
 	}
 
+	var optionsJSON any
+	if in.Options != nil {
+		encoded, err := json.Marshal(in.Options)
+		if err != nil {
+			return Question{}, ErrInvalidOptions
+		}
+		optionsJSON = encoded
+	}
 	row := tx.QueryRowContext(ctx, `
-		INSERT INTO questions (syllabus_id, curriculum_map_node_id, response_type, language, prompt)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO questions (syllabus_id, curriculum_map_node_id, response_type, language, prompt, options)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING `+questionColumns,
-		in.SyllabusID, in.CurriculumMapNodeID, string(in.ResponseType), in.Language, in.Prompt,
+		in.SyllabusID, in.CurriculumMapNodeID, string(in.ResponseType), in.Language, in.Prompt, optionsJSON,
 	)
 	q, err := scanQuestion(row)
 	if err != nil {
@@ -182,6 +198,9 @@ func (p *PostgresStore) CreateQuestion(ctx context.Context, in CreateInput) (Que
 
 	// Field NAMES only — a prompt value is never written to the audit trail.
 	changed := []string{"syllabusId", "curriculumMapNodeId", "responseType", "language", "prompt"}
+	if in.Options != nil {
+		changed = append(changed, "options")
+	}
 	if err := insertEvent(ctx, tx, q.ID, EventQuestionCreated, in.ActorID, changed); err != nil {
 		return Question{}, err
 	}
@@ -220,6 +239,23 @@ func (p *PostgresStore) UpdateQuestion(ctx context.Context, id string, in Update
 	var setClauses []string
 	var args []any
 	var changed []string
+	effectiveResponseType := current.ResponseType
+	if in.ResponseType != nil {
+		effectiveResponseType = *in.ResponseType
+	}
+	effectiveOptions := current.Options
+	if in.Options != nil {
+		effectiveOptions = *in.Options
+	}
+	if effectiveResponseType != ResponseMultipleChoice {
+		if in.Options != nil {
+			return Question{}, ErrInvalidOptions
+		}
+		effectiveOptions = nil
+	}
+	if err := validateOptionsForResponseType(effectiveResponseType, effectiveOptions); err != nil {
+		return Question{}, err
+	}
 
 	addString := func(field, column string, value *string, cur string) {
 		if value == nil || *value == cur {
@@ -237,6 +273,19 @@ func (p *PostgresStore) UpdateQuestion(ctx context.Context, id string, in Update
 		args = append(args, string(*in.ResponseType))
 		setClauses = append(setClauses, "response_type = $"+strconv.Itoa(len(args)))
 		changed = append(changed, "responseType")
+	}
+	if !reflect.DeepEqual(effectiveOptions, current.Options) {
+		if effectiveOptions == nil {
+			setClauses = append(setClauses, "options = NULL")
+		} else {
+			encoded, err := json.Marshal(effectiveOptions)
+			if err != nil {
+				return Question{}, ErrInvalidOptions
+			}
+			args = append(args, encoded)
+			setClauses = append(setClauses, "options = $"+strconv.Itoa(len(args)))
+		}
+		changed = append(changed, "options")
 	}
 
 	if len(changed) == 0 {
@@ -454,6 +503,9 @@ func (p *PostgresStore) CreateRubricVersion(ctx context.Context, questionID stri
 		return RubricVersion{}, ErrInvalidTransition
 	}
 	if err := validateGrounding(ctx, tx, current.CurriculumMapNodeID, current.SyllabusID); err != nil {
+		return RubricVersion{}, err
+	}
+	if err := ValidateRubricForQuestion(in.Rubric, in.MaxMarks, current.ResponseType, current.Options); err != nil {
 		return RubricVersion{}, err
 	}
 

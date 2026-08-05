@@ -93,3 +93,23 @@ func TestMigrations_ContentRevisionIsAdditive(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrations_QuestionOptionsIsAdditiveAndRerunnable(t *testing.T) {
+	const file = "0017_add_question_options.sql"
+	body, err := os.ReadFile(filepath.Join(migrationsDir, file))
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	sql := string(body)
+	for _, want := range []string{"ALTER TABLE questions", "ADD COLUMN IF NOT EXISTS options JSONB NULL"} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("%s does not contain %q", file, want)
+		}
+	}
+	upper := strings.ToUpper(sql)
+	for _, forbidden := range []string{"DROP TABLE", "DROP COLUMN", "INSERT INTO QUESTIONS", "UPDATE QUESTIONS"} {
+		if strings.Contains(upper, forbidden) {
+			t.Fatalf("%s contains forbidden %q", file, forbidden)
+		}
+	}
+}

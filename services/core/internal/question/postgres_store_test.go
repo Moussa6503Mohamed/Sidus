@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 // These integration tests run against a real, disposable PostgreSQL instance that has had the
@@ -207,6 +207,77 @@ func TestPostgresStore_Integration_CreateAndNodeGate(t *testing.T) {
 	}
 	if eventCount != 1 {
 		t.Fatalf("event count = %d, want 1", eventCount)
+	}
+}
+
+func TestPostgresStore_Integration_OptionsMigrationRerunAndExistingNull(t *testing.T) {
+	f := newFixture(t)
+	q := f.createQuestion(t)
+	var options []byte
+	if err := f.db.QueryRow(`SELECT options FROM questions WHERE id = $1`, q.ID).Scan(&options); err != nil {
+		t.Fatalf("read existing null options: %v", err)
+	}
+	if options != nil {
+		t.Fatalf("existing non-MC options = %s, want NULL", options)
+	}
+	body, err := os.ReadFile(`../../migrations/0017_add_question_options.sql`)
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	for pass := 1; pass <= 2; pass++ {
+		if _, err := f.db.Exec(string(body)); err != nil {
+			t.Fatalf("rerun migration pass %d: %v", pass, err)
+		}
+	}
+	if err := f.db.QueryRow(`SELECT options FROM questions WHERE id = $1`, q.ID).Scan(&options); err != nil || options != nil {
+		t.Fatalf("existing row after rerun: options=%s err=%v", options, err)
+	}
+}
+
+func TestPostgresStore_Integration_MCQOptionsRevisionAnswerKeyAndAudit(t *testing.T) {
+	f := newFixture(t)
+	options := []MultipleChoiceOption{{ID: "one", Label: "runtime one"}, {ID: "two", Label: "runtime two"}}
+	q, err := f.store.CreateQuestion(f.ctx, CreateInput{
+		ActorID: "test-editor", SyllabusID: f.syllabusID, CurriculumMapNodeID: f.nodeID,
+		ResponseType: ResponseMultipleChoice, Language: "en", Prompt: "Original runtime prompt.", Options: options,
+	})
+	if err != nil {
+		t.Fatalf("create MCQ: %v", err)
+	}
+	missing := json.RawMessage(`{"criteria":[{"id":"c1","marks":1}]}`)
+	if _, err := f.store.CreateRubricVersion(f.ctx, q.ID, CreateRubricVersionInput{ActorID: "test-editor", Rubric: missing, MaxMarks: 1}); !errors.Is(err, ErrInvalidRubric) {
+		t.Fatalf("missing key error = %v", err)
+	}
+	wrong := json.RawMessage(`{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"missing"}}`)
+	if _, err := f.store.CreateRubricVersion(f.ctx, q.ID, CreateRubricVersionInput{ActorID: "test-editor", Rubric: wrong, MaxMarks: 1}); !errors.Is(err, ErrInvalidRubric) {
+		t.Fatalf("wrong key error = %v", err)
+	}
+	valid := json.RawMessage(`{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"one"}}`)
+	v, err := f.store.CreateRubricVersion(f.ctx, q.ID, CreateRubricVersionInput{ActorID: "test-editor", Rubric: valid, MaxMarks: 1})
+	if err != nil {
+		t.Fatalf("create rubric: %v", err)
+	}
+	if _, err := f.store.VerifyRubricVersion(f.ctx, q.ID, v.Version, "test-reviewer"); err != nil {
+		t.Fatalf("verify rubric: %v", err)
+	}
+
+	reordered := []MultipleChoiceOption{{ID: "two", Label: "runtime two"}, {ID: "one", Label: "changed runtime label"}}
+	updated, err := f.store.UpdateQuestion(f.ctx, q.ID, UpdateInput{ActorID: "test-editor", Options: &reordered})
+	if err != nil {
+		t.Fatalf("update options: %v", err)
+	}
+	if updated.ContentRevision != q.ContentRevision+1 {
+		t.Fatalf("revision = %d", updated.ContentRevision)
+	}
+	var changed []string
+	if err := f.db.QueryRow(`SELECT changed_fields FROM question_events WHERE question_id=$1 AND event_type='question_updated' ORDER BY created_at DESC LIMIT 1`, q.ID).Scan(pq.Array(&changed)); err != nil {
+		t.Fatalf("read event: %v", err)
+	}
+	if strings.Join(changed, ",") != "options,contentRevision" {
+		t.Fatalf("changed fields = %#v", changed)
+	}
+	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer"); !errors.Is(err, ErrStaleVerifiedRubric) {
+		t.Fatalf("verify with stale rubric = %v", err)
 	}
 }
 

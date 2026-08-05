@@ -2,6 +2,7 @@
 
 import { useId, useState, type FormEvent } from "react";
 import sourceStyles from "../sources/styles.module.css";
+import styles from "./styles.module.css";
 import {
   buildCreateInput,
   buildUpdatePatch,
@@ -47,6 +48,23 @@ export function QuestionForm(props: QuestionFormProps) {
 
   function setField<K extends keyof QuestionFieldValues>(name: K, value: QuestionFieldValues[K]) {
     setValues((previous) => ({ ...previous, [name]: value }));
+  }
+
+  function setOption(index: number, field: "id" | "label", value: string) {
+    setValues((previous) => ({
+      ...previous,
+      options: previous.options.map((option, itemIndex) => itemIndex === index ? { ...option, [field]: value } : option),
+    }));
+  }
+
+  function moveOption(index: number, direction: -1 | 1) {
+    setValues((previous) => {
+      const target = index + direction;
+      if (target < 0 || target >= previous.options.length) return previous;
+      const options = [...previous.options];
+      [options[index], options[target]] = [options[target], options[index]];
+      return { ...previous, options };
+    });
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -132,6 +150,24 @@ export function QuestionForm(props: QuestionFormProps) {
             aria-required
           />
         </div>
+        {values.responseType === "multiple_choice" && <section aria-labelledby={`${headingId}-options`}>
+          <div className={styles.criteriaHeader}>
+            <strong id={`${headingId}-options`}>Multiple-choice options (2–6 required)</strong>
+            <button type="button" className={sourceStyles.buttonSecondary} onClick={() => setField("options", [...values.options, { id: "", label: "" }])} disabled={values.options.length >= 6}>Add option</button>
+          </div>
+          {values.options.length === 0 && <p className={sourceStyles.bannerEmpty} role="status">No options added.</p>}
+          {values.options.map((option, index) => <div className={styles.criterion} key={index}>
+            <div className={sourceStyles.grid}>
+              <div className={sourceStyles.field}><label htmlFor={`question-option-id-${index}`}>Option id</label><input id={`question-option-id-${index}`} value={option.id} onChange={(event) => setOption(index, "id", event.target.value)} /></div>
+              <div className={sourceStyles.field}><label htmlFor={`question-option-label-${index}`}>Original editorial label</label><input id={`question-option-label-${index}`} value={option.label} onChange={(event) => setOption(index, "label", event.target.value)} /></div>
+            </div>
+            <div className={sourceStyles.formActions}>
+              <button type="button" className={sourceStyles.buttonSecondary} onClick={() => moveOption(index, -1)} disabled={index === 0}>Move up</button>
+              <button type="button" className={sourceStyles.buttonSecondary} onClick={() => moveOption(index, 1)} disabled={index === values.options.length - 1}>Move down</button>
+              <button type="button" className={sourceStyles.buttonSecondary} onClick={() => setField("options", values.options.filter((_, itemIndex) => itemIndex !== index))}>Remove option</button>
+            </div>
+          </div>)}
+        </section>}
       </fieldset>
       {validationError && <p className={sourceStyles.fieldError} role="alert">{validationError}</p>}
       {error && <p className={sourceStyles.fieldError} role="alert">{error}</p>}

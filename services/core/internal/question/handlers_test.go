@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -142,6 +143,9 @@ func (m *memoryStore) validateGrounding(nodeID, syllabusID string) error {
 }
 
 func (m *memoryStore) CreateQuestion(_ context.Context, in CreateInput) (Question, error) {
+	if err := validateOptionsForResponseType(in.ResponseType, in.Options); err != nil {
+		return Question{}, err
+	}
 	if !m.activeSyllabuses[in.SyllabusID] {
 		return Question{}, ErrUnknownSyllabus
 	}
@@ -156,6 +160,7 @@ func (m *memoryStore) CreateQuestion(_ context.Context, in CreateInput) (Questio
 		ResponseType:        in.ResponseType,
 		Language:            in.Language,
 		Prompt:              in.Prompt,
+		Options:             in.Options,
 		Status:              StatusDraft,
 		ContentRevision:     1,
 		CreatedAt:           now,
@@ -181,6 +186,23 @@ func (m *memoryStore) UpdateQuestion(_ context.Context, id string, in UpdateInpu
 	if err := m.validateGrounding(effectiveNode, q.SyllabusID); err != nil {
 		return Question{}, err
 	}
+	effectiveResponseType := q.ResponseType
+	if in.ResponseType != nil {
+		effectiveResponseType = *in.ResponseType
+	}
+	effectiveOptions := q.Options
+	if in.Options != nil {
+		effectiveOptions = *in.Options
+	}
+	if effectiveResponseType != ResponseMultipleChoice {
+		if in.Options != nil {
+			return Question{}, ErrInvalidOptions
+		}
+		effectiveOptions = nil
+	}
+	if err := validateOptionsForResponseType(effectiveResponseType, effectiveOptions); err != nil {
+		return Question{}, err
+	}
 
 	var changed []string
 	if in.CurriculumMapNodeID != nil && *in.CurriculumMapNodeID != q.CurriculumMapNodeID {
@@ -198,6 +220,10 @@ func (m *memoryStore) UpdateQuestion(_ context.Context, id string, in UpdateInpu
 	if in.ResponseType != nil && *in.ResponseType != q.ResponseType {
 		q.ResponseType = *in.ResponseType
 		changed = append(changed, "responseType")
+	}
+	if !reflect.DeepEqual(effectiveOptions, q.Options) {
+		q.Options = effectiveOptions
+		changed = append(changed, "options")
 	}
 	if len(changed) == 0 {
 		return Question{}, ErrNoChanges
@@ -314,6 +340,9 @@ func (m *memoryStore) CreateRubricVersion(_ context.Context, questionID string, 
 		return RubricVersion{}, ErrInvalidTransition
 	}
 	if err := m.validateGrounding(q.CurriculumMapNodeID, q.SyllabusID); err != nil {
+		return RubricVersion{}, err
+	}
+	if err := ValidateRubricForQuestion(in.Rubric, in.MaxMarks, q.ResponseType, q.Options); err != nil {
 		return RubricVersion{}, err
 	}
 	next := len(m.rubrics[questionID]) + 1
@@ -635,7 +664,7 @@ func assertUnchanged(t *testing.T, store *memoryStore, id string, before storeSn
 	if !ok {
 		t.Fatalf("question %q disappeared from store", id)
 	}
-	if after != before.question {
+	if !reflect.DeepEqual(after, before.question) {
 		t.Fatalf("question mutated by a rejected request:\n before = %+v\n after  = %+v", before.question, after)
 	}
 	if !after.UpdatedAt.Equal(before.question.UpdatedAt) {
@@ -889,6 +918,30 @@ func TestCreateRubricVersion_MissingFields_Returns400(t *testing.T) {
 	}
 	if body := decodeJSON[map[string]any](t, resp); body["error"] != "missing_required_fields" {
 		t.Fatalf("error = %v, want missing_required_fields", body["error"])
+	}
+}
+
+func TestCreateRubricVersion_StrictOuterJSONBeforeMutation(t *testing.T) {
+	for name, raw := range map[string]string{
+		"duplicate rubric field": `{"rubric":{"criteria":[{"id":"c1","marks":1}]},"rubric":{"criteria":[{"id":"c2","marks":1}]},"maxMarks":1}`,
+		"case variant":           `{"Rubric":{"criteria":[{"id":"c1","marks":1}]},"maxMarks":1}`,
+		"unknown field":          `{"rubric":{"criteria":[{"id":"c1","marks":1}]},"maxMarks":1,"answerKey":{}}`,
+		"trailing JSON":          `{"rubric":{"criteria":[{"id":"c1","marks":1}]},"maxMarks":1}{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+			q := createQuestion(t, srv.URL)
+			before := snapshotOf(t, store, q.ID)
+			resp := doRaw(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions", raw)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d", resp.StatusCode)
+			}
+			if body := decodeJSON[map[string]string](t, resp); body["error"] != "invalid_json" {
+				t.Fatalf("error = %q", body["error"])
+			}
+			assertUnchanged(t, store, q.ID, before)
+		})
 	}
 }
 
@@ -1495,6 +1548,7 @@ func TestCreateQuestion_StrictJSON(t *testing.T) {
 		"trailing junk":    `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"short_answer","language":"en","prompt":"p"}not-json`,
 		"not an object":    `[1,2,3]`,
 		"malformed object": `{"syllabusId":`,
+		"duplicate field":  `{"syllabusId":"syl-active","syllabusId":"syl-other-active","curriculumMapNodeId":"node-verified","responseType":"short_answer","language":"en","prompt":"p"}`,
 	}
 
 	for name, body := range cases {
@@ -1537,6 +1591,7 @@ func TestUpdateQuestion_ForbiddenAndUnknownFields_Returns400(t *testing.T) {
 		"trailing junk":    `{"prompt":"new"}not-json`,
 		"trailing string":  `{"prompt":"new"}"extra"`,
 		"malformed object": `{"prompt":`,
+		"duplicate field":  `{"prompt":"new","prompt":"other"}`,
 	}
 
 	for name, body := range cases {
@@ -1553,6 +1608,111 @@ func TestUpdateQuestion_ForbiddenAndUnknownFields_Returns400(t *testing.T) {
 			}
 			if respBody := decodeJSON[map[string]string](t, resp); respBody["error"] != "invalid_json" {
 				t.Fatalf("error = %q, want invalid_json", respBody["error"])
+			}
+			assertUnchanged(t, store, q.ID, before)
+		})
+	}
+}
+
+func TestCreateQuestion_MultipleChoiceOptionsValidation(t *testing.T) {
+	valid := `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","options":[{"id":"one","label":"runtime one"},{"id":"two","label":"runtime two"}]}`
+	t.Run("valid", func(t *testing.T) {
+		srv, _ := newTestServer()
+		defer srv.Close()
+		resp := doRaw(t, http.MethodPost, srv.URL+"/questions", valid)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("status = %d, want 201", resp.StatusCode)
+		}
+		q := decodeJSON[Question](t, resp)
+		if len(q.Options) != 2 || q.Options[0].ID != "one" {
+			t.Fatalf("options = %#v", q.Options)
+		}
+	})
+
+	for name, tc := range map[string]struct{ body, code string }{
+		"MC missing":           {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime"}`, "missing_required_fields"},
+		"non-MC present":       {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"short_answer","language":"en","prompt":"runtime","options":[{"id":"one","label":"x"},{"id":"two","label":"y"}]}`, "invalid_options"},
+		"case variant":         {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","options":[{"ID":"one","label":"x"},{"id":"two","label":"y"}]}`, "invalid_options"},
+		"duplicate option key": {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","options":[{"id":"one","id":"other","label":"x"},{"id":"two","label":"y"}]}`, "invalid_options"},
+		"trailing nested JSON": {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","options":[{"id":"one","label":"x"},{"id":"two","label":"y"}] {}}`, "invalid_json"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+			resp := doRaw(t, http.MethodPost, srv.URL+"/questions", tc.body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			if body := decodeJSON[map[string]any](t, resp); body["error"] != tc.code {
+				t.Fatalf("error = %v, want %s", body["error"], tc.code)
+			}
+			if len(store.questions) != 0 || len(store.events) != 0 {
+				t.Fatal("rejected create mutated store")
+			}
+		})
+	}
+}
+
+func TestUpdateQuestion_OptionsRevisionAuditAndStaleness(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	create := doRaw(t, http.MethodPost, srv.URL+"/questions", `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","options":[{"id":"one","label":"runtime one"},{"id":"two","label":"runtime two"}]}`)
+	q := decodeJSON[Question](t, create)
+	rubric := doRaw(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions", `{"rubric":{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"one"}},"maxMarks":1}`)
+	if rubric.StatusCode != http.StatusCreated {
+		t.Fatalf("rubric status = %d", rubric.StatusCode)
+	}
+	_ = decodeJSON[RubricVersion](t, rubric)
+	verified := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions/1/verify", reviewerToken, nil)
+	if verified.StatusCode != http.StatusOK {
+		t.Fatalf("verify rubric status = %d", verified.StatusCode)
+	}
+	_ = decodeJSON[RubricVersion](t, verified)
+
+	patch := doRaw(t, http.MethodPatch, srv.URL+"/questions/"+q.ID, `{"options":[{"id":"two","label":"runtime two"},{"id":"one","label":"changed runtime label"}]}`)
+	updated := decodeJSON[Question](t, patch)
+	if updated.ContentRevision != q.ContentRevision+1 {
+		t.Fatalf("revision = %d", updated.ContentRevision)
+	}
+	last := store.events[len(store.events)-1]
+	if !reflect.DeepEqual(last.ChangedFields, []string{"options", "contentRevision"}) {
+		t.Fatalf("changed fields = %#v", last.ChangedFields)
+	}
+	before := snapshotOf(t, store, q.ID)
+	noop := doRaw(t, http.MethodPatch, srv.URL+"/questions/"+q.ID, `{"options":[{"id":"two","label":"runtime two"},{"id":"one","label":"changed runtime label"}]}`)
+	if noop.StatusCode != http.StatusBadRequest {
+		t.Fatalf("no-op status = %d", noop.StatusCode)
+	}
+	assertUnchanged(t, store, q.ID, before)
+	rejected := doRaw(t, http.MethodPatch, srv.URL+"/questions/"+q.ID, `{"options":[{"id":"one","label":"only"}]}`)
+	if rejected.StatusCode != http.StatusBadRequest {
+		t.Fatalf("rejected status = %d", rejected.StatusCode)
+	}
+	assertUnchanged(t, store, q.ID, before)
+	verifyQuestion := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil)
+	if body := decodeJSON[map[string]string](t, verifyQuestion); body["error"] != "missing_current_verified_rubric" {
+		t.Fatalf("error = %q", body["error"])
+	}
+}
+
+func TestCreateRubricVersion_AnswerKeyMatchesQuestion(t *testing.T) {
+	for name, tc := range map[string]struct{ responseType, options, rubric string }{
+		"MC missing key": {"multiple_choice", `,"options":[{"id":"one","label":"x"},{"id":"two","label":"y"}]`, `{"criteria":[{"id":"c1","marks":1}]}`},
+		"MC unknown key": {"multiple_choice", `,"options":[{"id":"one","label":"x"},{"id":"two","label":"y"}]`, `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"missing"}}`},
+		"non-MC key":     {"short_answer", "", `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"one"}}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+			createBody := fmt.Sprintf(`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":%q,"language":"en","prompt":"runtime"%s}`, tc.responseType, tc.options)
+			q := decodeJSON[Question](t, doRaw(t, http.MethodPost, srv.URL+"/questions", createBody))
+			before := snapshotOf(t, store, q.ID)
+			resp := doRaw(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions", fmt.Sprintf(`{"rubric":%s,"maxMarks":1}`, tc.rubric))
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d", resp.StatusCode)
+			}
+			if body := decodeJSON[map[string]string](t, resp); body["error"] != "invalid_rubric" {
+				t.Fatalf("error = %q", body["error"])
 			}
 			assertUnchanged(t, store, q.ID, before)
 		})

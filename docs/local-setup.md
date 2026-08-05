@@ -33,6 +33,10 @@ After fresh migration, active Biology catalogue rows are 0610 Extended and one c
 International AS & A Level row. Historical 5090 remains present with `retired` status. Migration
 creates no 9700 source or curriculum/question/rubric content.
 
+Migration 0017 adds nullable `questions.options` JSONB only. It is safe on existing databases and
+rerunnable; existing rows remain `NULL`. Core, not migration SQL, enforces MCQ option and rubric
+answer-key rules. No question, option, rubric, answer key, or other content is seeded.
+
 ## Authentication (Clerk)
 
 Clerk owns authentication; Sidus Core owns authorization. Set up keys and the `sidus_role`
@@ -49,7 +53,8 @@ cd services/ai && python -m venv .venv && .venv/Scripts/pip install -r requireme
 
 To use editorial source (`/dashboard/editorial/sources`, T-0009), curriculum-map
 (`/dashboard/editorial/curriculum`, T-0010), or question/rubric
-(`/dashboard/editorial/questions`, T-0012) workflow, also add
+(`/dashboard/editorial/questions`, T-0012/T-0013, including draft MCQ options and answer-key
+selection) workflow, also add
 `SIDUS_CORE_API_URL=http://localhost:8080` to `apps/web/.env.local` (server-only — never
 `NEXT_PUBLIC_*`; see `docs/editorial-source-workflow.md`,
 `docs/editorial-curriculum-workflow.md`, and `docs/editorial-question-rubric-workflow.md` — all

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -68,21 +67,11 @@ func writeInvalidJSON(w http.ResponseWriter) {
 //
 // It returns the decoded key set so a caller can tell which fields were supplied.
 func decodeStrict(w http.ResponseWriter, r *http.Request, allowed map[string]struct{}, dst any) (map[string]json.RawMessage, bool) {
-	raw := map[string]json.RawMessage{}
 	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&raw); err != nil {
+	raw, err := decodeExactObject(dec, allowed)
+	if err != nil || requireEOF(dec) != nil {
 		writeInvalidJSON(w)
 		return nil, false
-	}
-	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
-		writeInvalidJSON(w)
-		return nil, false
-	}
-	for name := range raw {
-		if _, ok := allowed[name]; !ok {
-			writeInvalidJSON(w)
-			return nil, false
-		}
 	}
 
 	strictDec := json.NewDecoder(bytes.NewReader(mustMarshal(raw)))
@@ -150,14 +139,16 @@ var createQuestionFields = map[string]struct{}{
 	"responseType":        {},
 	"language":            {},
 	"prompt":              {},
+	"options":             {},
 }
 
 type createQuestionRequest struct {
-	SyllabusID          string `json:"syllabusId"`
-	CurriculumMapNodeID string `json:"curriculumMapNodeId"`
-	ResponseType        string `json:"responseType"`
-	Language            string `json:"language"`
-	Prompt              string `json:"prompt"`
+	SyllabusID          string          `json:"syllabusId"`
+	CurriculumMapNodeID string          `json:"curriculumMapNodeId"`
+	ResponseType        string          `json:"responseType"`
+	Language            string          `json:"language"`
+	Prompt              string          `json:"prompt"`
+	Options             json.RawMessage `json:"options,omitempty"`
 }
 
 func (h *handler) createQuestion(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +158,8 @@ func (h *handler) createQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createQuestionRequest
-	if _, ok := decodeStrict(w, r, createQuestionFields, &req); !ok {
+	raw, ok := decodeStrict(w, r, createQuestionFields, &req)
+	if !ok {
 		return
 	}
 
@@ -196,6 +188,24 @@ func (h *handler) createQuestion(w http.ResponseWriter, r *http.Request) {
 		writeInvalidResponseType(w)
 		return
 	}
+	var options []MultipleChoiceOption
+	_, hasOptions := raw["options"]
+	if responseType == ResponseMultipleChoice && !hasOptions {
+		writeMissingFields(w, []string{"options"})
+		return
+	}
+	if responseType != ResponseMultipleChoice && hasOptions {
+		writeQuestionError(w, questionErrorMapping{http.StatusBadRequest, "invalid_options", ErrInvalidOptions.Error()})
+		return
+	}
+	if hasOptions {
+		var err error
+		options, err = ParseOptions(req.Options)
+		if err != nil {
+			writeQuestionError(w, questionErrorMapping{http.StatusBadRequest, "invalid_options", ErrInvalidOptions.Error()})
+			return
+		}
+	}
 
 	q, err := h.store.CreateQuestion(r.Context(), CreateInput{
 		ActorID:             actor,
@@ -204,6 +214,7 @@ func (h *handler) createQuestion(w http.ResponseWriter, r *http.Request) {
 		ResponseType:        responseType,
 		Language:            strings.TrimSpace(req.Language),
 		Prompt:              strings.TrimSpace(req.Prompt),
+		Options:             options,
 	})
 	if mapped, ok := mapQuestionError(err); ok {
 		writeQuestionError(w, mapped)
@@ -217,10 +228,11 @@ func (h *handler) createQuestion(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateQuestionRequest struct {
-	CurriculumMapNodeID *string `json:"curriculumMapNodeId"`
-	ResponseType        *string `json:"responseType"`
-	Language            *string `json:"language"`
-	Prompt              *string `json:"prompt"`
+	CurriculumMapNodeID *string         `json:"curriculumMapNodeId"`
+	ResponseType        *string         `json:"responseType"`
+	Language            *string         `json:"language"`
+	Prompt              *string         `json:"prompt"`
+	Options             json.RawMessage `json:"options,omitempty"`
 }
 
 // updatablePatchFields is the exact, case-sensitive set of PATCH-able JSON field names.
@@ -236,6 +248,7 @@ var updatablePatchFields = map[string]struct{}{
 	"responseType":        {},
 	"language":            {},
 	"prompt":              {},
+	"options":             {},
 }
 
 func (h *handler) updateQuestion(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +302,14 @@ func (h *handler) updateQuestion(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		in.ResponseType = &responseType
+	}
+	if optionsRaw, supplied := raw["options"]; supplied {
+		options, err := ParseOptions(optionsRaw)
+		if err != nil {
+			writeQuestionError(w, questionErrorMapping{http.StatusBadRequest, "invalid_options", ErrInvalidOptions.Error()})
+			return
+		}
+		in.Options = &options
 	}
 
 	q, err := h.store.UpdateQuestion(r.Context(), r.PathValue("id"), in)
@@ -457,6 +478,8 @@ func mapQuestionError(err error) (questionErrorMapping, bool) {
 		return questionErrorMapping{http.StatusBadRequest, "invalid_rubric", err.Error()}, true
 	case errors.Is(err, ErrInvalidMaxMarks):
 		return questionErrorMapping{http.StatusBadRequest, "invalid_max_marks", err.Error()}, true
+	case errors.Is(err, ErrInvalidOptions):
+		return questionErrorMapping{http.StatusBadRequest, "invalid_options", err.Error()}, true
 	case errors.Is(err, ErrNoChanges):
 		return questionErrorMapping{http.StatusBadRequest, "no_changes", err.Error()}, true
 	case errors.Is(err, ErrMissingVerifiedRubric):

@@ -123,3 +123,42 @@ func TestValidateRubric_BoundsCriteria(t *testing.T) {
 		t.Fatalf("ValidateRubric = %v, want ErrInvalidRubric for %d criteria", err, len(doc.Criteria))
 	}
 }
+
+func TestValidateRubricForQuestion_AnswerKeyRules(t *testing.T) {
+	options := []MultipleChoiceOption{{ID: "one", Label: "runtime"}, {ID: "two", Label: "runtime 2"}}
+	criteriaOnly := json.RawMessage(`{"criteria":[{"id":"c1","marks":1}]}`)
+	withKey := json.RawMessage(`{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"}}`)
+	unknownKey := json.RawMessage(`{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"missing"}}`)
+
+	if err := ValidateRubricForQuestion(withKey, 1, ResponseMultipleChoice, options); err != nil {
+		t.Fatalf("valid MC rubric: %v", err)
+	}
+	for name, err := range map[string]error{
+		"MC missing answer key": ValidateRubricForQuestion(criteriaOnly, 1, ResponseMultipleChoice, options),
+		"MC unknown option":     ValidateRubricForQuestion(unknownKey, 1, ResponseMultipleChoice, options),
+		"non-MC answer key":     ValidateRubricForQuestion(withKey, 1, ResponseShortAnswer, nil),
+	} {
+		if !errors.Is(err, ErrInvalidRubric) {
+			t.Errorf("%s error = %v, want ErrInvalidRubric", name, err)
+		}
+	}
+	if err := ValidateRubricForQuestion(criteriaOnly, 1, ResponseStructuredResponse, nil); err != nil {
+		t.Fatalf("criteria-only non-MC rubric: %v", err)
+	}
+}
+
+func TestValidateRubric_RejectsAnswerKeyExactSchemaViolations(t *testing.T) {
+	for name, raw := range map[string]string{
+		"case variant":  `{"criteria":[{"id":"c1","marks":1}],"AnswerKey":{"correctOptionId":"one"}}`,
+		"unknown field": `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"one","extra":true}}`,
+		"duplicate key": `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"one","correctOptionId":"two"}}`,
+		"wrong type":    `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":1}}`,
+		"blank":         `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":" "}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateRubric(json.RawMessage(raw), 1); !errors.Is(err, ErrInvalidRubric) {
+				t.Fatalf("ValidateRubric = %v, want ErrInvalidRubric", err)
+			}
+		})
+	}
+}

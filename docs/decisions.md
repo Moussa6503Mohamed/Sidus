@@ -541,6 +541,37 @@ business rules in web (rejected: drift and false authority).
 
 **Owner/date:** Codex, 2026-08-05 (T-0012).
 
+## D-0015 — Deterministic MCQ delivery schema
+
+**Status:** Approved
+**Decision:** Add nullable JSONB `questions.options` through additive, rerunnable migration 0017.
+Options are ordered original question content, accepted only for `multiple_choice`, with 2–6 exact
+`{id,label}` objects; IDs are stable, unique, non-blank, and bounded to 64 Unicode code points,
+labels are non-blank and bounded to 1,000. Existing rows remain valid with NULL. Every option
+change is one question content update and one revision increment; MCQ-to-non-MCQ clears options in
+same update. Extend rubric JSON with exact optional `answerKey:{correctOptionId}`. Core requires it
+for MCQ rubric creation, rejects it for non-MCQ, and matches ID to current options while holding
+question row lock. Existing immutable rubric JSON and question-revision rules make answer key
+versioned and stale older versions after any question content edit. Strict request token decoding
+also rejects top-level duplicate keys before store mutation. Editorial BFF keeps same closed routes
+and verbatim body forwarding; draft MCQ UI edits/reorders options and selects answer only from
+current options. No learner endpoint exists; future learner projection must omit rubric and answer
+key. Short/structured responses remain criteria-only.
+
+**Reason:** Options belong to delivered question wording/order, while correct choice belongs to
+reviewed marking truth. Separating them preserves existing revision and rubric immutability model,
+allows deterministic future delivery, and prevents label copies or mutable question rows from
+becoming canonical answers.
+
+**Alternatives:** Store correct flag on each option (rejected: question edit could mutate reviewed
+answer truth); separate correct-answer column on questions (rejected: bypasses rubric versioning);
+invent exact-match text answers (rejected: marking semantics are not designed); add learner route
+now (rejected: authorization/projection/session scope belongs to later task); require non-null
+options at database level (rejected: existing MCQ rows must remain valid with NULL after additive
+migration).
+
+**Owner/date:** Codex, 2026-08-06 (T-0013).
+
 ## Decision template
 
 ```md
