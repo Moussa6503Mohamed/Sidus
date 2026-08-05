@@ -72,6 +72,8 @@ type memoryStore struct {
 	nextID           int
 }
 
+func statusPointer(status Status) *Status { return &status }
+
 func newMemoryStore() *memoryStore {
 	return &memoryStore{
 		activeSyllabuses: map[string]bool{"syl-active": true, "syl-other-active": true},
@@ -261,15 +263,15 @@ func (m *memoryStore) RetireQuestion(_ context.Context, id, actorID string) (Que
 	return q, nil
 }
 
-func (m *memoryStore) GetQuestion(_ context.Context, id string, verifiedOnly bool) (Question, error) {
+func (m *memoryStore) GetQuestion(_ context.Context, id string) (Question, error) {
 	q, ok := m.questions[id]
-	if !ok || (verifiedOnly && q.Status != StatusVerified) {
+	if !ok {
 		return Question{}, ErrNotFound
 	}
 	return q, nil
 }
 
-func (m *memoryStore) ListQuestions(_ context.Context, syllabusID string, nodeID *string, verifiedOnly bool) ([]Question, error) {
+func (m *memoryStore) ListQuestions(_ context.Context, syllabusID string, nodeID *string, status *Status) ([]Question, error) {
 	if !m.activeSyllabuses[syllabusID] {
 		return nil, ErrUnknownSyllabus
 	}
@@ -292,7 +294,7 @@ func (m *memoryStore) ListQuestions(_ context.Context, syllabusID string, nodeID
 		if nodeID != nil && q.CurriculumMapNodeID != *nodeID {
 			continue
 		}
-		if verifiedOnly && q.Status != StatusVerified {
+		if status != nil && q.Status != *status {
 			continue
 		}
 		out = append(out, q)
@@ -975,7 +977,7 @@ func TestQuestionLifecycle_VerifyThenRetire(t *testing.T) {
 	}
 }
 
-func TestRetiredQuestion_HiddenFromReaders(t *testing.T) {
+func TestQuestionReads_ReturnAllStatusesAndSupportFilters(t *testing.T) {
 	srv, _ := newTestServer()
 	defer srv.Close()
 
@@ -994,22 +996,52 @@ func TestRetiredQuestion_HiddenFromReaders(t *testing.T) {
 
 	doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/retire", reviewerToken, nil)
 
-	if resp := doJSON(t, http.MethodGet, srv.URL+"/questions/"+q.ID, nil); resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("get retired status = %d, want 404", resp.StatusCode)
+	if resp := doJSON(t, http.MethodGet, srv.URL+"/questions/"+q.ID, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("get retired status = %d, want 200", resp.StatusCode)
 	}
 	afterRetire := decodeJSON[map[string][]Question](t, doJSON(t, http.MethodGet, srv.URL+"/questions?syllabusId=syl-active", nil))
-	if len(afterRetire["items"]) != 0 {
-		t.Fatalf("retired question still listed: %d items", len(afterRetire["items"]))
+	if len(afterRetire["items"]) != 1 || afterRetire["items"][0].Status != StatusRetired {
+		t.Fatalf("all-status list = %+v, want retired question", afterRetire["items"])
+	}
+	verifiedOnly := decodeJSON[map[string][]Question](t, doJSON(t, http.MethodGet, srv.URL+"/questions?syllabusId=syl-active&status=verified", nil))
+	if len(verifiedOnly["items"]) != 0 {
+		t.Fatalf("verified filter returned %d retired questions, want 0", len(verifiedOnly["items"]))
+	}
+	retiredOnly := decodeJSON[map[string][]Question](t, doJSON(t, http.MethodGet, srv.URL+"/questions?syllabusId=syl-active&status=retired", nil))
+	if len(retiredOnly["items"]) != 1 {
+		t.Fatalf("retired filter items = %d, want 1", len(retiredOnly["items"]))
 	}
 }
 
-func TestGetQuestion_DraftHiddenFromReaders(t *testing.T) {
+func TestGetQuestion_DraftVisibleToEditorialReaders(t *testing.T) {
 	srv, _ := newTestServer()
 	defer srv.Close()
 
 	q := createQuestion(t, srv.URL)
-	if resp := doJSON(t, http.MethodGet, srv.URL+"/questions/"+q.ID, nil); resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("get draft status = %d, want 404 (readers only see verified)", resp.StatusCode)
+	if resp := doJSON(t, http.MethodGet, srv.URL+"/questions/"+q.ID, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("get draft status = %d, want 200", resp.StatusCode)
+	}
+	for _, query := range []string{"", "&status=all", "&status=draft"} {
+		items := decodeJSON[map[string][]Question](t, doJSON(t, http.MethodGet,
+			srv.URL+"/questions?syllabusId=syl-active"+query, nil))["items"]
+		if len(items) != 1 || items[0].Status != StatusDraft {
+			t.Fatalf("query %q items = %+v, want draft question", query, items)
+		}
+	}
+}
+
+func TestListQuestions_InvalidStatus_Returns400(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	for _, status := range []string{"bogus", "Draft"} {
+		resp := doJSON(t, http.MethodGet, srv.URL+"/questions?syllabusId=syl-active&status="+status, nil)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status %q response = %d, want 400", status, resp.StatusCode)
+		}
+		if body := decodeJSON[map[string]string](t, resp); body["error"] != "invalid_status" {
+			t.Fatalf("error = %q, want invalid_status", body["error"])
+		}
 	}
 }
 

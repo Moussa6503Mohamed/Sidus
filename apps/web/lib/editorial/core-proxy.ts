@@ -15,6 +15,9 @@ const MAX_REQUEST_BODY_BYTES = 100_000;
 // validation (D-0010) — defense in depth at the boundary that actually assembles the URL.
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const CURRICULUM_MAP_STATUSES = new Set(["draft", "verified", "retired", "all"]);
+const QUESTION_STATUSES = new Set(["draft", "verified", "retired", "all"]);
+const POSITIVE_VERSION_PATTERN = /^[1-9][0-9]{0,9}$/;
+const MAX_POSTGRES_INTEGER = 2_147_483_647;
 
 export class ProxyError extends Error {
   readonly status: number;
@@ -42,7 +45,16 @@ export type EditorialOperation =
   | { kind: "createCurriculumMapNode" }
   | { kind: "updateCurriculumMapNode"; id: string }
   | { kind: "verifyCurriculumMapNode"; id: string }
-  | { kind: "retireCurriculumMapNode"; id: string };
+  | { kind: "retireCurriculumMapNode"; id: string }
+  | { kind: "listQuestions"; syllabusId: string; curriculumMapNodeId?: string; status?: string }
+  | { kind: "getQuestion"; id: string }
+  | { kind: "createQuestion" }
+  | { kind: "updateQuestion"; id: string }
+  | { kind: "verifyQuestion"; id: string }
+  | { kind: "retireQuestion"; id: string }
+  | { kind: "listQuestionRubricVersions"; id: string }
+  | { kind: "createQuestionRubricVersion"; id: string }
+  | { kind: "verifyQuestionRubricVersion"; id: string; version: string };
 
 export interface ProxySuccess {
   status: number;
@@ -61,6 +73,20 @@ function requireValidCurriculumMapStatus(status: string): string {
     throw new ProxyError(400, "invalid_status", "status must be one of: draft, verified, retired, all");
   }
   return status;
+}
+
+function requireValidQuestionStatus(status: string): string {
+  if (!QUESTION_STATUSES.has(status)) {
+    throw new ProxyError(400, "invalid_status", "status must be one of: draft, verified, retired, all");
+  }
+  return status;
+}
+
+function requireValidVersion(version: string): string {
+  if (!POSITIVE_VERSION_PATTERN.test(version) || Number(version) > MAX_POSTGRES_INTEGER) {
+    throw new ProxyError(400, "invalid_version", "version must be a positive integer");
+  }
+  return version;
 }
 
 function resolveRoute(op: EditorialOperation): { method: Method; path: string } {
@@ -96,6 +122,33 @@ function resolveRoute(op: EditorialOperation): { method: Method; path: string } 
       return { method: "POST", path: `/curriculum-map/nodes/${requireValidId(op.id)}/verify` };
     case "retireCurriculumMapNode":
       return { method: "POST", path: `/curriculum-map/nodes/${requireValidId(op.id)}/retire` };
+    case "listQuestions": {
+      const query = new URLSearchParams({ syllabusId: requireValidId(op.syllabusId) });
+      if (op.curriculumMapNodeId !== undefined) {
+        query.set("curriculumMapNodeId", requireValidId(op.curriculumMapNodeId));
+      }
+      if (op.status !== undefined) query.set("status", requireValidQuestionStatus(op.status));
+      return { method: "GET", path: `/questions?${query.toString()}` };
+    }
+    case "getQuestion":
+      return { method: "GET", path: `/questions/${requireValidId(op.id)}` };
+    case "createQuestion":
+      return { method: "POST", path: "/questions" };
+    case "updateQuestion":
+      return { method: "PATCH", path: `/questions/${requireValidId(op.id)}` };
+    case "verifyQuestion":
+      return { method: "POST", path: `/questions/${requireValidId(op.id)}/verify` };
+    case "retireQuestion":
+      return { method: "POST", path: `/questions/${requireValidId(op.id)}/retire` };
+    case "listQuestionRubricVersions":
+      return { method: "GET", path: `/questions/${requireValidId(op.id)}/rubric-versions` };
+    case "createQuestionRubricVersion":
+      return { method: "POST", path: `/questions/${requireValidId(op.id)}/rubric-versions` };
+    case "verifyQuestionRubricVersion":
+      return {
+        method: "POST",
+        path: `/questions/${requireValidId(op.id)}/rubric-versions/${requireValidVersion(op.version)}/verify`,
+      };
   }
 }
 

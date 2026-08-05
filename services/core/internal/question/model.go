@@ -48,7 +48,8 @@ const (
 	// StatusVerified is a reviewer/admin-confirmed question, visible to reader endpoints. It
 	// requires at least one verified rubric version.
 	StatusVerified Status = "verified"
-	// StatusRetired is a withdrawn question: kept for history, hidden from every reader.
+	// StatusRetired is a withdrawn question: kept for history and visible to authorized editorial
+	// readers, but unavailable to any future learner-facing surface.
 	StatusRetired Status = "retired"
 )
 

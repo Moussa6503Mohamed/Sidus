@@ -55,7 +55,7 @@ const (
 	PermCreateCurriculumMap Permission = "curriculum_map:create"
 	// PermVerifyCurriculumMap covers verifying and retiring curriculum-map nodes.
 	PermVerifyCurriculumMap Permission = "curriculum_map:verify"
-	// PermReadQuestion covers listing/getting verified original questions.
+	// PermReadQuestion covers editorial listing/getting of original questions in any lifecycle state.
 	PermReadQuestion Permission = "question:read"
 	// PermCreateQuestion covers creating/PATCHing draft questions and creating draft rubric
 	// versions.
@@ -64,8 +64,7 @@ const (
 	// question.
 	PermVerifyQuestion Permission = "question:verify"
 	// PermReadQuestionRubric covers listing a question's rubric versions. It is separate from
-	// PermReadQuestion because that listing exposes draft rubric structure, not just verified
-	// questions.
+	// PermReadQuestion because rubric structure is a distinct sensitive surface.
 	PermReadQuestionRubric Permission = "question_rubric:read"
 )
 

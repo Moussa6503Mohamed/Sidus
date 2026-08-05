@@ -214,8 +214,10 @@ rubric version: draft --(verify)--> verified   (superseded by a new version, nev
   draft rubric version does not count.
 - **Retire a question** (`draft`/`verified` → `retired`) requires `question:verify`. Retiring an
   already-retired question is `409`.
-- **Reader endpoints return verified questions only**, so retiring a question removes it from every
-  learner-facing read while keeping its history in `question_events`.
+- **Editorial reader endpoints return every lifecycle state** to `question:read` holders so staff
+  can discover and reopen drafts and audit retired records. `GET /questions` accepts
+  `status=draft|verified|retired|all`; omission and `all` both mean every status. No learner has
+  `question:read`, and no learner-facing question route exists.
 
 ## API
 
@@ -245,8 +247,8 @@ no effect at all on the `map[string]json.RawMessage` decode used to tell "field 
 
 | Method & path | Permission | Roles | Notes |
 | --- | --- | --- | --- |
-| `GET /questions?syllabusId=...&curriculumMapNodeId=...` | `question:read` | editor, reviewer, admin | verified only; `syllabusId` required and must resolve to an **active** catalogue syllabus; node filter optional but **validated** |
-| `GET /questions/{id}` | `question:read` | editor, reviewer, admin | verified only (404 otherwise) |
+| `GET /questions?syllabusId=...&curriculumMapNodeId=...&status=...` | `question:read` | editor, reviewer, admin | every status by default; optional `draft`/`verified`/`retired`/`all`; `syllabusId` required and active; node filter validated |
+| `GET /questions/{id}` | `question:read` | editor, reviewer, admin | any lifecycle status |
 | `POST /questions` | `question:create` | editor, reviewer, admin | creates a draft |
 | `PATCH /questions/{id}` | `question:create` | editor, reviewer, admin | draft only |
 | `POST /questions/{id}/rubric-versions` | `question:create` | editor, reviewer, admin | appends a draft version to a draft question |
@@ -259,7 +261,7 @@ no effect at all on the `map[string]json.RawMessage` decode used to tell "field 
 (`missing_required_fields`, `blank_fields`, `invalid_response_type`, `invalid_json`,
 `no_updatable_fields`, `no_changes`, `unknown_syllabus`, `unknown_node`, `unverified_node`,
 `mismatched_node`, `unknown_source`, `unapproved_source`, `unlinked_source`, `mismatched_source`,
-`invalid_rubric`, `invalid_max_marks`); `409` conflict (`invalid_lifecycle_transition`,
+`invalid_rubric`, `invalid_max_marks`, `invalid_status`); `409` conflict (`invalid_lifecycle_transition`,
 `missing_verified_rubric`, `missing_current_verified_rubric`, `duplicate_rubric_version`); `404`
 not found.
 
@@ -277,7 +279,7 @@ which matters while no questions exist at all:
 2. `curriculumMapNodeId`, when supplied — unknown or malformed → `400 unknown_node`; belonging to
    another syllabus → `400 mismatched_node`.
 
-A known active syllabus, plus a node of that syllabus if supplied, with no verified questions is
+A known active syllabus, plus a node of that syllabus if supplied, with no matching questions is
 `200` with an empty `items` list.
 
 The node **filter** is checked more weakly than the [grounding gate](#the-grounding-gate): it
@@ -290,7 +292,7 @@ retired, and gets an empty list rather than an error.
 Least privilege (see `services/core/internal/auth`). Learner and unknown roles have **no** question
 or rubric access at all.
 
-| Role | read verified questions | create/update draft question | create draft rubric version | list rubric versions | verify rubric / verify question / retire |
+| Role | read editorial questions | create/update draft question | create draft rubric version | list rubric versions | verify rubric / verify question / retire |
 | --- | --- | --- | --- | --- | --- |
 | learner | — | — | — | — | — |
 | editor | ✓ | ✓ | ✓ | ✓ | — |
@@ -298,9 +300,8 @@ or rubric access at all.
 | admin | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Rubric listing has its own permission (`question_rubric:read`) rather than reusing
-`question:read`, because it exposes draft rubric structure — not just verified questions — and
-that separation lets a future read-only or learner-facing question surface be added without
-handing out the marking scheme.
+`question:read`, because rubric structure is a distinct sensitive surface. That separation lets a
+future public verified-question surface omit marking criteria without changing editorial access.
 
 ## Audit
 

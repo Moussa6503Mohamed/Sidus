@@ -509,6 +509,38 @@ continuity); split 9700 into active AS and A Level rows (rejected: ambiguous cod
 seed a 9700 source or curriculum content (rejected: no human-verified rights/provenance exists).
 **Owner/date:** Codex, 2026-08-05 (T-0011).
 
+## D-0014 — Editorial question and rubric workflow BFF
+
+**Status:** Approved
+**Decision:** Add protected `/dashboard/editorial/questions` and fixed same-origin Next.js BFF
+handlers for existing Core question/rubric operations. Browser calls only `/api/editorial/*`;
+`EditorialOperation` maps each operation to one fixed Core method/path, validates resource ids,
+question list syllabus/node/status query values, and positive rubric version before auth/fetch,
+then forwards only server-acquired Clerk bearer tokens. Existing missing-config/token failures,
+JSON envelope limits, redirect refusal, Core-5xx sanitization, and no-logging rules remain shared
+with T-0009/T-0010. Web role checks only hide workflow/actions; Core remains sole authorization,
+grounding, source-gate, lifecycle, revision, and rubric authority. Editor/reviewer/admin may use
+editorial workflow; reviewer/admin alone see verify/retire controls; learner/unknown trigger zero
+workflow API calls. Creation node choices come only from Core's `status=verified` curriculum-map
+read and are defensively filtered again client-side.
+
+Core question reads receive same minimal editorial correction previously applied to curriculum-map
+reads: `GET /questions/{id}` returns any lifecycle state to existing `question:read` holders, and
+`GET /questions` defaults to all statuses with optional `draft`/`verified`/`retired`/`all` filter.
+This permission remains editor/reviewer/admin-only. No learner-facing route exists. No schema,
+migration, role, permission, write-side rule, or runtime record changes.
+
+**Reason:** Verified-only reads made draft discovery/reopening and retired-record review impossible,
+blocking browser workflow despite all holders of `question:read` being editorial staff. Closed BFF
+union preserves audited no-open-proxy boundary and keeps token/Core URL server-side.
+
+**Alternatives:** Add separate duplicate editorial Core endpoints (rejected: duplicate contract and
+authorization surface); cache draft ids in BFF/browser (rejected: Core would stop being source of
+truth); expose generic proxy (rejected: caller-controlled target surface); duplicate Core role or
+business rules in web (rejected: drift and false authority).
+
+**Owner/date:** Codex, 2026-08-05 (T-0012).
+
 ## Decision template
 
 ```md

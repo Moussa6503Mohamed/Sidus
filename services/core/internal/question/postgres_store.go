@@ -368,11 +368,8 @@ func requireCurrentVerifiedRubric(ctx context.Context, tx *sql.Tx, questionID st
 	return ErrStaleVerifiedRubric
 }
 
-func (p *PostgresStore) GetQuestion(ctx context.Context, id string, verifiedOnly bool) (Question, error) {
+func (p *PostgresStore) GetQuestion(ctx context.Context, id string) (Question, error) {
 	query := `SELECT ` + questionColumns + ` FROM questions WHERE id = $1`
-	if verifiedOnly {
-		query += ` AND status = 'verified'`
-	}
 	q, err := scanQuestion(p.db.QueryRowContext(ctx, query, id))
 	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return Question{}, ErrNotFound
@@ -383,7 +380,7 @@ func (p *PostgresStore) GetQuestion(ctx context.Context, id string, verifiedOnly
 	return q, nil
 }
 
-func (p *PostgresStore) ListQuestions(ctx context.Context, syllabusID string, nodeID *string, verifiedOnly bool) ([]Question, error) {
+func (p *PostgresStore) ListQuestions(ctx context.Context, syllabusID string, nodeID *string, status *Status) ([]Question, error) {
 	// An unknown or inactive syllabus is a bad request, not an empty result: an empty 200 would
 	// make a typo indistinguishable from a real syllabus that has no questions yet.
 	active, err := syllabusIsActive(ctx, p.db, syllabusID)
@@ -396,7 +393,7 @@ func (p *PostgresStore) ListQuestions(ctx context.Context, syllabusID string, no
 
 	// The optional node filter is validated for the same reason as the syllabus: an unknown,
 	// malformed, or foreign node id must be a stable 400, not a 200 with an empty list that a
-	// caller cannot tell from "this node has no verified questions yet".
+	// caller cannot tell from "this node has no questions yet".
 	if nodeID != nil {
 		if err := validateNodeFilter(ctx, p.db, *nodeID, syllabusID); err != nil {
 			return nil, err
@@ -409,8 +406,9 @@ func (p *PostgresStore) ListQuestions(ctx context.Context, syllabusID string, no
 		args = append(args, *nodeID)
 		query += ` AND curriculum_map_node_id = $` + strconv.Itoa(len(args))
 	}
-	if verifiedOnly {
-		query += ` AND status = 'verified'`
+	if status != nil {
+		args = append(args, *status)
+		query += ` AND status = $` + strconv.Itoa(len(args))
 	}
 	query += ` ORDER BY created_at ASC`
 

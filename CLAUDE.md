@@ -111,4 +111,11 @@ cd services/ai && python -m pytest
   creates no 9700 content source, node, question, or rubric and changes no existing provenance or
   content records. Full release validation passed on 2026-08-05; see D-0013 and
   `docs/handoffs/T-0011.md`. T-0011 moved to `docs/tasks/history.md` as `done / released`.
+- Private editorial question/rubric workflow built in T-0012: `apps/web` gains protected
+  `/dashboard/editorial/questions` and a fixed-operation same-origin BFF for Core T-0007 question
+  and rubric routes. Authorized editorial question reads now expose draft/verified/retired states
+  with optional status filter so staff can reopen drafts; write rules, grounding/source gates,
+  revisions, rubric versioning, permissions, schema, migrations, and runtime data remain unchanged.
+  See `docs/editorial-question-rubric-workflow.md`, D-0014, and `docs/handoffs/T-0012.md`.
+  T-0012 remains `review` pending independent approval.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.

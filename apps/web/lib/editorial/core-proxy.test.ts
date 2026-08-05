@@ -133,6 +133,53 @@ describe("callCore", () => {
     },
   );
 
+  it.each([
+    ["syllabus", { kind: "listQuestions", syllabusId: "", status: "all" }],
+    ["node", { kind: "listQuestions", syllabusId: "syl-1", curriculumMapNodeId: "../node" }],
+    ["question", { kind: "getQuestion", id: "question/1" }],
+  ] as const)("rejects invalid question %s id before auth or fetch", async (_name, op) => {
+    mockSignedIn();
+
+    const err = await callCore(op).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ProxyError);
+    expect((err as ProxyError).status).toBe(400);
+    expect(mockedAuth).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "bogus", "Verified"])(
+    "rejects invalid question status %j before auth or fetch",
+    async (status) => {
+      mockSignedIn();
+
+      const err = await callCore({ kind: "listQuestions", syllabusId: "syl-1", status }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(ProxyError);
+      expect((err as ProxyError).code).toBe("invalid_status");
+      expect(mockedAuth).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["", "0", "-1", "1.5", "01", "2147483648", "99999999999"])(
+    "rejects invalid rubric version %j before auth or fetch",
+    async (version) => {
+      mockSignedIn();
+
+      const err = await callCore({
+        kind: "verifyQuestionRubricVersion",
+        id: "question-1",
+        version,
+      }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(ProxyError);
+      expect((err as ProxyError).code).toBe("invalid_version");
+      expect(mockedAuth).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
+
   const cases: Array<{
     name: string;
     op: Parameters<typeof callCore>[0];
@@ -219,6 +266,36 @@ describe("callCore", () => {
       op: { kind: "retireCurriculumMapNode", id: "node-1" },
       method: "POST",
       path: "/curriculum-map/nodes/node-1/retire",
+    },
+    {
+      name: "question list",
+      op: { kind: "listQuestions", syllabusId: "syl-1" },
+      method: "GET",
+      path: "/questions?syllabusId=syl-1",
+    },
+    {
+      name: "question list filtered",
+      op: {
+        kind: "listQuestions",
+        syllabusId: "syl-1",
+        curriculumMapNodeId: "node-1",
+        status: "draft",
+      },
+      method: "GET",
+      path: "/questions?syllabusId=syl-1&curriculumMapNodeId=node-1&status=draft",
+    },
+    { name: "question get", op: { kind: "getQuestion", id: "question-1" }, method: "GET", path: "/questions/question-1" },
+    { name: "question create", op: { kind: "createQuestion" }, method: "POST", path: "/questions" },
+    { name: "question update", op: { kind: "updateQuestion", id: "question-1" }, method: "PATCH", path: "/questions/question-1" },
+    { name: "question verify", op: { kind: "verifyQuestion", id: "question-1" }, method: "POST", path: "/questions/question-1/verify" },
+    { name: "question retire", op: { kind: "retireQuestion", id: "question-1" }, method: "POST", path: "/questions/question-1/retire" },
+    { name: "rubric list", op: { kind: "listQuestionRubricVersions", id: "question-1" }, method: "GET", path: "/questions/question-1/rubric-versions" },
+    { name: "rubric create", op: { kind: "createQuestionRubricVersion", id: "question-1" }, method: "POST", path: "/questions/question-1/rubric-versions" },
+    {
+      name: "rubric verify",
+      op: { kind: "verifyQuestionRubricVersion", id: "question-1", version: "2" },
+      method: "POST",
+      path: "/questions/question-1/rubric-versions/2/verify",
     },
   ];
 

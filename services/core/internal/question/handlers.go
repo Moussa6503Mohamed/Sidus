@@ -13,7 +13,7 @@ import (
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/auth"
 )
 
-// Register mounts the question endpoints on mux. Reads of verified questions require
+// Register mounts the question endpoints on mux. Editorial reads of questions require
 // question:read; draft create/update and draft rubric-version create require question:create;
 // verifying a rubric version, verifying a question, and retiring a question require
 // question:verify; listing rubric versions requires question_rubric:read. Every endpoint is
@@ -106,8 +106,17 @@ func (h *handler) listQuestions(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(r.URL.Query().Get("curriculumMapNodeId")); raw != "" {
 		nodeID = &raw
 	}
+	var status *Status
+	if raw := strings.TrimSpace(r.URL.Query().Get("status")); raw != "" && raw != "all" {
+		parsed := Status(raw)
+		if parsed != StatusDraft && parsed != StatusVerified && parsed != StatusRetired {
+			writeError(w, http.StatusBadRequest, "invalid_status", "status must be one of: draft, verified, retired, all")
+			return
+		}
+		status = &parsed
+	}
 
-	questions, err := h.store.ListQuestions(r.Context(), syllabusID, nodeID, true)
+	questions, err := h.store.ListQuestions(r.Context(), syllabusID, nodeID, status)
 	if mapped, ok := mapQuestionError(err); ok {
 		writeQuestionError(w, mapped)
 		return
@@ -120,7 +129,7 @@ func (h *handler) listQuestions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) getQuestion(w http.ResponseWriter, r *http.Request) {
-	q, err := h.store.GetQuestion(r.Context(), r.PathValue("id"), true)
+	q, err := h.store.GetQuestion(r.Context(), r.PathValue("id"))
 	if errors.Is(err, ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "question not found")
 		return

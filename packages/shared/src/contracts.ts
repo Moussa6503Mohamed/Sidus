@@ -342,8 +342,8 @@ export interface CurriculumMapEvent {
 // copied or lightly rewritten source material, and never committed to this repository. Core is
 // the sole authority: on every write it re-validates that the question's curriculum-map node is
 // verified, belongs to the question's syllabus, and that the node's content source still passes
-// the T-0006 source gate. Mirrors services/core/internal/question. Reads of verified questions
-// require question:read; draft create/update and draft rubric-version create require
+// the T-0006 source gate. Mirrors services/core/internal/question. Editorial reads of questions
+// in any lifecycle state require question:read; draft create/update and draft rubric-version create require
 // question:create; verify/retire require question:verify; listing rubric versions requires
 // question_rubric:read. Learner and unknown roles are denied. No AI generation, OCR, ingestion,
 // or question derivation is involved.
@@ -354,7 +354,7 @@ export type QuestionResponseType =
   | "short_answer"
   | "structured_response";
 
-/** Lifecycle state of a question. Retired questions are hidden from every reader endpoint. */
+/** Lifecycle state of a question. Retired questions remain visible only to editorial readers. */
 export type QuestionStatus = "draft" | "verified" | "retired";
 
 /** Lifecycle state of a rubric version. A version is superseded by a new version, never retired. */

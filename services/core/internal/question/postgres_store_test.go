@@ -737,7 +737,7 @@ func TestPostgresStore_Integration_ConcurrentRubricAllocationAndRevision(t *test
 		}
 	}
 
-	final, err := f.store.GetQuestion(f.ctx, q.ID, false)
+	final, err := f.store.GetQuestion(f.ctx, q.ID)
 	if err != nil {
 		t.Fatalf("get question: %v", err)
 	}
@@ -786,17 +786,21 @@ func TestPostgresStore_Integration_LifecycleAndAuditTrail(t *testing.T) {
 		t.Fatalf("re-retire: err = %v, want ErrInvalidTransition", err)
 	}
 
-	// A retired question is invisible to reader endpoints.
-	if _, err := f.store.GetQuestion(f.ctx, q.ID, true); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("get retired verified-only: err = %v, want ErrNotFound", err)
+	// Editorial readers retain lifecycle visibility; filters select one status when requested.
+	if got, err := f.store.GetQuestion(f.ctx, q.ID); err != nil || got.Status != StatusRetired {
+		t.Fatalf("get retired: question=%+v err=%v", got, err)
 	}
-	listed, err := f.store.ListQuestions(f.ctx, f.syllabusID, &f.nodeID, true)
+	all, err := f.store.ListQuestions(f.ctx, f.syllabusID, &f.nodeID, nil)
+	if err != nil || len(all) != 1 || all[0].Status != StatusRetired {
+		t.Fatalf("all-status list: questions=%+v err=%v", all, err)
+	}
+	listed, err := f.store.ListQuestions(f.ctx, f.syllabusID, &f.nodeID, statusPointer(StatusVerified))
 	if err != nil {
 		t.Fatalf("list questions: %v", err)
 	}
 	for _, item := range listed {
 		if item.ID == q.ID {
-			t.Fatal("a retired question is still returned by the verified-only list")
+			t.Fatal("a retired question is returned by the verified filter")
 		}
 	}
 
@@ -908,10 +912,10 @@ func parsePgTextArray(raw string) []string {
 func TestPostgresStore_Integration_ListValidatesSyllabusAndFiltersNode(t *testing.T) {
 	f := newFixture(t)
 
-	if _, err := f.store.ListQuestions(f.ctx, "00000000-0000-0000-0000-000000000000", nil, true); !errors.Is(err, ErrUnknownSyllabus) {
+	if _, err := f.store.ListQuestions(f.ctx, "00000000-0000-0000-0000-000000000000", nil, nil); !errors.Is(err, ErrUnknownSyllabus) {
 		t.Fatalf("unknown syllabus: err = %v, want ErrUnknownSyllabus", err)
 	}
-	if _, err := f.store.ListQuestions(f.ctx, "not-a-uuid", nil, true); !errors.Is(err, ErrUnknownSyllabus) {
+	if _, err := f.store.ListQuestions(f.ctx, "not-a-uuid", nil, nil); !errors.Is(err, ErrUnknownSyllabus) {
 		t.Fatalf("malformed syllabus: err = %v, want ErrUnknownSyllabus", err)
 	}
 
@@ -921,7 +925,7 @@ func TestPostgresStore_Integration_ListValidatesSyllabusAndFiltersNode(t *testin
 		t.Fatalf("verify question: %v", err)
 	}
 
-	matching, err := f.store.ListQuestions(f.ctx, f.syllabusID, &f.nodeID, true)
+	matching, err := f.store.ListQuestions(f.ctx, f.syllabusID, &f.nodeID, statusPointer(StatusVerified))
 	if err != nil {
 		t.Fatalf("list by node: %v", err)
 	}
@@ -930,7 +934,7 @@ func TestPostgresStore_Integration_ListValidatesSyllabusAndFiltersNode(t *testin
 	}
 
 	otherNode := seedNode(t, f.db, f.syllabusID, f.sourceID, "verified")
-	empty, err := f.store.ListQuestions(f.ctx, f.syllabusID, &otherNode, true)
+	empty, err := f.store.ListQuestions(f.ctx, f.syllabusID, &otherNode, statusPointer(StatusVerified))
 	if err != nil {
 		t.Fatalf("list by empty node: %v", err)
 	}
@@ -959,19 +963,19 @@ func TestPostgresStore_Integration_ListValidatesNodeFilter(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			node := tc.nodeID
-			if _, err := f.store.ListQuestions(f.ctx, f.syllabusID, &node, true); !errors.Is(err, tc.wantErr) {
+			if _, err := f.store.ListQuestions(f.ctx, f.syllabusID, &node, nil); !errors.Is(err, tc.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
 			}
 		})
 	}
 
-	// A real node of this syllabus with no verified questions is still 200-with-empty, not an
+	// A real node of this syllabus with no matching questions is still 200-with-empty, not an
 	// error — including a draft node, which a reader may legitimately filter by.
 	draftNode := seedNode(t, f.db, f.syllabusID, f.sourceID, "draft")
 	for name, node := range map[string]string{"verified node": f.nodeID, "draft node": draftNode} {
 		t.Run(name+" with no questions", func(t *testing.T) {
 			n := node
-			items, err := f.store.ListQuestions(f.ctx, f.syllabusID, &n, true)
+			items, err := f.store.ListQuestions(f.ctx, f.syllabusID, &n, statusPointer(StatusVerified))
 			if err != nil {
 				t.Fatalf("list: %v", err)
 			}
@@ -983,7 +987,7 @@ func TestPostgresStore_Integration_ListValidatesNodeFilter(t *testing.T) {
 
 	// The syllabus is still resolved first: a bad syllabus wins over the node filter.
 	node := f.nodeID
-	if _, err := f.store.ListQuestions(f.ctx, "not-a-uuid", &node, true); !errors.Is(err, ErrUnknownSyllabus) {
+	if _, err := f.store.ListQuestions(f.ctx, "not-a-uuid", &node, nil); !errors.Is(err, ErrUnknownSyllabus) {
 		t.Fatalf("unknown syllabus with a node filter: err = %v, want ErrUnknownSyllabus", err)
 	}
 }
@@ -996,7 +1000,7 @@ func TestPostgresStore_Integration_UnknownQuestionIDs(t *testing.T) {
 		"malformed id": "not-a-uuid",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := f.store.GetQuestion(f.ctx, id, true); !errors.Is(err, ErrNotFound) {
+			if _, err := f.store.GetQuestion(f.ctx, id); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("get: err = %v, want ErrNotFound", err)
 			}
 			if _, err := f.store.ListRubricVersions(f.ctx, id); !errors.Is(err, ErrNotFound) {

@@ -48,6 +48,7 @@ export default async function RootLayout({
                   <>
                     <Link href="/dashboard/editorial/sources">Editorial sources</Link>
                     <Link href="/dashboard/editorial/curriculum">Curriculum map</Link>
+                    <Link href="/dashboard/editorial/questions">Questions</Link>
                   </>
                 )}
                 <UserButton />

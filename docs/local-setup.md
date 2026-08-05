@@ -47,11 +47,13 @@ cd services/core && DATABASE_URL="postgres://sidus:sidus_dev_password@localhost:
 cd services/ai && python -m venv .venv && .venv/Scripts/pip install -r requirements.txt && .venv/Scripts/uvicorn app.main:app --reload
 ```
 
-To use the editorial source workflow (`/dashboard/editorial/sources`, T-0009) or the editorial
-curriculum-map workflow (`/dashboard/editorial/curriculum`, T-0010), also add
+To use editorial source (`/dashboard/editorial/sources`, T-0009), curriculum-map
+(`/dashboard/editorial/curriculum`, T-0010), or question/rubric
+(`/dashboard/editorial/questions`, T-0012) workflow, also add
 `SIDUS_CORE_API_URL=http://localhost:8080` to `apps/web/.env.local` (server-only — never
-`NEXT_PUBLIC_*`; see `docs/editorial-source-workflow.md` / `docs/editorial-curriculum-workflow.md`
-— both workflows share the same env var and BFF layer). Sign in with a Clerk user whose
+`NEXT_PUBLIC_*`; see `docs/editorial-source-workflow.md`,
+`docs/editorial-curriculum-workflow.md`, and `docs/editorial-question-rubric-workflow.md` — all
+workflows share the same env var and BFF layer). Sign in with a Clerk user whose
 `sidus_role` public metadata is `editor`, `reviewer`, or `admin` per `docs/auth-setup.md`;
 `learner`/unknown users see no editorial controls.
 

@@ -96,17 +96,16 @@ type Store interface {
 	// reader endpoint.
 	RetireQuestion(ctx context.Context, id string, actorID string) (Question, error)
 
-	// GetQuestion returns a question by ID. When verifiedOnly is true, a non-verified question is
-	// reported as ErrNotFound.
-	GetQuestion(ctx context.Context, id string, verifiedOnly bool) (Question, error)
+	// GetQuestion returns a question by ID to an authorized editorial reader, regardless of
+	// lifecycle status.
+	GetQuestion(ctx context.Context, id string) (Question, error)
 
 	// ListQuestions returns questions for a syllabus, optionally narrowed to one curriculum-map
 	// node. The syllabus must resolve to a known active catalogue syllabus (ErrUnknownSyllabus
 	// otherwise) and a supplied node filter must exist (ErrUnknownNode) and belong to that
 	// syllabus (ErrMismatchedNode) — neither an unknown syllabus nor an unknown or foreign node
-	// is ever reported as an empty list. When verifiedOnly is true only verified questions are
-	// returned.
-	ListQuestions(ctx context.Context, syllabusID string, nodeID *string, verifiedOnly bool) ([]Question, error)
+	// is ever reported as an empty list. A nil status returns all lifecycle states.
+	ListQuestions(ctx context.Context, syllabusID string, nodeID *string, status *Status) ([]Question, error)
 
 	// CreateRubricVersion appends a draft rubric version to a draft question, allocating the next
 	// positive version number under a row lock on the question and stamping the question's

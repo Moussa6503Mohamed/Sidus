@@ -1,0 +1,72 @@
+.badge {
+  composes: badge from "../sources/styles.module.css";
+}
+
+.badge[data-status="draft"],
+.badge[data-status="stale"] {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
+.badge[data-status="verified"],
+.badge[data-status="current"] {
+  background: #d1fae5;
+  color: #065f46;
+  border-color: #a7f3d0;
+}
+
+.badge[data-status="retired"] {
+  background: #e5e7eb;
+  color: #374151;
+  border-color: #d1d5db;
+}
+
+.pickerRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.pickerRow > div {
+  min-width: min(100%, 18rem);
+}
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.workspace h2 {
+  margin: 0;
+}
+
+.criteriaHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.criterion {
+  border: 1px solid #e5e7eb;
+  border-radius: 0.375rem;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+@media (max-width: 40rem) {
+  .pickerRow {
+    flex-direction: column;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .criterion {
+    border-color: #374151;
+  }
+}
