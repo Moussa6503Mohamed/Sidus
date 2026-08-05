@@ -113,9 +113,9 @@ func TestPostgres_Integration_SeedAndResolve(t *testing.T) {
 	}
 }
 
-// TestPostgres_Integration_BiologyScopeMigrationRerun proves the SQL itself is idempotent and
-// catalogue-only. It preserves 5090 identity/timestamps/history/source rows and never seeds
-// 9700 source, map, question, or rubric content.
+// TestPostgres_Integration_BiologyScopeMigrationRerun proves direct historical SQL re-execution
+// is a conflict-safe no-op for an existing 9700 row, including after permitted human catalogue
+// edits. It also preserves 5090 identity/timestamps/history/source rows and never seeds content.
 func TestPostgres_Integration_BiologyScopeMigrationRerun(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
@@ -146,37 +146,84 @@ func TestPostgres_Integration_BiologyScopeMigrationRerun(t *testing.T) {
 		return state
 	}
 
-	assert9700CatalogueOnly := func() {
+	type catalogueState struct {
+		id, board, code, subjectID, qualification, displayName string
+		track, curriculumYear                                  sql.NullString
+		status                                                 SyllabusStatus
+		createdAt, updatedAt                                   time.Time
+		eventCount, sourceCount, nodeCount                     int
+		questionCount, rubricCount                             int
+	}
+	read9700 := func() catalogueState {
 		t.Helper()
-		var syllabusID string
-		var count int
+		var state catalogueState
 		if err := db.QueryRowContext(ctx, `
-			SELECT id FROM syllabuses
-			WHERE board = 'Cambridge International' AND syllabus_code = '9700' AND track IS NULL
-			  AND qualification = 'International AS & A Level'
-			  AND display_name = 'Cambridge International AS & A Level Biology'
-			  AND curriculum_year IS NULL AND status = 'active'`,
-		).Scan(&syllabusID); err != nil {
-			t.Fatalf("read exact 9700 row: %v", err)
+			SELECT id, board, syllabus_code, subject_id, qualification, track, display_name,
+			       curriculum_year, status, created_at, updated_at
+			FROM syllabuses
+			WHERE board = 'Cambridge International' AND syllabus_code = '9700' AND track IS NULL`,
+		).Scan(
+			&state.id, &state.board, &state.code, &state.subjectID, &state.qualification,
+			&state.track, &state.displayName, &state.curriculumYear, &state.status,
+			&state.createdAt, &state.updatedAt,
+		); err != nil {
+			t.Fatalf("read 9700 state: %v", err)
 		}
-		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM syllabuses WHERE syllabus_code = '9700' AND status = 'active'`).Scan(&count); err != nil || count != 1 {
-			t.Fatalf("active 9700 row count = %d err=%v, want 1", count, err)
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM syllabus_events WHERE syllabus_id = $1`, state.id).Scan(&state.eventCount); err != nil {
+			t.Fatalf("count 9700 events: %v", err)
 		}
-		queries := map[string]string{
-			"content sources":  `SELECT count(*) FROM content_sources WHERE syllabus_code = '9700' OR catalogue_syllabus_id = $1`,
-			"curriculum nodes": `SELECT count(*) FROM curriculum_map_nodes WHERE syllabus_id = $1`,
-			"questions":        `SELECT count(*) FROM questions WHERE syllabus_id = $1`,
-			"rubrics":          `SELECT count(*) FROM question_rubric_versions r JOIN questions q ON q.id = r.question_id WHERE q.syllabus_id = $1`,
+		counts := []struct {
+			name  string
+			query string
+			dest  *int
+		}{
+			{"content sources", `SELECT count(*) FROM content_sources WHERE syllabus_code = '9700' OR catalogue_syllabus_id = $1`, &state.sourceCount},
+			{"curriculum nodes", `SELECT count(*) FROM curriculum_map_nodes WHERE syllabus_id = $1`, &state.nodeCount},
+			{"questions", `SELECT count(*) FROM questions WHERE syllabus_id = $1`, &state.questionCount},
+			{"rubrics", `SELECT count(*) FROM question_rubric_versions r JOIN questions q ON q.id = r.question_id WHERE q.syllabus_id = $1`, &state.rubricCount},
 		}
-		for name, query := range queries {
-			if err := db.QueryRowContext(ctx, query, syllabusID).Scan(&count); err != nil || count != 0 {
-				t.Fatalf("9700 %s count = %d err=%v, want 0", name, count, err)
+		for _, count := range counts {
+			if err := db.QueryRowContext(ctx, count.query, state.id).Scan(count.dest); err != nil {
+				t.Fatalf("count 9700 %s: %v", count.name, err)
 			}
 		}
+		return state
 	}
 
-	before := read5090()
-	assert9700CatalogueOnly()
+	before5090 := read5090()
+	seeded9700 := read9700()
+	if seeded9700.qualification != "International AS & A Level" ||
+		seeded9700.displayName != "Cambridge International AS & A Level Biology" ||
+		seeded9700.track.Valid || seeded9700.curriculumYear.Valid || seeded9700.status != StatusActive {
+		t.Fatalf("fresh 9700 state = %+v, want approved T-0011 metadata", seeded9700)
+	}
+	if seeded9700.eventCount != 0 || seeded9700.sourceCount != 0 || seeded9700.nodeCount != 0 ||
+		seeded9700.questionCount != 0 || seeded9700.rubricCount != 0 {
+		t.Fatalf("fresh 9700 has forbidden related records: %+v", seeded9700)
+	}
+
+	store := NewPostgresStore(db)
+	humanDisplayName := "Human-reviewed Biology 9700 catalogue name"
+	humanCurriculumYear := "Human-verified future edition"
+	if _, err := store.UpdateSyllabus(ctx, seeded9700.id, UpdateSyllabusInput{
+		ActorID:        "human-reviewer",
+		DisplayName:    &humanDisplayName,
+		CurriculumYear: &humanCurriculumYear,
+		Status:         statusPtr(StatusRetired),
+	}); err != nil {
+		t.Fatalf("apply permitted human 9700 catalogue edits: %v", err)
+	}
+	preserved9700 := read9700()
+	if preserved9700.displayName != humanDisplayName ||
+		!preserved9700.curriculumYear.Valid || preserved9700.curriculumYear.String != humanCurriculumYear ||
+		preserved9700.status != StatusRetired || preserved9700.eventCount != seeded9700.eventCount+1 {
+		t.Fatalf("human-edited 9700 state = %+v, edits/event missing", preserved9700)
+	}
+	if preserved9700.sourceCount != 0 || preserved9700.nodeCount != 0 ||
+		preserved9700.questionCount != 0 || preserved9700.rubricCount != 0 {
+		t.Fatalf("human-edited 9700 has forbidden related records: %+v", preserved9700)
+	}
+
 	body, err := os.ReadFile(filepath.Join("..", "..", "migrations", "0016_realign_biology_vertical_slice.sql"))
 	if err != nil {
 		t.Fatalf("read migration: %v", err)
@@ -186,11 +233,14 @@ func TestPostgres_Integration_BiologyScopeMigrationRerun(t *testing.T) {
 			t.Fatalf("rerun migration pass %d: %v", i, err)
 		}
 	}
-	after := read5090()
-	if after != before {
-		t.Fatalf("5090 state changed on rerun: before=%+v after=%+v", before, after)
+	after5090 := read5090()
+	if after5090 != before5090 {
+		t.Fatalf("5090 state changed on rerun: before=%+v after=%+v", before5090, after5090)
 	}
-	assert9700CatalogueOnly()
+	after9700 := read9700()
+	if after9700 != preserved9700 {
+		t.Fatalf("9700 state changed on rerun: before=%+v after=%+v", preserved9700, after9700)
+	}
 }
 
 // TestPostgres_Integration_UniquenessAndFK exercises the (board, code, track) uniqueness rule,

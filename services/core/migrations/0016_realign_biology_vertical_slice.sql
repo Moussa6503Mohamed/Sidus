@@ -5,6 +5,8 @@
 -- This migration intentionally touches catalogue metadata only. It does not create or alter
 -- content sources, links, events, curriculum-map nodes, questions, or rubrics. The 5090 row
 -- remains in place with its stable id and timestamps; only its lifecycle status changes.
+-- If the 9700 identity already exists, preserve it exactly: a historical migration rerun must
+-- never overwrite later human catalogue edits or create a synthetic audit event.
 
 INSERT INTO syllabuses (
     board,
@@ -27,14 +29,7 @@ SELECT
     'active'
 FROM subjects s
 WHERE s.name = 'Biology'
-ON CONFLICT (board, syllabus_code, COALESCE(track, '')) DO UPDATE
-SET
-    subject_id = EXCLUDED.subject_id,
-    qualification = EXCLUDED.qualification,
-    track = EXCLUDED.track,
-    display_name = EXCLUDED.display_name,
-    curriculum_year = EXCLUDED.curriculum_year,
-    status = EXCLUDED.status;
+ON CONFLICT (board, syllabus_code, COALESCE(track, '')) DO NOTHING;
 
 UPDATE syllabuses
 SET status = 'retired'

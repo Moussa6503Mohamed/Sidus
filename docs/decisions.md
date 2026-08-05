@@ -495,6 +495,9 @@ display name `Cambridge International AS & A Level Biology`, null curriculum yea
 status. AS and A Level are not split into separate 9700 rows because content-source resolution is
 code-based and multiple active rows would be ambiguous. Migration 0016 adds this metadata and
 retires 5090 idempotently without changing `updated_at` or writing an invented human audit event.
+Its 9700 insert uses conflict-safe `DO NOTHING`: fresh bootstrap gets the approved T-0011 values,
+while direct historical SQL re-execution preserves any existing 9700 row's id, timestamps,
+human-edited catalogue metadata, lifecycle status, and audit history instead of normalizing it.
 No 9700 source, node, question, rubric, syllabus text, objective, assessment material, or derived
 content is seeded. Any future 9700 source must be registered through the editorial source workflow
 and receive human-verified rights/provenance before approval or downstream use.

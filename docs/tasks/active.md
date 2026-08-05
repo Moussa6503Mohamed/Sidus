@@ -8,11 +8,13 @@
 - Goal: Make 0610 and one metadata-only 9700 catalogue syllabus active, retire existing 5090 catalogue row without deletion or downstream content mutation, and align project documentation.
 - Scope:
   - Add one additive, idempotent Core migration.
+  - Review fix: make 0016's 9700 conflict path `DO NOTHING`, preserving later human catalogue edits
+    when historical SQL is directly re-executed.
   - Add migration/integration coverage for active resolution, retirement preservation, and absence of seeded 9700 content.
   - Update project, curriculum, roadmap, and local-setup documentation naming active Biology scope.
   - Produce review handoff and one T-0011 commit; do not push.
 - Allowed files:
-  - `services/core/migrations/`
+  - `services/core/migrations/0016_realign_biology_vertical_slice.sql`
   - `services/core/internal/**` test files genuinely needed for migration/catalogue resolution coverage
   - `CLAUDE.md`
   - `README.md`
@@ -21,7 +23,7 @@
   - shared contracts only if runtime contract change proves necessary
 - Forbidden files:
   - Any local Coursebook PDF or derived/extracted material
-  - Existing migration files
+  - Existing migrations 0001–0015
   - Content-source approval/link/event data and curriculum node/question/rubric records or seeds
   - Unrelated user files and untracked workspace artifacts
 - Non-goals:
@@ -36,6 +38,8 @@
 - Acceptance criteria:
   - Fresh database has active 0610/9700 and retired 5090.
   - Migration rerun is idempotent.
+  - Direct 0016 re-execution preserves existing 9700 ID, timestamps, human-edited catalogue
+    metadata, events, and dependent-record counts.
   - Active content-source association lookup resolves 9700 and rejects 5090.
   - Existing 5090 row remains present with identity/history intact.
   - No 9700 source/node/question/rubric content is seeded or existing downstream data changed.
