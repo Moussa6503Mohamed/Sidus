@@ -15,7 +15,7 @@ by a human editor through that UI.
 
 Every node must reference an approved `content_sources` row (the [T-0001 rights
 gate](content-provenance-register.md)) whose `catalogue_syllabus_id` matches the node's
-syllabus. Before this can happen for the seeded 0610/5090 sources, a human editor/admin must:
+syllabus. Before this can happen for any source, a human editor/admin must:
 
 1. Complete and approve the source's rights metadata (`POST /content-sources/{id}/approve`) —
    see [content-provenance-register.md](content-provenance-register.md).
@@ -225,6 +225,6 @@ verified, still belongs to the question's syllabus, and that its content source 
 source gate above. Retiring a node therefore freezes the questions grounded in it. See
 [question-rubric-model.md](question-rubric-model.md).
 
-**No data is seeded.** The two pre-existing 0610/5090 content sources remain `pending`/unlinked
-until a human completes steps 1–2 above; until then, no curriculum-map node can pass the source
-gate for either syllabus.
+**No data is seeded.** The seeded 0610 source remains `pending`/unlinked and no 9700 source exists.
+Until a human completes steps 1–2 above, no curriculum-map node can pass the source gate for
+either active Biology syllabus. Historical 5090 is retired.

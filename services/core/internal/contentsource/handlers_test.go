@@ -227,7 +227,7 @@ type fakeResolver struct {
 
 func newFakeResolver() fakeResolver {
 	return fakeResolver{
-		known:     map[string]string{"0610": "syl-0610", "5090": "syl-5090"},
+		known:     map[string]string{"0610": "syl-0610", "9700": "syl-9700"},
 		ambiguous: map[string]bool{},
 	}
 }
@@ -545,8 +545,8 @@ func TestCreate_UnknownSyllabusCode_Returns400BeforeWrite(t *testing.T) {
 
 	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources", createRequest{
 		Title:        "Bio syllabus",
-		SourceURL:    "https://example.org/bio-bad-syllabus",
-		SyllabusCode: strPtr("9999"),
+		SourceURL:    "https://example.org/bio-retired-syllabus",
+		SyllabusCode: strPtr("5090"),
 	})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
@@ -565,7 +565,7 @@ func TestCreate_RegisteredSyllabusCode_Returns201AndLinksCatalogue(t *testing.T)
 	srv, _ := newTestServer()
 	defer srv.Close()
 
-	for code, wantID := range map[string]string{"0610": "syl-0610", "5090": "syl-5090"} {
+	for code, wantID := range map[string]string{"0610": "syl-0610", "9700": "syl-9700"} {
 		resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources", createRequest{
 			Title:        "Bio syllabus " + code,
 			SourceURL:    "https://example.org/bio-" + code,
@@ -1003,17 +1003,17 @@ func TestUpdate_DifferentCode_UpdatesCodeAndCatalogueLink(t *testing.T) {
 	}
 
 	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
-		SyllabusCode: strPtr("5090"),
+		SyllabusCode: strPtr("9700"),
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 	updated := decodeJSON[Source](t, resp)
-	if updated.SyllabusCode == nil || *updated.SyllabusCode != "5090" {
-		t.Fatalf("syllabusCode = %v, want 5090", updated.SyllabusCode)
+	if updated.SyllabusCode == nil || *updated.SyllabusCode != "9700" {
+		t.Fatalf("syllabusCode = %v, want 9700", updated.SyllabusCode)
 	}
-	if updated.CatalogueSyllabusID == nil || *updated.CatalogueSyllabusID != "syl-5090" {
-		t.Fatalf("catalogueSyllabusId = %v, want syl-5090", updated.CatalogueSyllabusID)
+	if updated.CatalogueSyllabusID == nil || *updated.CatalogueSyllabusID != "syl-9700" {
+		t.Fatalf("catalogueSyllabusId = %v, want syl-9700", updated.CatalogueSyllabusID)
 	}
 	if len(store.events) != 1 {
 		t.Fatalf("events = %d, want 1", len(store.events))

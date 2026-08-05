@@ -11,7 +11,7 @@ material stays in the separate `content_sources` gate (T-0001/T-0002) — see
 
 ## Schema
 
-Tables live in `services/core/migrations` (0005–0008).
+Tables and catalogue seed/realignment data live in `services/core/migrations` (0005–0009, 0016).
 
 ### `subjects`
 
@@ -121,15 +121,18 @@ Requests never carry free-text board/subject/level — only the code, resolved s
 
 ## Seed limits
 
-Only the D-0004 first-vertical-slice biology syllabuses are seeded (migration 0007), both
-`active`:
+Migration 0007 created the original Biology catalogue rows. Migration 0016 realigns active scope
+while retaining 5090 as historical metadata:
 
-| Board | Subject | Qualification | Track | Code |
-| --- | --- | --- | --- | --- |
-| Cambridge International | Biology | Cambridge IGCSE | Extended | 0610 |
-| Cambridge International | Biology | Cambridge O Level | — | 5090 |
+| Board | Subject | Qualification | Track | Code | Status |
+| --- | --- | --- | --- | --- | --- |
+| Cambridge International | Biology | Cambridge IGCSE | Extended | 0610 | active |
+| Cambridge International | Biology | International AS & A Level | — | 9700 | active |
+| Cambridge International | Biology | Cambridge O Level | — | 5090 | retired historical |
 
-No year/edition, objective, assessment rule, rights claim, or any other syllabus is seeded.
+Exactly one combined 9700 row exists; separate AS and A Level rows are forbidden because active
+content-source association lookup resolves by syllabus code. No year/edition, source, objective,
+assessment rule, rights claim, question, rubric, or other content is seeded for 9700.
 
 ## Migration path / backward compatibility
 
@@ -138,6 +141,11 @@ No year/edition, objective, assessment rule, rights claim, or any other syllabus
   syllabuses. A human links them via the authenticated `PATCH /content-sources/{id}` flow — see
   [provenance-catalogue-linking.md](provenance-catalogue-linking.md) (T-0005) for the exact
   request, permission, and audit rules.
+- Migration 0016 changes only the existing 5090 catalogue row's status to `retired`; its id,
+  timestamps, events, source records, links, nodes, questions, and rubrics are preserved. Because
+  retired syllabuses do not resolve, 5090 cannot be selected for a new active source association.
+- No 9700 content source is created. A future source must enter through the editorial source
+  registry with human-verified rights/provenance.
 - New/updated content sources that supply a code have it resolved to an active catalogue
   syllabus and store the FK. A `PATCH` that re-supplies the *same* stored code but whose
   `catalogue_syllabus_id` is missing or stale is a link-only provenance confirmation, not a

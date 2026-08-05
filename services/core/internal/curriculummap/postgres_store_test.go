@@ -37,7 +37,7 @@ func openTestDB(t *testing.T) *sql.DB {
 
 // seedApprovedLinkedSource inserts a content_sources row that is approved and linked to
 // syllabusID, and returns its id. Used so integration tests can pass the source gate without
-// depending on the two pre-seeded (but pending, unlinked) 0610/5090 rows.
+// depending on pre-seeded (but pending, unlinked) source rows.
 func seedApprovedLinkedSource(t *testing.T, db *sql.DB, syllabusID string) string {
 	t.Helper()
 	var id string
@@ -93,7 +93,7 @@ func TestPostgresStore_Integration_CreateAndSourceGate(t *testing.T) {
 	ctx := context.Background()
 
 	syllabusID := getActiveSyllabusID(t, db, "0610")
-	otherSyllabusID := getActiveSyllabusID(t, db, "5090")
+	otherSyllabusID := seedActiveSyllabus(t, db)
 	approvedSource := seedApprovedLinkedSource(t, db, syllabusID)
 	pendingSource := seedPendingSource(t, db)
 
@@ -150,7 +150,7 @@ func TestPostgresStore_Integration_ParentSyllabusAndCycle(t *testing.T) {
 	ctx := context.Background()
 
 	syllabusID := getActiveSyllabusID(t, db, "0610")
-	otherSyllabusID := getActiveSyllabusID(t, db, "5090")
+	otherSyllabusID := seedActiveSyllabus(t, db)
 	source := seedApprovedLinkedSource(t, db, syllabusID)
 	otherSource := seedApprovedLinkedSource(t, db, otherSyllabusID)
 
@@ -364,7 +364,7 @@ func runStoredSourceGateCases(
 			ctx := context.Background()
 
 			syllabusID := getActiveSyllabusID(t, db, "0610")
-			otherSyllabusID := getActiveSyllabusID(t, db, "5090")
+			otherSyllabusID := seedActiveSyllabus(t, db)
 			source := seedApprovedLinkedSource(t, db, syllabusID)
 
 			node, err := store.CreateNode(ctx, CreateInput{
@@ -460,7 +460,7 @@ func TestPostgresStore_Integration_UpdateRepointToUnknownSource(t *testing.T) {
 // --- Syllabus validation on list (T-0006 review fix 3) ---
 
 // seedActiveSyllabus creates an isolated active catalogue syllabus so the "no verified nodes"
-// assertion cannot be disturbed by nodes other tests create under 0610/5090.
+// assertion cannot be disturbed by nodes other tests create under catalogue syllabuses.
 func seedActiveSyllabus(t *testing.T, db *sql.DB) string {
 	t.Helper()
 	var subjectID string
@@ -538,7 +538,7 @@ func TestPostgresStore_Integration_AncestorChainLocking(t *testing.T) {
 	ctx := context.Background()
 
 	syllabusID := getActiveSyllabusID(t, db, "0610")
-	otherSyllabusID := getActiveSyllabusID(t, db, "5090")
+	otherSyllabusID := seedActiveSyllabus(t, db)
 	source := seedApprovedLinkedSource(t, db, syllabusID)
 	otherSource := seedApprovedLinkedSource(t, db, otherSyllabusID)
 

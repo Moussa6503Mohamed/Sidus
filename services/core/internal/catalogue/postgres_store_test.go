@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 )
 
 // These integration tests run against a real, disposable PostgreSQL instance that has had the
-// migrations applied (which seed the Biology subject and the two active biology syllabuses).
+// migrations applied (which seed the Biology subject and realign the catalogue scope).
 // They write immutable syllabus_events rows and cannot clean up after themselves, so
 // TEST_DATABASE_URL MUST point at the disposable postgres-test service in
 // docker-compose.test.yml — never the dev or prod database. Skipped unless it is set.
@@ -34,32 +35,45 @@ func openTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// TestPostgres_Integration_SeedAndResolve confirms exactly the two seeded biology syllabuses
-// are present and active, and that registry resolution works for known and unknown codes.
+// TestPostgres_Integration_SeedAndResolve confirms exact active and historical Biology scope
+// and that registry resolution excludes retired syllabuses.
 func TestPostgres_Integration_SeedAndResolve(t *testing.T) {
 	db := openTestDB(t)
 	store := NewPostgresStore(db)
 	ctx := context.Background()
 
-	// Only the two Cambridge International biology syllabuses are seeded.
-	var cambridgeCount int
+	var cambridgeCount, activeCount int
 	if err := db.QueryRowContext(ctx,
 		`SELECT count(*) FROM syllabuses WHERE board = 'Cambridge International'`).Scan(&cambridgeCount); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if cambridgeCount != 2 {
-		t.Fatalf("Cambridge International syllabus count = %d, want 2 (only 0610/5090 seeded)", cambridgeCount)
+	if cambridgeCount != 3 {
+		t.Fatalf("Cambridge International syllabus count = %d, want 3 (0610/9700 active plus historical 5090)", cambridgeCount)
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM syllabuses WHERE board = 'Cambridge International' AND status = 'active'`).Scan(&activeCount); err != nil {
+		t.Fatalf("count active: %v", err)
+	}
+	if activeCount != 2 {
+		t.Fatalf("active Cambridge International syllabus count = %d, want 2", activeCount)
 	}
 
 	id0610, found, err := store.ResolveActiveSyllabusByCode(ctx, "0610")
 	if err != nil || !found || id0610 == "" {
 		t.Fatalf("resolve 0610: id=%q found=%v err=%v", id0610, found, err)
 	}
+	id9700, found, err := store.ResolveActiveSyllabusByCode(ctx, "9700")
+	if err != nil || !found || id9700 == "" {
+		t.Fatalf("resolve 9700: id=%q found=%v err=%v", id9700, found, err)
+	}
+	if _, found, err := store.ResolveActiveSyllabusByCode(ctx, "5090"); err != nil || found {
+		t.Fatalf("resolve retired 5090: found=%v err=%v, want false/nil", found, err)
+	}
 	if _, found, _ := store.ResolveActiveSyllabusByCode(ctx, "9999"); found {
 		t.Fatal("resolve 9999: found=true, want false (unknown)")
 	}
 
-	// The 0610 seed is IGCSE / Extended; the 5090 seed is O Level / no track.
+	// 0610 remains IGCSE / Extended.
 	syl, err := store.GetSyllabus(ctx, id0610, true)
 	if err != nil {
 		t.Fatalf("get 0610: %v", err)
@@ -70,6 +84,113 @@ func TestPostgres_Integration_SeedAndResolve(t *testing.T) {
 	if syl.CurriculumYear != nil {
 		t.Fatalf("0610 curriculumYear = %v, want nil (never inferred)", *syl.CurriculumYear)
 	}
+
+	// 9700 is one metadata-only combined AS & A Level row with nullable track/year.
+	syl9700, err := store.GetSyllabus(ctx, id9700, true)
+	if err != nil {
+		t.Fatalf("get 9700: %v", err)
+	}
+	if syl9700.Board != "Cambridge International" || syl9700.SyllabusCode != "9700" ||
+		syl9700.Qualification != "International AS & A Level" ||
+		syl9700.DisplayName != "Cambridge International AS & A Level Biology" ||
+		syl9700.Track != nil || syl9700.CurriculumYear != nil || syl9700.Status != StatusActive {
+		t.Fatalf("9700 seed = %+v, want exact combined active metadata", syl9700)
+	}
+
+	var id5090 string
+	if err := db.QueryRowContext(ctx, `
+		SELECT id FROM syllabuses
+		WHERE board = 'Cambridge International' AND syllabus_code = '5090' AND track IS NULL AND status = 'retired'`,
+	).Scan(&id5090); err != nil {
+		t.Fatalf("get retained retired 5090: %v", err)
+	}
+	if _, err := store.GetSyllabus(ctx, id5090, true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("active-only get 5090 err = %v, want ErrNotFound", err)
+	}
+	historical5090, err := store.GetSyllabus(ctx, id5090, false)
+	if err != nil || historical5090.Status != StatusRetired {
+		t.Fatalf("historical get 5090 = %+v err=%v, want retained retired row", historical5090, err)
+	}
+}
+
+// TestPostgres_Integration_BiologyScopeMigrationRerun proves the SQL itself is idempotent and
+// catalogue-only. It preserves 5090 identity/timestamps/history/source rows and never seeds
+// 9700 source, map, question, or rubric content.
+func TestPostgres_Integration_BiologyScopeMigrationRerun(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	type historicalState struct {
+		id                      string
+		createdAt, updatedAt    time.Time
+		eventCount, sourceCount int
+	}
+	read5090 := func() historicalState {
+		t.Helper()
+		var state historicalState
+		if err := db.QueryRowContext(ctx, `
+			SELECT id, created_at, updated_at FROM syllabuses
+			WHERE board = 'Cambridge International' AND syllabus_code = '5090' AND track IS NULL AND status = 'retired'`,
+		).Scan(&state.id, &state.createdAt, &state.updatedAt); err != nil {
+			t.Fatalf("read retired 5090: %v", err)
+		}
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM syllabus_events WHERE syllabus_id = $1`, state.id).Scan(&state.eventCount); err != nil {
+			t.Fatalf("count 5090 events: %v", err)
+		}
+		if err := db.QueryRowContext(ctx, `
+			SELECT count(*) FROM content_sources
+			WHERE syllabus_code = '5090' OR catalogue_syllabus_id = $1`, state.id,
+		).Scan(&state.sourceCount); err != nil {
+			t.Fatalf("count 5090 sources: %v", err)
+		}
+		return state
+	}
+
+	assert9700CatalogueOnly := func() {
+		t.Helper()
+		var syllabusID string
+		var count int
+		if err := db.QueryRowContext(ctx, `
+			SELECT id FROM syllabuses
+			WHERE board = 'Cambridge International' AND syllabus_code = '9700' AND track IS NULL
+			  AND qualification = 'International AS & A Level'
+			  AND display_name = 'Cambridge International AS & A Level Biology'
+			  AND curriculum_year IS NULL AND status = 'active'`,
+		).Scan(&syllabusID); err != nil {
+			t.Fatalf("read exact 9700 row: %v", err)
+		}
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM syllabuses WHERE syllabus_code = '9700' AND status = 'active'`).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("active 9700 row count = %d err=%v, want 1", count, err)
+		}
+		queries := map[string]string{
+			"content sources":  `SELECT count(*) FROM content_sources WHERE syllabus_code = '9700' OR catalogue_syllabus_id = $1`,
+			"curriculum nodes": `SELECT count(*) FROM curriculum_map_nodes WHERE syllabus_id = $1`,
+			"questions":        `SELECT count(*) FROM questions WHERE syllabus_id = $1`,
+			"rubrics":          `SELECT count(*) FROM question_rubric_versions r JOIN questions q ON q.id = r.question_id WHERE q.syllabus_id = $1`,
+		}
+		for name, query := range queries {
+			if err := db.QueryRowContext(ctx, query, syllabusID).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("9700 %s count = %d err=%v, want 0", name, count, err)
+			}
+		}
+	}
+
+	before := read5090()
+	assert9700CatalogueOnly()
+	body, err := os.ReadFile(filepath.Join("..", "..", "migrations", "0016_realign_biology_vertical_slice.sql"))
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	for i := 1; i <= 2; i++ {
+		if _, err := db.ExecContext(ctx, string(body)); err != nil {
+			t.Fatalf("rerun migration pass %d: %v", i, err)
+		}
+	}
+	after := read5090()
+	if after != before {
+		t.Fatalf("5090 state changed on rerun: before=%+v after=%+v", before, after)
+	}
+	assert9700CatalogueOnly()
 }
 
 // TestPostgres_Integration_UniquenessAndFK exercises the (board, code, track) uniqueness rule,

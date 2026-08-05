@@ -20,7 +20,7 @@
 
 ## D-0004 — First vertical slice
 
-**Status:** Approved
+**Status:** Superseded by D-0013
 **Decision:** Cambridge IGCSE Biology 0610 Extended and Cambridge O Level Biology 5090.
 **Reason:** Defined initial learning scope.
 
@@ -481,6 +481,30 @@ and filter purely client-side with no visual cue when the set is empty (rejected
 already shows an explicit "no approved source linked to this syllabus" message so an editor is
 never left guessing why the selector is empty).
 **Owner/date:** Claude Code agent, 2026-08-05 (T-0010).
+
+## D-0013 — Biology vertical-slice scope realignment
+
+**Status:** Approved
+**Decision:** Active Biology scope is Cambridge IGCSE Biology 0610 Extended plus exactly one
+metadata-only Cambridge International AS & A Level Biology 9700 catalogue syllabus. Cambridge O
+Level Biology 5090 becomes retired historical catalogue scope: its existing row, stable id,
+timestamps, audit history, source records, associations, curriculum nodes, questions, and rubrics
+remain untouched except for catalogue lifecycle status changing to `retired`. The 9700 catalogue
+row has board `Cambridge International`, qualification `International AS & A Level`, null track,
+display name `Cambridge International AS & A Level Biology`, null curriculum year, and `active`
+status. AS and A Level are not split into separate 9700 rows because content-source resolution is
+code-based and multiple active rows would be ambiguous. Migration 0016 adds this metadata and
+retires 5090 idempotently without changing `updated_at` or writing an invented human audit event.
+No 9700 source, node, question, rubric, syllabus text, objective, assessment material, or derived
+content is seeded. Any future 9700 source must be registered through the editorial source workflow
+and receive human-verified rights/provenance before approval or downstream use.
+**Reason:** Product scope now targets combined Cambridge International AS & A Level Biology 9700;
+retaining 5090 catalogue and provenance history preserves referential integrity and auditability,
+while one active 9700 row keeps code-based association resolution deterministic.
+**Alternatives:** Delete 5090 and its history (rejected: destructive and breaks provenance/audit
+continuity); split 9700 into active AS and A Level rows (rejected: ambiguous code-only resolution);
+seed a 9700 source or curriculum content (rejected: no human-verified rights/provenance exists).
+**Owner/date:** Codex, 2026-08-05 (T-0011).
 
 ## Decision template
 

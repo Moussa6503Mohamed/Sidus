@@ -82,24 +82,29 @@ A link-only confirmation writes exactly one immutable `content_source_events` ro
   (which did not change) and never the old/new catalogue syllabus ID values themselves (this
   package never stores field *values* in the audit trail, per T-0002)
 
-## Manual steps for the two seeded sources
+## Manual steps for seeded sources
 
-The two content-source rows seeded by migration 0003 (`syllabus_code = '0610'` and `'5090'`)
+The two historical content-source rows seeded by migration 0003 (`syllabus_code = '0610'` and `'5090'`)
 still carry `catalogue_syllabus_id = NULL` after this task. T-0005 adds the safe API path; it
 does **not** itself link those two rows, because that is exactly the kind of silent auto-mapping
 D-0007 and this task explicitly refuse to do without a human decision.
 
-To link them, an authenticated editor/reviewer/admin must call, for each row:
+An authenticated editor/reviewer/admin may link active 0610 with:
 
 ```
 PATCH /content-sources/{id}
 Authorization: Bearer <clerk session token>
 Content-Type: application/json
 
-{"syllabusCode": "0610"}   // or "5090" for the other seeded row
+{"syllabusCode": "0610"}
 ```
 
 This resolves the code against the active catalogue syllabus (seeded in migration 0007) and
 records the link-only audit event described above. Until a human performs this call, both seeded
 rows remain unlinked (`catalogueSyllabusId: null` in their JSON representation) — this is
 expected, not a bug, and is not itself a rights/provenance claim about the syllabus source.
+
+After T-0011, 5090 is retired catalogue history and no longer resolves for a new active
+association; its existing source row and any existing link/history remain preserved. No 9700
+source metadata is seeded. Any future 9700 source must be created through the editorial source
+registry and receive human-verified rights/provenance before approval or downstream use.

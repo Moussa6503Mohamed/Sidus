@@ -18,3 +18,8 @@ Before ingestion or publication, record: owner, licence/permission, source URI, 
 Status now: no source material approved for ingestion. Build original content from editor-reviewed learning objectives only.
 
 This gate is now enforced in code (T-0001): the `content_sources` / `content_source_reviews` tables in `services/core` hold this same information, approval is blocked until all rights fields above are present, and `services/ai` rejects ingestion for every source that is not `approved`. CAM-0610-2026 and CAM-5090-2026 are seeded as `pending` metadata rows with owner/hash/licence-reference/allowed-audience left unset, matching "Stored locally: No" above — they cannot be approved until a reviewer supplies and confirms those fields.
+
+T-0011 retires 5090 from active catalogue scope without deleting this historical provenance row or
+any database source/history record. No 9700 source metadata is present or created by T-0011. A
+future 9700 source must enter through the editorial source registry with human-verified
+rights/provenance; never derive registry metadata from a local PDF.

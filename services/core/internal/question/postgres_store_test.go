@@ -56,6 +56,23 @@ func getActiveSyllabusID(t *testing.T, db *sql.DB, code string) string {
 	return id
 }
 
+func seedActiveTestSyllabus(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	var subjectID, id string
+	if err := db.QueryRow(`SELECT id FROM subjects WHERE name = 'Biology'`).Scan(&subjectID); err != nil {
+		t.Fatalf("get Biology subject: %v", err)
+	}
+	suffix := randomSuffix()
+	if err := db.QueryRow(`
+		INSERT INTO syllabuses (board, syllabus_code, subject_id, qualification, track, display_name, status)
+		VALUES ('Test Board', $1, $2, 'Test Qualification', $3, 'Question test syllabus', 'active')
+		RETURNING id`, "QN-"+suffix, subjectID, "track-"+suffix,
+	).Scan(&id); err != nil {
+		t.Fatalf("seed active test syllabus: %v", err)
+	}
+	return id
+}
+
 // seedApprovedLinkedSource inserts an approved content source linked to syllabusID. Test
 // scaffolding only: it carries no real rights metadata and no source material.
 func seedApprovedLinkedSource(t *testing.T, db *sql.DB, syllabusID string) string {
@@ -111,7 +128,7 @@ func newFixture(t *testing.T) fixture {
 	t.Helper()
 	db := openTestDB(t)
 	syllabusID := getActiveSyllabusID(t, db, "0610")
-	otherSyl := getActiveSyllabusID(t, db, "5090")
+	otherSyl := seedActiveTestSyllabus(t, db)
 	sourceID := seedApprovedLinkedSource(t, db, syllabusID)
 	return fixture{
 		db:         db,

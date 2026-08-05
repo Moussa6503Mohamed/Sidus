@@ -4,7 +4,7 @@ The first secure web-to-Core workflow for editorial staff: source registry → m
 completion → catalogue syllabus association → rights review → approval/rejection. It is a
 UI/BFF surface over the T-0001/T-0002/T-0003/T-0004/T-0005 content-source and catalogue APIs —
 no new business rule, schema, migration, or seed content was added. It unlocks **human**
-approval/linking of the seeded 0610/5090 sources; it does not perform those approvals or links
+approval/linking of seeded sources; it does not perform those approvals or links
 itself.
 
 ## Architecture
@@ -119,8 +119,10 @@ unmounted and every editorial call returns a Core-side `404` proxied through as-
 ## Manual approval/link procedure (human step, outside this task)
 
 This task builds the workflow; it does not perform any approval or link itself (that stays a
-human editorial decision per D-0005's rights-safety stance). To progress the two seeded 0610/
-5090 sources (T-0001) toward approval:
+human editorial decision per D-0005's rights-safety stance). To progress the seeded 0610 source
+(T-0001) toward approval, use the steps below. Historical 5090 remains preserved but cannot resolve against
+an active catalogue syllabus. No 9700 source exists; editors must create any future 9700 metadata
+through this registry and reviewers must human-verify rights/provenance before approval:
 
 1. Sign in as a user with `sidus_role` = `editor` (or higher) per `docs/auth-setup.md`.
 2. Open `/dashboard/editorial/sources`.

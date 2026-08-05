@@ -265,20 +265,27 @@ func TestPostgresStore_Integration_ProvenanceCatalogueLinking(t *testing.T) {
 		t.Fatalf("ping db: %v", err)
 	}
 
-	var catalogueID0610, catalogueID5090 string
+	stamp := time.Now().Format("20060102150405.000000000")
+	var catalogueID0610, fixtureCatalogueID, fixtureSubjectID string
 	if err := db.QueryRowContext(context.Background(),
 		`SELECT id FROM syllabuses WHERE syllabus_code = '0610' AND status = 'active'`).Scan(&catalogueID0610); err != nil {
 		t.Fatalf("look up seeded 0610 catalogue syllabus id: %v", err)
 	}
 	if err := db.QueryRowContext(context.Background(),
-		`SELECT id FROM syllabuses WHERE syllabus_code = '5090' AND status = 'active'`).Scan(&catalogueID5090); err != nil {
-		t.Fatalf("look up seeded 5090 catalogue syllabus id: %v", err)
+		`SELECT id FROM subjects WHERE name = 'Biology'`).Scan(&fixtureSubjectID); err != nil {
+		t.Fatalf("look up Biology subject id: %v", err)
+	}
+	fixtureCode := "CS-" + stamp
+	if err := db.QueryRowContext(context.Background(), `
+		INSERT INTO syllabuses (board, syllabus_code, subject_id, qualification, display_name, status)
+		VALUES ('Test Board', $1, $2, 'Test Qualification', 'Content-source test syllabus', 'active')
+		RETURNING id`, fixtureCode, fixtureSubjectID).Scan(&fixtureCatalogueID); err != nil {
+		t.Fatalf("create isolated catalogue fixture: %v", err)
 	}
 
 	store := NewPostgresStore(db)
 	ctx := context.Background()
 	code0610 := "0610"
-	stamp := time.Now().Format("20060102150405.000000000")
 
 	// Null FK (mirrors the two migration-0008 legacy seeded content_sources rows): same-code
 	// PATCH links it.
@@ -352,7 +359,7 @@ func TestPostgresStore_Integration_ProvenanceCatalogueLinking(t *testing.T) {
 	// the currently resolved 0610 catalogue syllabus.
 	staleURL := "https://example.org/link-stale-fk-" + stamp
 	staleSource, err := store.Create(ctx, CreateInput{
-		Title: "Stale link source", SourceURL: staleURL, SyllabusCode: &code0610, CatalogueSyllabusID: &catalogueID5090,
+		Title: "Stale link source", SourceURL: staleURL, SyllabusCode: &code0610, CatalogueSyllabusID: &fixtureCatalogueID,
 	})
 	if err != nil {
 		t.Fatalf("create stale-linked source: %v", err)
@@ -374,20 +381,19 @@ func TestPostgresStore_Integration_ProvenanceCatalogueLinking(t *testing.T) {
 
 	// A genuinely different code updates both syllabus_code and catalogue_syllabus_id and is
 	// audited as "syllabusCode".
-	code5090 := "5090"
 	recoded, changed, err := store.Update(ctx, staleSource.ID, UpdateInput{
 		ActorID:             "curator-provenance-2",
-		SyllabusCode:        &code5090,
-		CatalogueSyllabusID: &catalogueID5090,
+		SyllabusCode:        &fixtureCode,
+		CatalogueSyllabusID: &fixtureCatalogueID,
 	})
 	if err != nil {
 		t.Fatalf("recode update: %v", err)
 	}
-	if recoded.SyllabusCode == nil || *recoded.SyllabusCode != code5090 {
-		t.Fatalf("syllabusCode = %v, want %q", recoded.SyllabusCode, code5090)
+	if recoded.SyllabusCode == nil || *recoded.SyllabusCode != fixtureCode {
+		t.Fatalf("syllabusCode = %v, want %q", recoded.SyllabusCode, fixtureCode)
 	}
-	if recoded.CatalogueSyllabusID == nil || *recoded.CatalogueSyllabusID != catalogueID5090 {
-		t.Fatalf("catalogueSyllabusId = %v, want %q", recoded.CatalogueSyllabusID, catalogueID5090)
+	if recoded.CatalogueSyllabusID == nil || *recoded.CatalogueSyllabusID != fixtureCatalogueID {
+		t.Fatalf("catalogueSyllabusId = %v, want %q", recoded.CatalogueSyllabusID, fixtureCatalogueID)
 	}
 	if len(changed) != 1 || changed[0] != "syllabusCode" {
 		t.Fatalf("changed = %v, want [syllabusCode]", changed)

@@ -32,8 +32,9 @@ task:
    grounded in that approved, linked source.
 4. **Question authored** — only then can `POST /questions` pass the grounding gate.
 
-The two seeded 0610/5090 content sources are still `pending` and unlinked, so today **no question
-can be created for either syllabus.** That is the intended state.
+The seeded 0610 source remains `pending` and unlinked, and no 9700 source exists, so today **no
+question can be created for either active Biology syllabus.** Historical 5090 is retired. That is
+the intended state.
 
 ## Schema
 

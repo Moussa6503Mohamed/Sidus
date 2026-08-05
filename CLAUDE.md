@@ -4,7 +4,7 @@ Read before planning, editing, testing, or committing.
 
 ## Mission
 
-Build Sidus: academic preparation platform. First vertical slice: Cambridge IGCSE Biology 0610 Extended and Cambridge O Level Biology 5090.
+Build Sidus: academic preparation platform. First vertical slice: Cambridge IGCSE Biology 0610 Extended and Cambridge International AS & A Level Biology 9700.
 
 ## Read order
 
@@ -56,8 +56,11 @@ cd services/ai && python -m pytest
 - Curriculum catalogue (multi-subject) released in T-0004. Core owns the metadata-only
   `subjects`/`syllabuses` registry; see `docs/curriculum-catalogue.md` and D-0007.
 - Provenance-confirmed catalogue linking released in T-0005; see
-  `docs/provenance-catalogue-linking.md`. Two seeded 0610/5090 content sources still need a
-  human editor/admin `PATCH` to link (documented there).
+  `docs/provenance-catalogue-linking.md`. The seeded 0610 content source still needs a human
+  editor/admin `PATCH` to link. The historical seeded 5090 source remains preserved but its
+  retired catalogue syllabus cannot resolve for a new active association. No 9700 source exists;
+  any future one must enter through the editorial source registry with human-verified rights and
+  provenance.
 - Curriculum-map foundation (metadata-only topic/objective/practical-skill/assessment-rule
   infrastructure) released in T-0006; see `docs/curriculum-map.md` and D-0008. No map data is
   seeded — a human must first approve and link a content source, then author map content via a
@@ -86,8 +89,8 @@ cd services/ai && python -m pytest
   allowlist (no open proxy), server-only `SIDUS_CORE_API_URL` and Clerk bearer forwarding,
   fail-closed on missing config/token. Core stays the sole authorization authority; the web
   role check only hides/shows controls. No Core/AI/migration/business-rule change, and no
-  approval/link of the seeded 0610/5090 sources was performed (that is now a human action
-  through the new UI). A review fix on top of `15d5936` (commit `f31a8a5`) sanitizes any Core
+  approval/link of seeded sources was performed (that is a human action through the new UI). A
+  review fix on top of `15d5936` (commit `f31a8a5`) sanitizes any Core
   `5xx` response to a generic `502` before it reaches the browser and sets the upstream `fetch`
   to fail closed on redirects (`redirect: "error"`) — see D-0011 "Update (T-0009 review)" and
   `docs/handoffs/T-0009.md`. T-0009 released and moved to `docs/tasks/history.md` as `done`.
@@ -103,4 +106,8 @@ cd services/ai && python -m pytest
   `docs/editorial-curriculum-workflow.md`. No node/source data created, approved, linked,
   verified, or retired automatically. Full release validation passed on 2026-08-05; see
   `docs/handoffs/T-0010.md`. T-0010 moved to `docs/tasks/history.md` as `done / released`.
+- Biology catalogue scope realigned in T-0011: 0610 Extended and one combined metadata-only 9700
+  syllabus are active; 5090 remains present as retired historical catalogue metadata. Migration
+  creates no 9700 content source, node, question, or rubric and changes no existing provenance or
+  content records.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.

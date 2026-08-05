@@ -4,7 +4,7 @@ Sidus is an academic preparation platform. This repository holds product foundat
 
 ## Vertical slice
 
-First target: Cambridge IGCSE Biology 0610 Extended and Cambridge O Level Biology 5090.
+First target: Cambridge IGCSE Biology 0610 Extended and Cambridge International AS & A Level Biology 9700. Cambridge O Level Biology 5090 remains retired historical catalogue scope.
 
 ## Services
 

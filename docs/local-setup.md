@@ -29,6 +29,10 @@ explicitly blank authorized-parties list keeps the routes disabled (fail closed 
 unauthenticated or unrestricted content access). The AI service's protected routes return
 `503` under the same misconfiguration. See `docs/auth-setup.md` → "Fail-closed configuration".
 
+After fresh migration, active Biology catalogue rows are 0610 Extended and one combined 9700
+International AS & A Level row. Historical 5090 remains present with `retired` status. Migration
+creates no 9700 source or curriculum/question/rubric content.
+
 ## Authentication (Clerk)
 
 Clerk owns authentication; Sidus Core owns authorization. Set up keys and the `sidus_role`
