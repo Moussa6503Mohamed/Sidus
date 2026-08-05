@@ -91,7 +91,7 @@ cd services/ai && python -m pytest
   `5xx` response to a generic `502` before it reaches the browser and sets the upstream `fetch`
   to fail closed on redirects (`redirect: "error"`) — see D-0011 "Update (T-0009 review)" and
   `docs/handoffs/T-0009.md`. T-0009 released and moved to `docs/tasks/history.md` as `done`.
-- Private editorial curriculum-map workflow built in T-0010 (status `review`): `apps/web` gains
+- Private editorial curriculum-map workflow released in T-0010: `apps/web` gains
   a protected `/dashboard/editorial/curriculum` page reusing the T-0009 BFF pattern (six new
   `EditorialOperation` variants in `lib/editorial/core-proxy.ts`, six new route handlers under
   `app/api/editorial/curriculum-map/nodes/*`) so editors can author/edit draft nodes and
@@ -101,5 +101,6 @@ cd services/ai && python -m pytest
   to a `curriculum_map:read` holder, since that permission is already restricted to
   editor/reviewer/admin — see D-0008 "Update (T-0010)", D-0012, and
   `docs/editorial-curriculum-workflow.md`. No node/source data created, approved, linked,
-  verified, or retired automatically. See `docs/handoffs/T-0010.md`.
-- See `docs/tasks/active.md` (T-0010, status `review`) / `docs/tasks/history.md`.
+  verified, or retired automatically. Full release validation passed on 2026-08-05; see
+  `docs/handoffs/T-0010.md`. T-0010 moved to `docs/tasks/history.md` as `done / released`.
+- See `docs/tasks/active.md` / `docs/tasks/history.md`.

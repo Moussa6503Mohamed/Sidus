@@ -1,5 +1,80 @@
 # Task history
 
+## T-0010 — Private editorial curriculum-map workflow
+
+**Status:** done / released
+**Owner:** Claude Code agent
+**Priority:** P1
+**Depends on:** T-0006 (done), T-0009 (done)
+
+### Goal
+
+Extend the T-0009 secure Next.js editorial workflow so staff can author, edit, review, and
+retire curriculum-map nodes through the browser. Core remains the sole authority for rights,
+source, syllabus, parent, cycle, and lifecycle rules. No node/source data is created, seeded,
+verified, retired, or altered automatically by this task.
+
+### Delivered
+
+- Protected `/dashboard/editorial/curriculum` workflow for editors, reviewers, and admins;
+  learner/unknown roles see an access-denied state and trigger zero API calls.
+- Closed-union BFF routes for list/get/create/update/verify/retire curriculum-map operations;
+  fixed method/path allowlist, pre-auth query/id validation, sanitized Core `5xx` handling,
+  and redirect failure remain fail-closed.
+- Metadata-only authoring UI with loading, empty, error/retry, create, edit, verify-confirm,
+  retire-confirm, disabled, role-gated, and mobile-safe states.
+- User-approved Core read-contract widening: authorized staff reads can return any node
+  lifecycle status; list supports `draft`, `verified`, `retired`, and `all`, with omitted status
+  equivalent to `all`. No schema, migration, permission, or write-side rule changed.
+- Review findings fixed in `9a7cd02`: explicit `status=all`, stable invalid-status handling,
+  and empty/overlong/unsafe `syllabusId` rejection before auth or Core fetch.
+
+### Acceptance checks
+
+- All BFF route exports and fixed Core operation mappings verified. — met
+- Empty, overlong, and unsafe `syllabusId` plus invalid status rejected before auth/fetch. — met
+- Draft/verified/retired/all and omitted-status Core behavior verified. — met
+- Core `5xx` responses sanitized and redirects fail closed. — met
+- Web Vitest, typecheck, production build, and strict shared-contract TypeScript pass. — met
+- Dockerized Go build, vet, changed-file gofmt, unit tests, migrations, and integration tests
+  pass. — met
+- Python pytest and `git diff --check` pass. — met
+- No protected user file or prohibited content/artifact was staged. — met
+
+### Release validation (final pass, 2026-08-05)
+
+| Check | Result |
+| --- | --- |
+| Docker daemon | Pass — Docker Desktop 29.4.2 server reachable and healthy |
+| Dev/test Compose config | Pass / Pass |
+| Web Vitest | Pass — 16 files, 123 tests |
+| Targeted BFF guard suite | Pass — 5 files, 59 tests |
+| Web typecheck / production build | Pass / Pass — 16 routes registered |
+| Strict shared-contract TypeScript | Pass |
+| Go build / vet | Pass / Pass (Docker `golang:1.22-alpine`) |
+| Changed-file gofmt | Pass — no changed Go file listed |
+| Full Go unit tests | Pass — all packages green |
+| Fresh disposable migrate / rerun | Pass — 15 applied / 0 applied |
+| Full integration tests | Pass — catalogue, contentsource, curriculummap, question green |
+| Disposable `sidus-test` teardown | Pass — `down -v`; stack absent afterward |
+| Python pytest | Pass — 18 tests |
+| `git diff --check` | Pass |
+
+### Constraints and remaining manual gates
+
+- No content ingestion, OCR, AI generation, copyrighted text, PDFs, diagrams, questions,
+  rubrics, source/node content, secrets, design ZIPs, or `.env.local` files were committed.
+- Protected untracked user files remain untouched: `.claude/`, `.claude-flow/`, `DB.jpeg`,
+  `arch.jpeg`, `Sidus*.xlsx`, and both ignored `.env.local` files.
+- Human editor/admin must still approve and catalogue-link eligible sources, then explicitly
+  author/review curriculum-map metadata. Runtime Clerk/Core environment configuration remains
+  an operator gate.
+
+### Handoff
+
+`docs/handoffs/T-0010.md`. See `D-0008` "Update (T-0010)" and `D-0012` in
+`docs/decisions.md`.
+
 ## T-0009 — Private editorial source workflow
 
 **Status:** done
