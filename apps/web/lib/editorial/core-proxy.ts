@@ -35,7 +35,13 @@ export type EditorialOperation =
   | { kind: "updateContentSource"; id: string }
   | { kind: "approveContentSource"; id: string }
   | { kind: "rejectContentSource"; id: string }
-  | { kind: "listSyllabuses" };
+  | { kind: "listSyllabuses" }
+  | { kind: "listCurriculumMapNodes"; syllabusId: string; status?: string }
+  | { kind: "getCurriculumMapNode"; id: string }
+  | { kind: "createCurriculumMapNode" }
+  | { kind: "updateCurriculumMapNode"; id: string }
+  | { kind: "verifyCurriculumMapNode"; id: string }
+  | { kind: "retireCurriculumMapNode"; id: string };
 
 export interface ProxySuccess {
   status: number;
@@ -67,6 +73,21 @@ function resolveRoute(op: EditorialOperation): { method: Method; path: string } 
       return { method: "POST", path: `/content-sources/${requireValidId(op.id)}/reject` };
     case "listSyllabuses":
       return { method: "GET", path: "/catalogue/syllabuses" };
+    case "listCurriculumMapNodes": {
+      const query = new URLSearchParams({ syllabusId: op.syllabusId });
+      if (op.status) query.set("status", op.status);
+      return { method: "GET", path: `/curriculum-map/nodes?${query.toString()}` };
+    }
+    case "getCurriculumMapNode":
+      return { method: "GET", path: `/curriculum-map/nodes/${requireValidId(op.id)}` };
+    case "createCurriculumMapNode":
+      return { method: "POST", path: "/curriculum-map/nodes" };
+    case "updateCurriculumMapNode":
+      return { method: "PATCH", path: `/curriculum-map/nodes/${requireValidId(op.id)}` };
+    case "verifyCurriculumMapNode":
+      return { method: "POST", path: `/curriculum-map/nodes/${requireValidId(op.id)}/verify` };
+    case "retireCurriculumMapNode":
+      return { method: "POST", path: `/curriculum-map/nodes/${requireValidId(op.id)}/retire` };
   }
 }
 

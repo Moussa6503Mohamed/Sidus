@@ -88,6 +88,16 @@ describe("callCore", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("rejects a path-traversal curriculum-map node id before building any URL", async () => {
+    mockSignedIn();
+
+    const err = await callCore({ kind: "getCurriculumMapNode", id: "../nodes" }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ProxyError);
+    expect((err as ProxyError).status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   const cases: Array<{
     name: string;
     op: Parameters<typeof callCore>[0];
@@ -127,6 +137,48 @@ describe("callCore", () => {
       path: "/content-sources/abc-123/reject",
     },
     { name: "syllabuses", op: { kind: "listSyllabuses" }, method: "GET", path: "/catalogue/syllabuses" },
+    {
+      name: "curriculum map list",
+      op: { kind: "listCurriculumMapNodes", syllabusId: "syl-1" },
+      method: "GET",
+      path: "/curriculum-map/nodes?syllabusId=syl-1",
+    },
+    {
+      name: "curriculum map list filtered",
+      op: { kind: "listCurriculumMapNodes", syllabusId: "syl-1", status: "draft" },
+      method: "GET",
+      path: "/curriculum-map/nodes?syllabusId=syl-1&status=draft",
+    },
+    {
+      name: "curriculum map get",
+      op: { kind: "getCurriculumMapNode", id: "node-1" },
+      method: "GET",
+      path: "/curriculum-map/nodes/node-1",
+    },
+    {
+      name: "curriculum map create",
+      op: { kind: "createCurriculumMapNode" },
+      method: "POST",
+      path: "/curriculum-map/nodes",
+    },
+    {
+      name: "curriculum map update",
+      op: { kind: "updateCurriculumMapNode", id: "node-1" },
+      method: "PATCH",
+      path: "/curriculum-map/nodes/node-1",
+    },
+    {
+      name: "curriculum map verify",
+      op: { kind: "verifyCurriculumMapNode", id: "node-1" },
+      method: "POST",
+      path: "/curriculum-map/nodes/node-1/verify",
+    },
+    {
+      name: "curriculum map retire",
+      op: { kind: "retireCurriculumMapNode", id: "node-1" },
+      method: "POST",
+      path: "/curriculum-map/nodes/node-1/retire",
+    },
   ];
 
   it.each(cases)("builds only the fixed Core URL for $name", async ({ op, method, path }) => {

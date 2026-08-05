@@ -64,13 +64,16 @@ type Store interface {
 	// still pass the source gate; otherwise nothing is written.
 	RetireNode(ctx context.Context, id string, actorID string) (Node, error)
 
-	// GetNode returns a node by ID. When verifiedOnly is true, a non-verified node is reported
-	// as ErrNotFound.
-	GetNode(ctx context.Context, id string, verifiedOnly bool) (Node, error)
+	// GetNode returns a node by ID, regardless of lifecycle status. Every caller of this method
+	// is gated by curriculum_map:read, which only editor/reviewer/admin hold — no non-editorial
+	// consumer of this route exists — so there is no "reader" population to hide a draft or
+	// retired node from (see D-0008 "Update (T-0010)").
+	GetNode(ctx context.Context, id string) (Node, error)
 
-	// ListNodesBySyllabus returns nodes for a syllabus. The syllabus must resolve to a known,
-	// active catalogue syllabus (ErrUnknownSyllabus otherwise) — an unknown or inactive
-	// syllabus is never reported as an empty list. When verifiedOnly is true, only verified
-	// nodes are returned; a known active syllabus with no verified nodes yields an empty slice.
-	ListNodesBySyllabus(ctx context.Context, syllabusID string, verifiedOnly bool) ([]Node, error)
+	// ListNodesBySyllabus returns nodes for a syllabus, optionally filtered to one lifecycle
+	// status. The syllabus must resolve to a known, active catalogue syllabus
+	// (ErrUnknownSyllabus otherwise) — an unknown or inactive syllabus is never reported as an
+	// empty list. When status is nil, nodes of every status are returned; a known active
+	// syllabus with no matching nodes yields an empty slice.
+	ListNodesBySyllabus(ctx context.Context, syllabusID string, status *Status) ([]Node, error)
 }

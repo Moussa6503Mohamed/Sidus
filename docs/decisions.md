@@ -198,6 +198,28 @@ A malformed (non-UUID) syllabus, source, or parent id now maps to the same stabl
 as a missing one (`unknown_syllabus` / `unknown_source` / `invalid_parent`) instead of a
 generic `500`; it is a client error, not an infrastructure failure.
 
+**Update (T-0010, 2026-08-05):** `GET /curriculum-map/nodes` and `GET /curriculum-map/nodes/{id}`
+no longer restrict reads to verified nodes. The original "readers only ever see verified nodes"
+rule (above, and reaffirmed in the T-0006 review) assumed a future non-editorial reader would
+share this route; building the T-0010 editorial UI on top of it exposed that no such reader
+exists — `curriculum_map:read` is held only by `editor`/`reviewer`/`admin` — so verified-only
+reads instead blocked the workflow this route exists to serve: an editor could never re-open
+their own draft to keep editing it, and a reviewer had no way to discover a draft to verify or
+retire, since a node's id is otherwise only visible in the create/update response body from the
+same request that produced it. `GET /curriculum-map/nodes/{id}` now returns a node of any
+lifecycle status to a `curriculum_map:read` holder. `GET /curriculum-map/nodes` gained an
+optional `status` query parameter (`draft` | `verified` | `retired`); omitting it returns nodes
+of every status (the new default), and an unrecognized value is a stable `400 invalid_status`
+before any store call. No schema, migration, permission, or write-side rule (source gate,
+parent/cycle checks, lifecycle transitions) changed — only the read filter. `Store.GetNode`
+dropped its `verifiedOnly bool` parameter (there is exactly one caller behavior now); `Store.
+ListNodesBySyllabus` replaced `verifiedOnly bool` with `status *Status` (`nil` = all statuses)
+to express the three-way filter. The two existing tests that asserted verified-only reads
+(`TestGetNode_DraftHiddenFromReaders`, `TestListNodes_ActiveSyllabusWithNoVerifiedNodes_
+Returns200Empty`) were rewritten to assert the new contract; new tests cover the `status` filter
+and its validation. See `docs/editorial-curriculum-workflow.md`.
+**Owner/date:** Claude Code agent, 2026-08-05 (T-0010).
+
 ## D-0009 — Original question and versioned rubric authority
 
 **Status:** Approved
@@ -410,6 +432,52 @@ surfaces as the same generic fetch-failure `502 upstream_unavailable` path, with
 never sent to the redirect target. No Core, AI, database, migration, auth-role, or UI change;
 `docs/editorial-source-workflow.md` and `docs/handoffs/T-0009.md` updated to match.
 **Owner/date:** Claude Code agent, 2026-08-05 (T-0009 review).
+
+## D-0012 — Editorial curriculum-map workflow BFF
+
+**Status:** Approved
+**Decision:** `apps/web` gains a second browser-facing editorial surface, reusing the T-0009/
+D-0011 BFF architecture unchanged: a protected `/dashboard/editorial/curriculum` page and six
+new Next.js route handlers (`app/api/editorial/curriculum-map/nodes/*`) that extend the same
+closed `EditorialOperation` union in `lib/editorial/core-proxy.ts` with six new variants
+(`listCurriculumMapNodes`, `getCurriculumMapNode`, `createCurriculumMapNode`,
+`updateCurriculumMapNode`, `verifyCurriculumMapNode`, `retireCurriculumMapNode`), each mapped to
+exactly one fixed Core method+path template — the same `callCore`, `requireValidId`,
+`readSafeJsonBody`, fail-closed ordering (missing `SIDUS_CORE_API_URL` → 503, missing token →
+401), Core-5xx sanitization, and redirect-refusal apply with no changes to that shared module's
+behavior. The existing content-source and syllabus routes are reused unmodified — this task adds
+no duplicate proxy surface. The page reuses `lib/editorial/role.ts`/`permissions.ts` for the
+same UI-visibility-only role gate (`editor`/`reviewer`/`admin` see the workspace;
+`reviewer`/`admin` additionally see verify/retire controls; `learner`/unknown see
+`AccessDenied` with zero API calls) — Core's existing `curriculum_map:read`/`:create`/`:verify`
+permission checks remain the sole authorization authority. The workspace lets an editor pick an
+active catalogue syllabus, list its curriculum-map nodes (now every lifecycle status — see
+D-0008 "Update (T-0010)"), create/edit a draft node's metadata (kind, code, label, optional
+parent, an approved-and-syllabus-linked content source, optional locator), and lets a
+reviewer/admin verify or retire a node behind an explicit confirmation step. The `NodeList`
+component computes a client-side-only display depth from the loaded node set's `parentNodeId`
+chain to show hierarchy; this is presentation only and has no bearing on Core's authoritative
+parent/cycle validation. This task creates, verifies, retires, or links **no** node or source
+data itself — every action requires an explicit human click through the new UI.
+**Reason:** The T-0009 BFF pattern (closed operation union, server-only Core URL and bearer
+forwarding, fail-closed config/auth, sanitized 5xx/redirects, UI-only role gate) generalizes
+directly to a second Core resource without modification, so reusing it rather than inventing a
+second proxy shape keeps exactly one audited "no open proxy" boundary in the codebase. Building
+this UI is what exposed that D-0008's original verified-only read rule blocked the very
+workflow it was meant to serve (see D-0008 "Update (T-0010)"); fixing that at the Core layer
+(rather than, say, having the BFF cache/expose node ids some other way) keeps Core the sole
+source of truth for what a caller may read, matching every prior decision in this log.
+**Alternatives:** A single generic `/api/editorial/[...path]` proxy shared across both resources
+(rejected: reintroduces the exact open-proxy shape D-0011 rejected — a closed union enumerating
+every operation, resource included, is what makes "no open proxy" a compiler-checked property);
+render the node hierarchy as a true nested tree with server-computed depth (rejected: no
+additional business meaning over a flat list with a computed indent for the modest node counts
+this workflow handles today, and avoids adding a recursive-rendering component before real usage
+shows it is needed — YAGNI); let the web workspace fetch content sources unfiltered by syllabus
+and filter purely client-side with no visual cue when the set is empty (rejected: the form
+already shows an explicit "no approved source linked to this syllabus" message so an editor is
+never left guessing why the selector is empty).
+**Owner/date:** Claude Code agent, 2026-08-05 (T-0010).
 
 ## Decision template
 

@@ -39,8 +39,9 @@ func IsValidKind(k NodeKind) bool {
 type Status string
 
 const (
-	// StatusDraft is a node being authored; only its editor (or another editor/reviewer/admin)
-	// may still change it, and it is not returned by reader endpoints.
+	// StatusDraft is a node being authored; any editor/reviewer/admin may still change it. Since
+	// T-0010, reader endpoints return draft nodes too (curriculum_map:read has no non-editorial
+	// holder) — only writes (PATCH/verify/retire) still gate on status.
 	StatusDraft Status = "draft"
 	// StatusVerified is a reviewer/admin-confirmed node; visible to readers.
 	StatusVerified Status = "verified"

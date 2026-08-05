@@ -383,12 +383,8 @@ func (p *PostgresStore) transitionStatus(ctx context.Context, id, actorID string
 	return updated, nil
 }
 
-func (p *PostgresStore) GetNode(ctx context.Context, id string, verifiedOnly bool) (Node, error) {
-	query := `SELECT ` + nodeColumns + ` FROM curriculum_map_nodes WHERE id = $1`
-	if verifiedOnly {
-		query += ` AND status = 'verified'`
-	}
-	row := p.db.QueryRowContext(ctx, query, id)
+func (p *PostgresStore) GetNode(ctx context.Context, id string) (Node, error) {
+	row := p.db.QueryRowContext(ctx, `SELECT `+nodeColumns+` FROM curriculum_map_nodes WHERE id = $1`, id)
 	node, err := scanNode(row)
 	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return Node{}, ErrNotFound
@@ -399,10 +395,10 @@ func (p *PostgresStore) GetNode(ctx context.Context, id string, verifiedOnly boo
 	return node, nil
 }
 
-func (p *PostgresStore) ListNodesBySyllabus(ctx context.Context, syllabusID string, verifiedOnly bool) ([]Node, error) {
+func (p *PostgresStore) ListNodesBySyllabus(ctx context.Context, syllabusID string, status *Status) ([]Node, error) {
 	// An unknown or inactive syllabus is a bad request, not an empty map: returning 200 with an
 	// empty list would make a typo'd/retired syllabus id indistinguishable from a real syllabus
-	// that has no verified nodes yet.
+	// that has no nodes yet.
 	active, err := syllabusIsActive(ctx, p.db, syllabusID)
 	if err != nil {
 		return nil, err
@@ -412,12 +408,14 @@ func (p *PostgresStore) ListNodesBySyllabus(ctx context.Context, syllabusID stri
 	}
 
 	query := `SELECT ` + nodeColumns + ` FROM curriculum_map_nodes WHERE syllabus_id = $1`
-	if verifiedOnly {
-		query += ` AND status = 'verified'`
+	args := []any{syllabusID}
+	if status != nil {
+		query += ` AND status = $2`
+		args = append(args, string(*status))
 	}
 	query += ` ORDER BY node_code ASC`
 
-	rows, err := p.db.QueryContext(ctx, query, syllabusID)
+	rows, err := p.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list nodes: %w", err)
 	}

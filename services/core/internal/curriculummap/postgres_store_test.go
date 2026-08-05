@@ -486,12 +486,12 @@ func TestPostgresStore_Integration_ListValidatesSyllabus(t *testing.T) {
 	ctx := context.Background()
 
 	// Unknown syllabus id → stable domain error, never an empty 200.
-	if _, err := store.ListNodesBySyllabus(ctx, "00000000-0000-0000-0000-000000000000", true); !errors.Is(err, ErrUnknownSyllabus) {
+	if _, err := store.ListNodesBySyllabus(ctx, "00000000-0000-0000-0000-000000000000", nil); !errors.Is(err, ErrUnknownSyllabus) {
 		t.Fatalf("unknown syllabus: err = %v, want ErrUnknownSyllabus", err)
 	}
 
 	// A malformed (non-UUID) id is unknown too, not an infrastructure failure.
-	if _, err := store.ListNodesBySyllabus(ctx, "not-a-uuid", true); !errors.Is(err, ErrUnknownSyllabus) {
+	if _, err := store.ListNodesBySyllabus(ctx, "not-a-uuid", nil); !errors.Is(err, ErrUnknownSyllabus) {
 		t.Fatalf("malformed syllabus: err = %v, want ErrUnknownSyllabus", err)
 	}
 
@@ -500,18 +500,28 @@ func TestPostgresStore_Integration_ListValidatesSyllabus(t *testing.T) {
 	if _, err := db.Exec(`UPDATE syllabuses SET status = 'draft' WHERE id = $1`, inactiveID); err != nil {
 		t.Fatalf("set syllabus draft: %v", err)
 	}
-	if _, err := store.ListNodesBySyllabus(ctx, inactiveID, true); !errors.Is(err, ErrUnknownSyllabus) {
+	if _, err := store.ListNodesBySyllabus(ctx, inactiveID, nil); !errors.Is(err, ErrUnknownSyllabus) {
 		t.Fatalf("inactive syllabus: err = %v, want ErrUnknownSyllabus", err)
 	}
 
-	// A known active syllabus with no verified nodes is an empty list, not an error.
+	// A known active syllabus with no nodes is an empty list, not an error.
 	emptyID := seedActiveSyllabus(t, db)
-	nodes, err := store.ListNodesBySyllabus(ctx, emptyID, true)
+	nodes, err := store.ListNodesBySyllabus(ctx, emptyID, nil)
 	if err != nil {
 		t.Fatalf("active syllabus with no nodes: err = %v, want nil", err)
 	}
 	if len(nodes) != 0 {
 		t.Fatalf("items = %d, want 0", len(nodes))
+	}
+
+	// An explicit status filter narrows results to exactly that status.
+	verifiedOnly := StatusVerified
+	filtered, err := store.ListNodesBySyllabus(ctx, emptyID, &verifiedOnly)
+	if err != nil {
+		t.Fatalf("filtered list: err = %v, want nil", err)
+	}
+	if len(filtered) != 0 {
+		t.Fatalf("filtered items = %d, want 0", len(filtered))
 	}
 }
 
@@ -707,7 +717,7 @@ func TestPostgresStore_Integration_MalformedID_NotFoundNotInternalError(t *testi
 	}
 	for name, id := range ids {
 		t.Run("GetNode/"+name, func(t *testing.T) {
-			if _, err := store.GetNode(ctx, id, true); !errors.Is(err, ErrNotFound) {
+			if _, err := store.GetNode(ctx, id); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("GetNode(%q) err = %v, want ErrNotFound", id, err)
 			}
 		})

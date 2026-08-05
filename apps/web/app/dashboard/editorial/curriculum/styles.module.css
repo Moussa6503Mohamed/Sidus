@@ -1,0 +1,66 @@
+.badge {
+  composes: badge from "../sources/styles.module.css";
+}
+
+.badge[data-status="draft"] {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fde68a;
+}
+
+.badge[data-status="verified"] {
+  background: #d1fae5;
+  color: #065f46;
+  border-color: #a7f3d0;
+}
+
+.badge[data-status="retired"] {
+  background: #e5e7eb;
+  color: #374151;
+  border-color: #d1d5db;
+}
+
+.syllabusPicker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.syllabusPicker label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.syllabusPicker select {
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+}
+
+.indent {
+  display: inline-block;
+}
+
+.hierarchyLabel {
+  color: #6b7280;
+  font-size: 0.8rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .syllabusPicker label {
+    color: #f9fafb;
+  }
+
+  .syllabusPicker select {
+    background: #111827;
+    color: #f9fafb;
+    border-color: #4b5563;
+  }
+
+  .hierarchyLabel {
+    color: #9ca3af;
+  }
+}

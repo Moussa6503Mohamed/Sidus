@@ -11,10 +11,11 @@ import (
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/auth"
 )
 
-// Register mounts the curriculum-map endpoints on mux. Reads (list/get verified nodes) require
-// curriculum_map:read; draft create/update require curriculum_map:create; verify/retire
-// require curriculum_map:verify. Every endpoint is behind a verified Clerk session; the
-// verified subject — never a body field — is the audit actor.
+// Register mounts the curriculum-map endpoints on mux. Reads (list/get nodes of any lifecycle
+// status; list accepts an optional status filter) require curriculum_map:read; draft create/
+// update require curriculum_map:create; verify/retire require curriculum_map:verify. Every
+// endpoint is behind a verified Clerk session; the verified subject — never a body field — is
+// the audit actor.
 func Register(mux *http.ServeMux, store Store, v auth.Verifier) {
 	h := &handler{store: store}
 	mux.HandleFunc("GET /curriculum-map/nodes", auth.Protect(v, auth.PermReadCurriculumMap, h.listNodes))
@@ -105,7 +106,18 @@ func (h *handler) listNodes(w http.ResponseWriter, r *http.Request) {
 		writeMissingFields(w, []string{"syllabusId"})
 		return
 	}
-	nodes, err := h.store.ListNodesBySyllabus(r.Context(), syllabusID, true)
+
+	var statusFilter *Status
+	if raw := strings.TrimSpace(r.URL.Query().Get("status")); raw != "" {
+		s := Status(raw)
+		if !IsValidStatus(s) {
+			writeError(w, http.StatusBadRequest, "invalid_status", "status must be one of: draft, verified, retired")
+			return
+		}
+		statusFilter = &s
+	}
+
+	nodes, err := h.store.ListNodesBySyllabus(r.Context(), syllabusID, statusFilter)
 	if mapped, ok := mapNodeError(err); ok {
 		writeNodeError(w, mapped)
 		return
@@ -118,7 +130,7 @@ func (h *handler) listNodes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) getNode(w http.ResponseWriter, r *http.Request) {
-	node, err := h.store.GetNode(r.Context(), r.PathValue("id"), true)
+	node, err := h.store.GetNode(r.Context(), r.PathValue("id"))
 	if errors.Is(err, ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "curriculum map node not found")
 		return

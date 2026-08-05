@@ -91,4 +91,15 @@ cd services/ai && python -m pytest
   `5xx` response to a generic `502` before it reaches the browser and sets the upstream `fetch`
   to fail closed on redirects (`redirect: "error"`) — see D-0011 "Update (T-0009 review)" and
   `docs/handoffs/T-0009.md`. T-0009 released and moved to `docs/tasks/history.md` as `done`.
-- No active task. See `docs/tasks/active.md` / `docs/tasks/history.md`.
+- Private editorial curriculum-map workflow built in T-0010 (status `review`): `apps/web` gains
+  a protected `/dashboard/editorial/curriculum` page reusing the T-0009 BFF pattern (six new
+  `EditorialOperation` variants in `lib/editorial/core-proxy.ts`, six new route handlers under
+  `app/api/editorial/curriculum-map/nodes/*`) so editors can author/edit draft nodes and
+  reviewers/admins can verify/retire them, all behind the existing UI-only role gate. Includes a
+  tiny, essential, user-approved Core contract change: `GET /curriculum-map/nodes` and
+  `GET /curriculum-map/nodes/{id}` now return nodes of any lifecycle status (not verified-only)
+  to a `curriculum_map:read` holder, since that permission is already restricted to
+  editor/reviewer/admin — see D-0008 "Update (T-0010)", D-0012, and
+  `docs/editorial-curriculum-workflow.md`. No node/source data created, approved, linked,
+  verified, or retired automatically. See `docs/handoffs/T-0010.md`.
+- See `docs/tasks/active.md` (T-0010, status `review`) / `docs/tasks/history.md`.

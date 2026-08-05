@@ -48,7 +48,8 @@ const (
 	PermReadCatalogue Permission = "content_catalogue:read"
 	// PermManageCatalogue covers creating and changing curriculum-catalogue metadata (admin only).
 	PermManageCatalogue Permission = "content_catalogue:manage"
-	// PermReadCurriculumMap covers listing/getting verified curriculum-map nodes by syllabus.
+	// PermReadCurriculumMap covers listing/getting curriculum-map nodes of any lifecycle status
+	// by syllabus (T-0010: no non-editorial consumer of this route exists).
 	PermReadCurriculumMap Permission = "curriculum_map:read"
 	// PermCreateCurriculumMap covers creating and PATCHing draft curriculum-map nodes.
 	PermCreateCurriculumMap Permission = "curriculum_map:create"

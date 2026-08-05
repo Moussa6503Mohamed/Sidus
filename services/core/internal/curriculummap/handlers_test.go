@@ -275,15 +275,15 @@ func (m *memoryStore) RetireNode(_ context.Context, id, actorID string) (Node, e
 	return n, nil
 }
 
-func (m *memoryStore) GetNode(_ context.Context, id string, verifiedOnly bool) (Node, error) {
+func (m *memoryStore) GetNode(_ context.Context, id string) (Node, error) {
 	n, ok := m.nodes[id]
-	if !ok || (verifiedOnly && n.Status != StatusVerified) {
+	if !ok {
 		return Node{}, ErrNotFound
 	}
 	return n, nil
 }
 
-func (m *memoryStore) ListNodesBySyllabus(_ context.Context, syllabusID string, verifiedOnly bool) ([]Node, error) {
+func (m *memoryStore) ListNodesBySyllabus(_ context.Context, syllabusID string, status *Status) ([]Node, error) {
 	if !m.activeSyllabuses[syllabusID] {
 		return nil, ErrUnknownSyllabus
 	}
@@ -292,7 +292,7 @@ func (m *memoryStore) ListNodesBySyllabus(_ context.Context, syllabusID string, 
 		if n.SyllabusID != syllabusID {
 			continue
 		}
-		if verifiedOnly && n.Status != StatusVerified {
+		if status != nil && n.Status != *status {
 			continue
 		}
 		out = append(out, n)
@@ -574,15 +574,23 @@ func TestLifecycle_VerifyThenRetire(t *testing.T) {
 	}
 }
 
-func TestGetNode_DraftHiddenFromReaders(t *testing.T) {
+// TestGetNode_ReturnsAnyStatus documents the T-0010 widening: curriculum_map:read is already
+// restricted to editor/reviewer/admin (no non-editorial consumer of this route exists), so
+// GET-by-id no longer hides a draft or retired node from that population — otherwise an editor
+// could never reopen their own draft, and a reviewer could never look up a node to verify.
+func TestGetNode_ReturnsAnyStatus(t *testing.T) {
 	srv, _ := newTestServer()
 	defer srv.Close()
 
 	node := decodeJSON[Node](t, doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", validCreateReq()))
 
 	resp := doJSON(t, http.MethodGet, srv.URL+"/curriculum-map/nodes/"+node.ID, nil)
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("get draft status = %d, want 404 (readers only see verified)", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get draft status = %d, want 200", resp.StatusCode)
+	}
+	got := decodeJSON[Node](t, resp)
+	if got.Status != StatusDraft {
+		t.Fatalf("status = %q, want draft", got.Status)
 	}
 
 	doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes/"+node.ID+"/verify", nil)
@@ -1055,12 +1063,9 @@ func TestListNodes_UnknownSyllabus_Returns400(t *testing.T) {
 	}
 }
 
-func TestListNodes_ActiveSyllabusWithNoVerifiedNodes_Returns200Empty(t *testing.T) {
+func TestListNodes_ActiveSyllabusWithNoNodes_Returns200Empty(t *testing.T) {
 	srv, _ := newTestServer()
 	defer srv.Close()
-
-	// A draft node exists but readers see verified only — still a 200 with an empty list.
-	doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", validCreateReq())
 
 	resp := doJSON(t, http.MethodGet, srv.URL+"/curriculum-map/nodes?syllabusId=syl-active", nil)
 	if resp.StatusCode != http.StatusOK {
@@ -1069,6 +1074,79 @@ func TestListNodes_ActiveSyllabusWithNoVerifiedNodes_Returns200Empty(t *testing.
 	body := decodeJSON[map[string][]Node](t, resp)
 	if len(body["items"]) != 0 {
 		t.Fatalf("items = %d, want 0", len(body["items"]))
+	}
+}
+
+// TestListNodes_DefaultReturnsAllStatuses documents the T-0010 widening: with no status query
+// param, list now returns nodes of every lifecycle status (draft included) to a
+// curriculum_map:read holder — otherwise an editor could never see their own draft in the list,
+// and a reviewer could never discover one to verify.
+func TestListNodes_DefaultReturnsAllStatuses(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", validCreateReq())
+
+	resp := doJSON(t, http.MethodGet, srv.URL+"/curriculum-map/nodes?syllabusId=syl-active", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body := decodeJSON[map[string][]Node](t, resp)
+	if len(body["items"]) != 1 || body["items"][0].Status != StatusDraft {
+		t.Fatalf("items = %+v, want one draft node", body["items"])
+	}
+}
+
+// TestListNodes_StatusFilter proves the optional status query param narrows results to exactly
+// that lifecycle status.
+func TestListNodes_StatusFilter(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	draftReq := validCreateReq()
+	draftReq.NodeCode = "DRAFT1"
+	draft := decodeJSON[Node](t, doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", draftReq))
+
+	verifiedReq := validCreateReq()
+	verifiedReq.NodeCode = "VERIFIED1"
+	verified := decodeJSON[Node](t, doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", verifiedReq))
+	doJSONAs(t, http.MethodPost, srv.URL+"/curriculum-map/nodes/"+verified.ID+"/verify", reviewerToken, nil)
+
+	retiredReq := validCreateReq()
+	retiredReq.NodeCode = "RETIRED1"
+	retired := decodeJSON[Node](t, doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", retiredReq))
+	doJSONAs(t, http.MethodPost, srv.URL+"/curriculum-map/nodes/"+retired.ID+"/retire", reviewerToken, nil)
+
+	cases := map[string]string{
+		"draft":    draft.ID,
+		"verified": verified.ID,
+		"retired":  retired.ID,
+	}
+	for status, wantID := range cases {
+		t.Run(status, func(t *testing.T) {
+			resp := doJSON(t, http.MethodGet, srv.URL+"/curriculum-map/nodes?syllabusId=syl-active&status="+status, nil)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			body := decodeJSON[map[string][]Node](t, resp)
+			if len(body["items"]) != 1 || body["items"][0].ID != wantID {
+				t.Fatalf("items = %+v, want exactly node %q", body["items"], wantID)
+			}
+		})
+	}
+}
+
+func TestListNodes_InvalidStatus_Returns400(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	resp := doJSON(t, http.MethodGet, srv.URL+"/curriculum-map/nodes?syllabusId=syl-active&status=bogus", nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	body := decodeJSON[map[string]string](t, resp)
+	if body["error"] != "invalid_status" {
+		t.Fatalf("error = %q, want invalid_status", body["error"])
 	}
 }
 
