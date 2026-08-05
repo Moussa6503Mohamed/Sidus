@@ -41,7 +41,8 @@ altered automatically by this task.
 - **Core contract change (tiny, essential — see "Plan-first questions" below):** widen
   `GET /curriculum-map/nodes` and `GET /curriculum-map/nodes/{id}` to return nodes of any
   lifecycle status to a `curriculum_map:read` holder (editor/reviewer/admin only — no other
-  consumer of this route exists), with an optional `status` filter on the list endpoint. No
+  consumer of this route exists), with `status=draft|verified|retired|all`; omitted status and
+  `all` both return every lifecycle status. No
   schema/migration change; no new role/permission; no change to the write-side source/parent/
   cycle/lifecycle gates.
 - No content ingestion, OCR, AI generation, or copyrighted material of any kind. No PDF,
@@ -60,6 +61,14 @@ to verify through the UI — breaking the workflow this task exists to build. Ho
 holders (list gains an optional `status` filter, defaulting to all statuses; get-by-id returns
 any status). Update the two existing tests that assumed verified-only and document the change
 as a D-0008 addendum.
+
+### Review findings (2026-08-05)
+
+- Core list accepts explicit `status=all` exactly like omitted status: no lifecycle SQL filter.
+  Lifecycle values still filter; other values remain stable `400 invalid_status`.
+- Editorial BFF validates required `syllabusId` with the existing safe resource-ID rule and
+  validates the four-value status contract before Clerk/Core network work. Failures are stable
+  `400 invalid_id` / `400 invalid_status`; fixed-path allowlisting is unchanged.
 
 ### Acceptance criteria
 

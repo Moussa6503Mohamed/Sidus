@@ -208,8 +208,8 @@ their own draft to keep editing it, and a reviewer had no way to discover a draf
 retire, since a node's id is otherwise only visible in the create/update response body from the
 same request that produced it. `GET /curriculum-map/nodes/{id}` now returns a node of any
 lifecycle status to a `curriculum_map:read` holder. `GET /curriculum-map/nodes` gained an
-optional `status` query parameter (`draft` | `verified` | `retired`); omitting it returns nodes
-of every status (the new default), and an unrecognized value is a stable `400 invalid_status`
+optional `status` query parameter (`draft` | `verified` | `retired` | `all`); omitting it or
+supplying `all` returns nodes of every status (the default), and an unrecognized value is a stable `400 invalid_status`
 before any store call. No schema, migration, permission, or write-side rule (source gate,
 parent/cycle checks, lifecycle transitions) changed — only the read filter. `Store.GetNode`
 dropped its `verifiedOnly bool` parameter (there is exactly one caller behavior now); `Store.
@@ -443,9 +443,12 @@ closed `EditorialOperation` union in `lib/editorial/core-proxy.ts` with six new 
 (`listCurriculumMapNodes`, `getCurriculumMapNode`, `createCurriculumMapNode`,
 `updateCurriculumMapNode`, `verifyCurriculumMapNode`, `retireCurriculumMapNode`), each mapped to
 exactly one fixed Core method+path template — the same `callCore`, `requireValidId`,
-`readSafeJsonBody`, fail-closed ordering (missing `SIDUS_CORE_API_URL` → 503, missing token →
-401), Core-5xx sanitization, and redirect-refusal apply with no changes to that shared module's
-behavior. The existing content-source and syllabus routes are reused unmodified — this task adds
+`readSafeJsonBody`, fail-closed ordering (missing `SIDUS_CORE_API_URL` → 503, invalid
+curriculum-map list query → 400 before Clerk/Core network work, missing token → 401), Core-5xx
+sanitization, and redirect-refusal apply. `listCurriculumMapNodes` validates required
+`syllabusId` with the existing 1–128 character safe resource-ID format and validates `status`
+against `draft`/`verified`/`retired`/`all` (or omitted) while resolving its fixed route. The
+existing content-source and syllabus routes are reused unmodified — this task adds
 no duplicate proxy surface. The page reuses `lib/editorial/role.ts`/`permissions.ts` for the
 same UI-visibility-only role gate (`editor`/`reviewer`/`admin` see the workspace;
 `reviewer`/`admin` additionally see verify/retire controls; `learner`/unknown see

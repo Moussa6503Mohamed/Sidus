@@ -47,9 +47,18 @@ own draft to keep editing it, and a reviewer had no way to discover a draft to v
 (a node's id was otherwise visible only in the create/update response body from the same
 request that produced it). Core now returns nodes of **any** lifecycle status to a
 `curriculum_map:read` holder; the list endpoint accepts an optional `status` query parameter
-(`draft` | `verified` | `retired`) to narrow results, defaulting to every status. No write-side
+(`draft` | `verified` | `retired` | `all`). Omitted status and `all` both return every status;
+the three lifecycle values narrow results. No write-side
 rule (source gate, parent/cycle checks, lifecycle transitions) changed. See
 [D-0008 "Update (T-0010)"](decisions.md) and `docs/curriculum-map.md`.
+
+At the editorial BFF boundary, `listCurriculumMapNodes` validates required `syllabusId` with
+the same safe resource-ID rule used for path IDs (1–128 ASCII letters, digits, `_`, or `-`) and
+validates `status` against that exact four-value set when supplied. Empty, overlong, or unsafe
+IDs return stable `400 invalid_id`; invalid statuses return stable `400 invalid_status`. Route
+resolution performs both checks before Clerk token lookup or Core fetch and still maps only to
+the fixed `/curriculum-map/nodes` Core path; `status=all` is safely query-encoded and Core treats
+it as no lifecycle filter.
 
 ## Roles
 
@@ -107,8 +116,8 @@ any other derivative content anywhere in the UI, BFF, or its tests.
 
 ## Testing
 
-- `lib/editorial/core-proxy.test.ts`: the six new operation→URL mappings, alongside the
-  existing content-source/syllabus coverage.
+- `lib/editorial/core-proxy.test.ts`: fixed operation→URL mappings, including `status=all`, plus
+  pre-auth/pre-fetch rejection of empty, overlong, and unsafe `syllabusId` and invalid status.
 - `app/api/editorial/curriculum-map/nodes/**/route.test.ts`: each route file exports exactly
   its intended HTTP method(s); correct delegation to `callCore`/`readSafeJsonBody`; verify/retire
   ignore the client body and always send `{}`.
@@ -118,8 +127,8 @@ any other derivative content anywhere in the UI, BFF, or its tests.
   editable" rules), role-gated review controls, verify/retire confirmation flows, and the
   access-denied zero-API-call state.
 - `services/core/internal/curriculummap`: existing handler/store tests updated for the widened
-  read contract, plus new coverage for the `status` filter and its validation
-  (`invalid_status`).
+  read contract, plus coverage for omitted/explicit `all`, each lifecycle filter, and stable
+  invalid-status rejection.
 
 Run: `cd apps/web && npm run test` (Vitest), `npm run typecheck` / `npm run build`; Go tests via
 `docs/local-setup.md`'s Docker commands.

@@ -1081,19 +1081,35 @@ func TestListNodes_ActiveSyllabusWithNoNodes_Returns200Empty(t *testing.T) {
 // param, list now returns nodes of every lifecycle status (draft included) to a
 // curriculum_map:read holder — otherwise an editor could never see their own draft in the list,
 // and a reviewer could never discover one to verify.
-func TestListNodes_DefaultReturnsAllStatuses(t *testing.T) {
+func TestListNodes_AllStatuses(t *testing.T) {
 	srv, _ := newTestServer()
 	defer srv.Close()
 
-	doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", validCreateReq())
+	draftReq := validCreateReq()
+	draftReq.NodeCode = "DRAFT-ALL"
+	doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", draftReq)
 
-	resp := doJSON(t, http.MethodGet, srv.URL+"/curriculum-map/nodes?syllabusId=syl-active", nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	body := decodeJSON[map[string][]Node](t, resp)
-	if len(body["items"]) != 1 || body["items"][0].Status != StatusDraft {
-		t.Fatalf("items = %+v, want one draft node", body["items"])
+	verifiedReq := validCreateReq()
+	verifiedReq.NodeCode = "VERIFIED-ALL"
+	verified := decodeJSON[Node](t, doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", verifiedReq))
+	doJSONAs(t, http.MethodPost, srv.URL+"/curriculum-map/nodes/"+verified.ID+"/verify", reviewerToken, nil)
+
+	retiredReq := validCreateReq()
+	retiredReq.NodeCode = "RETIRED-ALL"
+	retired := decodeJSON[Node](t, doJSON(t, http.MethodPost, srv.URL+"/curriculum-map/nodes", retiredReq))
+	doJSONAs(t, http.MethodPost, srv.URL+"/curriculum-map/nodes/"+retired.ID+"/retire", reviewerToken, nil)
+
+	for name, suffix := range map[string]string{"omitted": "", "explicit all": "&status=all"} {
+		t.Run(name, func(t *testing.T) {
+			resp := doJSON(t, http.MethodGet, srv.URL+"/curriculum-map/nodes?syllabusId=syl-active"+suffix, nil)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			body := decodeJSON[map[string][]Node](t, resp)
+			if len(body["items"]) != 3 {
+				t.Fatalf("items = %+v, want draft, verified, and retired nodes", body["items"])
+			}
+		})
 	}
 }
 

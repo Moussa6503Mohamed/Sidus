@@ -12,7 +12,7 @@ import (
 )
 
 // Register mounts the curriculum-map endpoints on mux. Reads (list/get nodes of any lifecycle
-// status; list accepts an optional status filter) require curriculum_map:read; draft create/
+// status; list accepts draft/verified/retired filters plus all) require curriculum_map:read; draft create/
 // update require curriculum_map:create; verify/retire require curriculum_map:verify. Every
 // endpoint is behind a verified Clerk session; the verified subject — never a body field — is
 // the audit actor.
@@ -109,12 +109,14 @@ func (h *handler) listNodes(w http.ResponseWriter, r *http.Request) {
 
 	var statusFilter *Status
 	if raw := strings.TrimSpace(r.URL.Query().Get("status")); raw != "" {
-		s := Status(raw)
-		if !IsValidStatus(s) {
-			writeError(w, http.StatusBadRequest, "invalid_status", "status must be one of: draft, verified, retired")
-			return
+		if raw != "all" {
+			s := Status(raw)
+			if !IsValidStatus(s) {
+				writeError(w, http.StatusBadRequest, "invalid_status", "status must be one of: draft, verified, retired, all")
+				return
+			}
+			statusFilter = &s
 		}
-		statusFilter = &s
 	}
 
 	nodes, err := h.store.ListNodesBySyllabus(r.Context(), syllabusID, statusFilter)

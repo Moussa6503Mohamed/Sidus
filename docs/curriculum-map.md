@@ -99,8 +99,9 @@ public consumer of this route. The original verified-only reader rule assumed a 
 reader would share this route; the T-0010 editorial UI showed that assumption blocked the
 workflow instead — an editor could not re-open their own draft, and a reviewer had no way to
 discover a draft to verify or retire. See D-0008 "Update (T-0010)". The list endpoint accepts an
-optional `status` query parameter (`draft` | `verified` | `retired`) to narrow results;
-omitting it returns every status. An unrecognized value is `400 invalid_status`. No write-side
+optional `status` query parameter (`draft` | `verified` | `retired` | `all`) to narrow results;
+omitting it or supplying `all` returns every status. An unrecognized value is `400
+invalid_status`. No write-side
 rule (source gate, parent/cycle checks, lifecycle transitions) changed.
 
 ### Why syllabus is immutable on a node
@@ -155,7 +156,7 @@ Both `POST` and `PATCH` accept exactly one JSON object and reject anything else 
 
 | Method & path | Permission | Roles | Notes |
 | --- | --- | --- | --- |
-| `GET /curriculum-map/nodes?syllabusId=...&status=...` | `curriculum_map:read` | editor, reviewer, admin | any lifecycle status by default; optional `status` filter; `syllabusId` required, must resolve to an **active** catalogue syllabus |
+| `GET /curriculum-map/nodes?syllabusId=...&status=...` | `curriculum_map:read` | editor, reviewer, admin | any lifecycle status when `status` is omitted or `all`; `draft`/`verified`/`retired` narrow results; `syllabusId` required, must resolve to an **active** catalogue syllabus |
 | `GET /curriculum-map/nodes/{id}` | `curriculum_map:read` | editor, reviewer, admin | any lifecycle status (404 only if the node does not exist) |
 | `POST /curriculum-map/nodes` | `curriculum_map:create` | editor, reviewer, admin | creates a draft |
 | `PATCH /curriculum-map/nodes/{id}` | `curriculum_map:create` | editor, reviewer, admin | draft only |
@@ -178,7 +179,7 @@ client.
 result:
 
 - unknown id, malformed (non-UUID) id, or a `draft`/`retired` syllabus → `400 unknown_syllabus`;
-- an unrecognized `status` value → `400 invalid_status`;
+- `status=all` or omitted → no lifecycle SQL filter; an unrecognized `status` value → `400 invalid_status`;
 - known **active** syllabus with no matching nodes → `200` with an empty `items` list.
 
 A typo'd or retired syllabus is therefore never indistinguishable from a real syllabus whose

@@ -14,6 +14,7 @@ const MAX_REQUEST_BODY_BYTES = 100_000;
 // encoded slash decoded to "a/b") before any URL is built, independent of Core's own id
 // validation (D-0010) — defense in depth at the boundary that actually assembles the URL.
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const CURRICULUM_MAP_STATUSES = new Set(["draft", "verified", "retired", "all"]);
 
 export class ProxyError extends Error {
   readonly status: number;
@@ -55,6 +56,13 @@ function requireValidId(id: string): string {
   return id;
 }
 
+function requireValidCurriculumMapStatus(status: string): string {
+  if (!CURRICULUM_MAP_STATUSES.has(status)) {
+    throw new ProxyError(400, "invalid_status", "status must be one of: draft, verified, retired, all");
+  }
+  return status;
+}
+
 function resolveRoute(op: EditorialOperation): { method: Method; path: string } {
   switch (op.kind) {
     case "listContentSources": {
@@ -74,8 +82,8 @@ function resolveRoute(op: EditorialOperation): { method: Method; path: string } 
     case "listSyllabuses":
       return { method: "GET", path: "/catalogue/syllabuses" };
     case "listCurriculumMapNodes": {
-      const query = new URLSearchParams({ syllabusId: op.syllabusId });
-      if (op.status) query.set("status", op.status);
+      const query = new URLSearchParams({ syllabusId: requireValidId(op.syllabusId) });
+      if (op.status !== undefined) query.set("status", requireValidCurriculumMapStatus(op.status));
       return { method: "GET", path: `/curriculum-map/nodes?${query.toString()}` };
     }
     case "getCurriculumMapNode":
@@ -103,13 +111,15 @@ export async function callCore(op: EditorialOperation, rawBody?: string): Promis
     throw new ProxyError(503, "service_unavailable", "the editorial service is not configured");
   }
 
+  // Resolve and validate caller-controlled ids/filters before Clerk or Core network work.
+  const route = resolveRoute(op);
+
   const { getToken } = await auth();
   const token = await getToken();
   if (!token) {
     throw new ProxyError(401, "unauthorized", "sign-in is required");
   }
 
-  const route = resolveRoute(op);
   const target = `${baseUrl.replace(/\/+$/, "")}${route.path}`;
 
   const controller = new AbortController();

@@ -45,11 +45,10 @@ describe("GET /api/editorial/curriculum-map/nodes", () => {
     expect(await response.json()).toEqual({ items: [] });
   });
 
-  it("forwards an empty syllabusId when omitted, leaving validation to Core", async () => {
-    mockedCallCore.mockResolvedValue({
-      status: 400,
-      body: { error: "missing_required_fields", missing: ["syllabusId"] },
-    });
+  it("returns stable invalid_id when syllabusId is omitted", async () => {
+    mockedCallCore.mockRejectedValue(
+      new ProxyError(400, "invalid_id", "identifier is not a valid resource id"),
+    );
 
     const response = await GET(new Request("http://localhost/api/editorial/curriculum-map/nodes"));
 
@@ -59,6 +58,25 @@ describe("GET /api/editorial/curriculum-map/nodes", () => {
       status: undefined,
     });
     expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "invalid_id",
+      message: "identifier is not a valid resource id",
+    });
+  });
+
+  it("forwards explicit status=all through the fixed curriculum-map operation", async () => {
+    mockedCallCore.mockResolvedValue({ status: 200, body: { items: [] } });
+
+    const response = await GET(
+      new Request("http://localhost/api/editorial/curriculum-map/nodes?syllabusId=syl-1&status=all"),
+    );
+
+    expect(mockedCallCore).toHaveBeenCalledWith({
+      kind: "listCurriculumMapNodes",
+      syllabusId: "syl-1",
+      status: "all",
+    });
+    expect(response.status).toBe(200);
   });
 
   it("maps a ProxyError to its status and code", async () => {

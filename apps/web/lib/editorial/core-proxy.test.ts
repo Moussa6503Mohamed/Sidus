@@ -98,6 +98,41 @@ describe("callCore", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["empty", ""],
+    ["overlong", "a".repeat(129)],
+    ["unsafe", "../catalogue/syllabuses"],
+  ])("rejects %s curriculum-map syllabusId before auth or fetch", async (_name, syllabusId) => {
+    mockSignedIn();
+
+    const err = await callCore({ kind: "listCurriculumMapNodes", syllabusId }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ProxyError);
+    expect((err as ProxyError).status).toBe(400);
+    expect((err as ProxyError).code).toBe("invalid_id");
+    expect(mockedAuth).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "bogus", "Draft"])(
+    "rejects invalid curriculum-map status %j before auth or fetch",
+    async (status) => {
+      mockSignedIn();
+
+      const err = await callCore({
+        kind: "listCurriculumMapNodes",
+        syllabusId: "syl-1",
+        status,
+      }).catch((e) => e);
+
+      expect(err).toBeInstanceOf(ProxyError);
+      expect((err as ProxyError).status).toBe(400);
+      expect((err as ProxyError).code).toBe("invalid_status");
+      expect(mockedAuth).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
+
   const cases: Array<{
     name: string;
     op: Parameters<typeof callCore>[0];
@@ -148,6 +183,12 @@ describe("callCore", () => {
       op: { kind: "listCurriculumMapNodes", syllabusId: "syl-1", status: "draft" },
       method: "GET",
       path: "/curriculum-map/nodes?syllabusId=syl-1&status=draft",
+    },
+    {
+      name: "curriculum map list all statuses",
+      op: { kind: "listCurriculumMapNodes", syllabusId: "syl-1", status: "all" },
+      method: "GET",
+      path: "/curriculum-map/nodes?syllabusId=syl-1&status=all",
     },
     {
       name: "curriculum map get",
