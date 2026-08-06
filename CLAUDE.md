@@ -193,5 +193,6 @@ cd services/ai && python -m pytest
   metadata picker and locator only; learner types/responses remain provenance-free. Human must
   enter written licence evidence and approve it before use; software never invents licence facts or
   handles source material. See `docs/licensed-adaptation-provenance.md`, D-0020, and
-  `docs/handoffs/T-0018.md`. Status remains `review`; not released or pushed.
-- See `docs/tasks/active.md` / `docs/tasks/history.md`.
+  `docs/handoffs/T-0018.md`. Full release validation passed on 2026-08-07; T-0018 moved to
+  `docs/tasks/history.md` as `done / released`; implementation commit `50ea7b2` unamended.
+- See `docs/tasks/active.md` (currently empty) / `docs/tasks/history.md`.

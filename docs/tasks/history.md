@@ -1,5 +1,73 @@
 # Task history
 
+## T-0018 — Licensed-adaptation provenance for questions
+
+**Status:** done / released
+**Owner:** Codex / Claude Code release
+**Implementation commit:** `50ea7b2b0b80250fc4607948ef8f2bff243288f1`
+**Depends on:** T-0017 (done / released)
+
+### Goal
+
+Require every newly created question to declare explicit `original` or `licensed_adaptation`
+origin, persist immutable metadata-only licensed provenance, and re-check live source rights at
+every subsequent question write, verification, and learner-facing read — without ever copying or
+inferring source content, and without touching historical question rows.
+
+### Delivered
+
+- Additive, idempotent migration 0020: nullable `questions.origin_type`, immutable
+  `question_provenance` (one row per licensed question, DB-trigger-enforced no update/delete),
+  append-only names-only `question_provenance_events`, and a DB trigger that blocks any change to
+  `origin_type` after create — including on historical NULL rows. No backfill, no seed, no data
+  mutation.
+- Strict Core create contract requires exact case-sensitive `originType`; `original` rejects any
+  source id/locator, `licensed_adaptation` requires a non-blank locator plus an approved,
+  rights-complete (`owner`, `title`, `sourceUrl`, `sourceHash`, `licenceReference`,
+  `permittedUse`, `allowedAudience`), catalogue-syllabus-linked source. Actor is the authenticated
+  Clerk subject, never caller-supplied.
+- Licensed gate reruns live (plain SQL, not cached) on every question/rubric write, question
+  verification, learner `list`/`get`, attempt creation, and attempt feedback submission — a source
+  that regresses (expired, rejected, unlinked, rights-incomplete, wrong syllabus) makes the
+  question unavailable everywhere with no latest/fallback source resolution.
+- Learner `Projection`, `Attempt`, and `AttemptResult` types carry no origin, source, locator,
+  licence, actor, or provenance timestamp field — provenance is structurally unreachable from
+  learner routes, not just filtered.
+- Editorial create UI adds required origin choice, an approved rights-complete syllabus-linked
+  source picker, a metadata-only locator field, immutable post-create display, and an explicit
+  rights/content warning. No upload/preview/OCR/AI path added.
+- `docs/licensed-adaptation-provenance.md` documents the human licence-evidence approval workflow;
+  D-0020 in `docs/decisions.md` records the decision and rejected alternatives.
+
+### Release validation (2026-08-07)
+
+| Check | Result |
+| --- | --- |
+| Protected working-tree audit | Pass — only `.claude/`, `.claude-flow/`, `DB.jpeg`, `arch.jpeg`, `Sidus*.xlsx` untracked; ignored `.env.local`/`Guidelines.pdf` untouched |
+| Dev/test Compose config | Pass / Pass |
+| Web Vitest | Pass — 32 files, 288 tests |
+| Web typecheck / production build | Pass / Pass — 15 pages generated; all routes intact |
+| Strict shared-contract TypeScript | Pass (covered transitively by web typecheck) |
+| Go `gofmt` / `build` / `vet` / unit | Pass / Pass / Pass / Pass — all 7 packages |
+| Fresh disposable migrate (0001–0020) / rerun | Pass — 20 applied / 0 applied (idempotent) |
+| Full Go integration suite | Pass — catalogue, content-source, curriculum-map, learner, question all green, including `ProvenanceCatalogueLinking`, `ProvenanceMigrationRerunNoBackfill`, `LicensedProvenanceImmutableAndNamesOnly`, `LicensedSourceRegressionBlocksVerification`, and `LicensedSourceRegressionExcludesDeliveryAndAttempt` |
+| Disposable `sidus-test` teardown | Pass — scoped `down -v`; container/network removed, dev volume untouched |
+| Python pytest (`services/ai`) | Pass — 18 tests; pre-existing deprecation warnings only |
+| `git diff --check` | Pass |
+| Staged-content and secret audit | Pass — 27 files in T-0018 commit, all within allowed scope, no forbidden extension/path/secret pattern |
+
+### Constraints
+
+- Release commit is documentation-only (this history move, handoff status, `CLAUDE.md`). No
+  implementation commit amended; no product/Core/AI/BFF/database/route/business-rule change.
+- Protected files (`.claude/`, `.claude-flow/`, images, spreadsheets, `.env.local`,
+  `Guidelines.pdf`) remain untouched and unstaged.
+
+### Handoff
+
+`docs/handoffs/T-0018.md`. See D-0020 in `docs/decisions.md` and
+`docs/licensed-adaptation-provenance.md`.
+
 ## T-0017 — Sidus Observatory visual system and responsive frontend polish
 
 **Status:** done / released
