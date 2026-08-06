@@ -704,6 +704,17 @@ and canonical prose); permit old rubric fallback (rejected: unverified feedback)
 BFF/types (rejected: learner leakage risk); add sessions/papers (rejected: Exam Mode scope).
 **Owner/date:** Codex, 2026-08-06 (T-0016).
 
+**Update (T-0016 review, 2026-08-06):** Learner create/submit BFF routes use one shared
+4096-byte reader matching Core. It rejects a trustworthy oversized `Content-Length` before body
+access and independently streams with a hard byte cap because absent, malformed, or understated
+length is not authoritative. Attempt pinning treats persisted options and incorrect explanations
+as sets, not count-plus-membership lists: option IDs and explanation option IDs must each be
+unique, the correct option must occur exactly once, and explanations must equal exactly all
+current incorrect option IDs. Malformed persisted rubric/options therefore fail as learner-safe
+`not_found` before attempt/event insertion even if editorial validation was bypassed or historical
+data became corrupt. These are defense-in-depth changes; learner contracts, schema, content, and
+normal valid MCQ behavior are unchanged.
+
 ## Decision template
 
 ```md

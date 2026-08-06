@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { callCoreLearner } from "@/lib/learner/core-proxy";
 import { learnerErrorResponse } from "@/lib/learner/http";
+import { readLearnerRequestBody } from "@/lib/learner/request-body";
 
 interface RouteParams { params: Promise<{ id: string }> }
 
@@ -8,7 +9,7 @@ const exactSubmitBody = /^\s*\{\s*"selectedOptionId"\s*:\s*("(?:\\(?:["\\/bfnrt]
 
 export async function POST(request: Request, { params }: RouteParams): Promise<NextResponse> {
   try {
-    const match = exactSubmitBody.exec(await request.text());
+    const match = exactSubmitBody.exec(await readLearnerRequestBody(request));
     if (!match) {
       return NextResponse.json({ error: "invalid_json", message: "request body is invalid" }, { status: 400 });
     }

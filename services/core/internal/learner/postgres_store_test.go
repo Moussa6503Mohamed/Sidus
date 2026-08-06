@@ -12,12 +12,10 @@ import (
 	"time"
 )
 
-func seedPracticeQuestion(t *testing.T, f fixture) (string, string) {
+func seedPracticeQuestionWith(t *testing.T, f fixture, options []Option, raw json.RawMessage) (string, string) {
 	t.Helper()
-	options := []Option{{ID: "opt-a", Label: "opaque-a"}, {ID: "opt-b", Label: "opaque-b"}, {ID: "opt-c", Label: "opaque-c"}}
 	questionID := seedQuestion(t, f.db, f.syllabusID, f.nodeID, "verified", 7, "multiple_choice", options)
 	var rubricID string
-	raw := json.RawMessage(`{"criteria":[{"id":"c1","marks":2}],"answerKey":{"correctOptionId":"opt-b"},"feedback":{"correctExplanation":"opaque-correct","incorrectExplanations":[{"optionId":"opt-a","explanation":"opaque-wrong-a"},{"optionId":"opt-c","explanation":"opaque-wrong-c"}]}}`)
 	if err := f.db.QueryRow(`
 		INSERT INTO question_rubric_versions (question_id, version, question_revision, rubric, max_marks, status, created_by, reviewed_by)
 		VALUES ($1, 1, 7, $2, 2, 'verified', 'opaque-editor', 'opaque-reviewer') RETURNING id
@@ -26,6 +24,13 @@ func seedPracticeQuestion(t *testing.T, f fixture) (string, string) {
 	}
 	setCanonicalRubric(t, f.db, questionID, rubricID)
 	return questionID, rubricID
+}
+
+func seedPracticeQuestion(t *testing.T, f fixture) (string, string) {
+	t.Helper()
+	options := []Option{{ID: "opt-a", Label: "opaque-a"}, {ID: "opt-b", Label: "opaque-b"}, {ID: "opt-c", Label: "opaque-c"}}
+	raw := json.RawMessage(`{"criteria":[{"id":"c1","marks":2}],"answerKey":{"correctOptionId":"opt-b"},"feedback":{"correctExplanation":"opaque-correct","incorrectExplanations":[{"optionId":"opt-a","explanation":"opaque-wrong-a"},{"optionId":"opt-c","explanation":"opaque-wrong-c"}]}}`)
+	return seedPracticeQuestionWith(t, f, options, raw)
 }
 
 // These integration tests run against a real, disposable PostgreSQL instance that has had the
@@ -583,6 +588,47 @@ func TestPostgresStore_Integration_AttemptPinsOwnershipAndSubmit(t *testing.T) {
 	if err := f.db.QueryRow(`SELECT count(*) FROM learner_attempt_events WHERE attempt_id=$1`, attempt.AttemptID).Scan(&eventCount); err != nil || eventCount != 2 {
 		t.Fatalf("events=%d err=%v", eventCount, err)
 	}
+}
+
+func assertNoAttemptOrEventForQuestion(t *testing.T, db *sql.DB, questionID string) {
+	t.Helper()
+	var attempts, events int
+	if err := db.QueryRow(`SELECT count(*) FROM learner_attempts WHERE question_id=$1`, questionID).Scan(&attempts); err != nil {
+		t.Fatalf("count learner attempts: %v", err)
+	}
+	if err := db.QueryRow(`
+		SELECT count(*) FROM learner_attempt_events e
+		JOIN learner_attempts a ON a.id=e.attempt_id
+		WHERE a.question_id=$1`, questionID).Scan(&events); err != nil {
+		t.Fatalf("count learner attempt events: %v", err)
+	}
+	if attempts != 0 || events != 0 {
+		t.Fatalf("attempts=%d events=%d, want no mutation", attempts, events)
+	}
+}
+
+func TestPostgresStore_Integration_CreateAttemptRejectsDuplicateWrongExplanationAndMissingOption(t *testing.T) {
+	f := newFixture(t)
+	options := []Option{{ID: "opt-a", Label: "opaque-a"}, {ID: "opt-b", Label: "opaque-b"}, {ID: "opt-c", Label: "opaque-c"}}
+	corrupt := json.RawMessage(`{"criteria":[{"id":"c1","marks":2}],"answerKey":{"correctOptionId":"opt-b"},"feedback":{"correctExplanation":"opaque-correct","incorrectExplanations":[{"optionId":"opt-a","explanation":"opaque-wrong-a"},{"optionId":"opt-a","explanation":"opaque-wrong-a-duplicate"}]}}`)
+	questionID, _ := seedPracticeQuestionWith(t, f, options, corrupt)
+
+	if _, err := f.store.CreateAttempt(f.ctx, "owner-a", questionID); err != ErrNotFound {
+		t.Fatalf("CreateAttempt err=%v, want ErrNotFound", err)
+	}
+	assertNoAttemptOrEventForQuestion(t, f.db, questionID)
+}
+
+func TestPostgresStore_Integration_CreateAttemptRejectsDuplicateCurrentOptionID(t *testing.T) {
+	f := newFixture(t)
+	options := []Option{{ID: "opt-a", Label: "opaque-a"}, {ID: "opt-b", Label: "opaque-b"}, {ID: "opt-a", Label: "opaque-duplicate"}}
+	raw := json.RawMessage(`{"criteria":[{"id":"c1","marks":2}],"answerKey":{"correctOptionId":"opt-b"},"feedback":{"correctExplanation":"opaque-correct","incorrectExplanations":[{"optionId":"opt-a","explanation":"opaque-wrong-a"},{"optionId":"opt-a","explanation":"opaque-wrong-a-duplicate"}]}}`)
+	questionID, _ := seedPracticeQuestionWith(t, f, options, raw)
+
+	if _, err := f.store.CreateAttempt(f.ctx, "owner-a", questionID); err != ErrNotFound {
+		t.Fatalf("CreateAttempt err=%v, want ErrNotFound", err)
+	}
+	assertNoAttemptOrEventForQuestion(t, f.db, questionID)
 }
 
 func TestPostgresStore_Integration_AttemptEligibilityAndPinnedLifecycle(t *testing.T) {

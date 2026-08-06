@@ -122,6 +122,17 @@ results, commit hash, blockers, protected-file status, and reviewer focus.
   authoritative; implementation may share SQL predicates inside learner store but not editorial
   response types.
 
+### Review findings fixed (2026-08-06)
+
+- Learner attempt BFF writes now share a 4096-byte hard-capped streaming reader. Oversized valid
+  `Content-Length` is rejected before reading; absent, malformed, or inaccurate length cannot
+  bypass the streamed byte cap. Body validation still completes before Clerk or Core access.
+- Attempt pinning now proves exact option/feedback set equality and rejects duplicate current
+  option IDs, duplicate incorrect-explanation IDs, missing/foreign explanations, and explanations
+  for the correct option. Disposable-Postgres corrupt-row regressions prove safe `not_found` with
+  no attempt/event mutation; valid MCQ creation remains covered.
+- Status remains `review`; one review-fix commit on `fddce8e`, no push or release.
+
 ### Stop condition
 
 Stop at `review` after implementation, validation, one commit, and handoff. Do not push, release,

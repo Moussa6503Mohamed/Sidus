@@ -1,11 +1,17 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { auth } from "@clerk/nextjs/server";
 import { callCoreLearner } from "@/lib/learner/core-proxy";
 import { POST as createAttempt } from "./questions/[id]/attempts/route";
 import { POST as submitAttempt } from "./attempts/[id]/submit/route";
 
-vi.mock("@/lib/learner/core-proxy", () => ({ callCoreLearner: vi.fn() }));
+vi.mock("@/lib/learner/core-proxy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/learner/core-proxy")>();
+  return { ...actual, callCoreLearner: vi.fn() };
+});
+vi.mock("@clerk/nextjs/server", () => ({ auth: vi.fn() }));
 const call = vi.mocked(callCoreLearner);
+const mockedAuth = vi.mocked(auth);
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
 beforeEach(() => { vi.clearAllMocks(); });
@@ -35,5 +41,49 @@ describe("learner attempt BFF routes", () => {
     const response = await createAttempt(new Request("http://local", { method: "POST", body: `{}` }), params("q-1"));
     expect(response.status).toBe(400);
     expect(call).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["create", createAttempt, params("q-1"), "   "],
+    ["submit", submitAttempt, params("a-1"), `{"selectedOptionId":"opt-a"}`],
+  ])("rejects oversized declared %s body before auth or Core fetch", async (_name, handler, routeParams, body) => {
+    const fetchSpy = vi.spyOn(global, "fetch");
+    const response = await handler(new Request("http://local", {
+      method: "POST",
+      headers: { "Content-Length": "4097" },
+      body,
+    }), routeParams);
+
+    expect(response.status).toBe(413);
+    expect(call).not.toHaveBeenCalled();
+    expect(mockedAuth).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it.each([
+    ["create", createAttempt, params("q-1"), " ".repeat(4097)],
+    ["submit", submitAttempt, params("a-1"), `{"selectedOptionId":"${"a".repeat(4097)}"}`],
+  ])("caps chunked or untrusted %s body before auth or Core fetch", async (_name, handler, routeParams, body) => {
+    const fetchSpy = vi.spyOn(global, "fetch");
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const bytes = new TextEncoder().encode(body);
+        controller.enqueue(bytes.slice(0, 2048));
+        controller.enqueue(bytes.slice(2048));
+        controller.close();
+      },
+    });
+    const response = await handler(new Request("http://local", {
+      method: "POST",
+      body: stream,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" }), routeParams);
+
+    expect(response.status).toBe(413);
+    expect(call).not.toHaveBeenCalled();
+    expect(mockedAuth).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });

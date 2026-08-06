@@ -60,3 +60,15 @@ selected and correct choices with text plus styling, and renders score, correct 
 every wrong-option explanation. Loading, empty, retry, error, and access-denied states remain.
 No timer, auto-submit, pre-submit reveal, paper/session flow, progress score, AI, or Exam Mode
 control exists.
+
+## Review hardening
+
+Both learner write BFF routes read request bodies through one 4096-byte hard cap matching Core.
+An oversized valid `Content-Length` fails before body reading; missing, malformed, or inaccurate
+length still goes through byte-counted streaming and can never cause unbounded buffering. Existing
+empty-create and exact-submit contracts remain unchanged and finish validation before Clerk/Core.
+
+Attempt creation also validates persisted marking data as exact sets. Current option IDs must be
+unique and contain the correct ID exactly once. Incorrect explanation IDs must be unique and equal
+every current non-correct option ID, with no foreign or correct-option entry. Corrupt persisted
+rows return the same safe not-found response as ineligible questions and create no attempt/event.

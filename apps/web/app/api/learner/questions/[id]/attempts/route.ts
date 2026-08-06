@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { callCoreLearner } from "@/lib/learner/core-proxy";
 import { learnerErrorResponse } from "@/lib/learner/http";
+import { readLearnerRequestBody } from "@/lib/learner/request-body";
 
 interface RouteParams { params: Promise<{ id: string }> }
 
 export async function POST(request: Request, { params }: RouteParams): Promise<NextResponse> {
   try {
-    if ((await request.text()).trim() !== "") {
+    if ((await readLearnerRequestBody(request)).trim() !== "") {
       return NextResponse.json({ error: "invalid_json", message: "request body must be empty" }, { status: 400 });
     }
     const { id } = await params;

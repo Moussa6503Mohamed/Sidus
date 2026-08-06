@@ -271,18 +271,37 @@ func markingCoversOptions(marking markingRubric, options []Option) bool {
 	if len(options) < 2 || len(marking.Feedback.IncorrectExplanations) != len(options)-1 {
 		return false
 	}
-	want := make(map[string]struct{}, len(options))
+	current := make(map[string]struct{}, len(options))
 	for _, option := range options {
 		if option.ID == "" {
 			return false
 		}
-		want[option.ID] = struct{}{}
+		if _, duplicate := current[option.ID]; duplicate {
+			return false
+		}
+		current[option.ID] = struct{}{}
 	}
-	if _, ok := want[marking.CorrectOptionID]; !ok {
+	if _, ok := current[marking.CorrectOptionID]; !ok {
 		return false
 	}
+	explained := make(map[string]struct{}, len(marking.Feedback.IncorrectExplanations))
 	for _, item := range marking.Feedback.IncorrectExplanations {
-		if _, ok := want[item.OptionID]; !ok {
+		if item.OptionID == marking.CorrectOptionID {
+			return false
+		}
+		if _, ok := current[item.OptionID]; !ok {
+			return false
+		}
+		if _, duplicate := explained[item.OptionID]; duplicate {
+			return false
+		}
+		explained[item.OptionID] = struct{}{}
+	}
+	for optionID := range current {
+		if optionID == marking.CorrectOptionID {
+			continue
+		}
+		if _, ok := explained[optionID]; !ok {
 			return false
 		}
 	}
