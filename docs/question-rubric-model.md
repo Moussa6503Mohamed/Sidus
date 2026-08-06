@@ -39,7 +39,8 @@ the intended state.
 ## Schema
 
 Tables live in `services/core/migrations` (0012–0014); migration 0015 adds the content-revision
-columns described below.
+columns described below. Migration 0017 adds options; migration 0018 adds explicit canonical
+rubric selection.
 
 ### `questions`
 
@@ -53,6 +54,7 @@ columns described below.
 | `prompt` | TEXT | **original** question body, written at runtime by the private workflow |
 | `options` | JSONB, nullable | ordered original `{id,label}` options; Core requires them only for new `multiple_choice` writes |
 | `status` | TEXT | `draft` \| `verified` \| `retired` (default `draft`) |
+| `canonical_rubric_version_id` | UUID FK to `question_rubric_versions`, nullable | explicit reviewer selection; null for drafts and historical unrepaired verified rows |
 | `content_revision` | INTEGER, `CHECK (> 0)` | starts at 1; **+1 per successful content update** |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
 
@@ -96,25 +98,22 @@ current text.
   the same row lock that allocated its version number.
 - A rubric version is **current** only while its `question_revision` equals the question's
   `content_revision`.
-- **Verifying a question requires at least one verified rubric version for the current revision.**
-  A verified version from an older revision does not count.
+- **Verifying a question requires explicit selection of one verified rubric version for current
+  revision.** Core never selects latest or any other version automatically.
 
 An edit therefore **stales** older versions rather than deleting or downgrading them: they stay
 `verified`, immutable, and readable to editorial roles, and they remain the correct record of what
 was marked at that revision. The remedy is to append a new version — which picks up the current
 revision automatically — and have a reviewer verify it; the question can then be verified.
 
-Because the two failures need different fixes, they have different stable codes:
-
-| Situation | Response |
-| --- | --- |
-| No verified rubric version at all | `409 missing_verified_rubric` |
-| Verified versions exist, all from older revisions | `409 missing_current_verified_rubric` |
+Unknown/foreign, draft, and stale selections use stable `invalid_canonical_rubric`,
+`canonical_rubric_not_verified`, and `canonical_rubric_not_current` errors.
 
 ### `question_events` (immutable audit)
 
 Append-only trail: `question_id`, `event_type` (`question_created`/`question_updated`/
-`question_verified`/`question_retired`/`rubric_version_created`/`rubric_version_verified`),
+`question_verified`/`question_retired`/`rubric_version_created`/`rubric_version_verified`/
+`canonical_rubric_selected`),
 `actor_id` (the **verified Clerk subject**), `event_time`, `changed_fields` (names only). A
 `BEFORE UPDATE OR DELETE` trigger rejects any mutation, mirroring `content_source_events` /
 `syllabus_events` / `curriculum_map_events`.
@@ -177,7 +176,7 @@ and write nothing.
 ## The grounding gate
 
 Every question write — create, `PATCH`, rubric-version create, rubric-version verify, question
-verify, question retire — re-validates, inside the write transaction and **before any row, status
+verify, canonical-rubric repair, question retire — re-validates, inside the write transaction and **before any row, status
 change, or audit event**:
 
 1. the curriculum-map node exists → else `400 unknown_node`;
@@ -226,10 +225,11 @@ rubric version: draft --(verify)--> verified   (superseded by a new version, nev
 - **Verify a rubric version** (`draft → verified`) requires `question:verify` and a parent question
   that is `draft` or `verified`. Re-verifying a verified version is `409`. A version from an older
   revision may still be verified — it simply does not unblock question verification.
-- **Verify a question** (`draft → verified`) requires `question:verify` **and at least one verified
-  rubric version for the question's current revision** — otherwise `409 missing_verified_rubric`
-  (nothing verified) or `409 missing_current_verified_rubric` (only stale versions verified). A
-  draft rubric version does not count.
+- **Verify a question** (`draft → verified`) requires `question:verify` and exact
+  `{ "rubricVersion": positiveInteger }`. Selected version must be owned, verified, and current;
+  status and canonical rubric id change atomically.
+- **Repair historical canonical selection** requires `question:verify`, verified question with null
+  canonical field, and same owned/verified/current selection. Existing selection cannot be replaced.
 - **Retire a question** (`draft`/`verified` → `retired`) requires `question:verify`. Retiring an
   already-retired question is `409`.
 - **Editorial reader endpoints return every lifecycle state** to `question:read` holders so staff
@@ -273,7 +273,8 @@ no effect at all on the `map[string]json.RawMessage` decode used to tell "field 
 | `POST /questions/{id}/rubric-versions` | `question:create` | editor, reviewer, admin | appends a draft version to a draft question |
 | `GET /questions/{id}/rubric-versions` | `question_rubric:read` | editor, reviewer, admin | editorial read — exposes **draft** rubric structure |
 | `POST /questions/{id}/rubric-versions/{version}/verify` | `question:verify` | reviewer, admin | draft → verified |
-| `POST /questions/{id}/verify` | `question:verify` | reviewer, admin | draft → verified; needs a verified rubric |
+| `POST /questions/{id}/verify` | `question:verify` | reviewer, admin | exact rubric selection; draft → verified atomically |
+| `POST /questions/{id}/canonical-rubric` | `question:verify` | reviewer, admin | set null canonical on historical verified question only |
 | `POST /questions/{id}/retire` | `question:verify` | reviewer, admin | draft/verified → retired |
 
 `401` missing/invalid token; `403` valid token lacking permission; `400` validation
@@ -282,7 +283,8 @@ no effect at all on the `map[string]json.RawMessage` decode used to tell "field 
 `mismatched_node`, `unknown_source`, `unapproved_source`, `unlinked_source`, `mismatched_source`,
 `invalid_options`,
 `invalid_rubric`, `invalid_max_marks`, `invalid_status`); `409` conflict (`invalid_lifecycle_transition`,
-`missing_verified_rubric`, `missing_current_verified_rubric`, `duplicate_rubric_version`); `404`
+`canonical_rubric_not_verified`, `canonical_rubric_not_current`, `canonical_rubric_already_set`,
+`duplicate_rubric_version`); `404`
 not found.
 
 `500 internal_error` (database, scan, transaction, or other infrastructure failure) always returns
@@ -333,7 +335,9 @@ subject** and the **names** of the fields involved:
 | --- | --- | --- |
 | create question | `question_created` | `syllabusId`, `curriculumMapNodeId`, `responseType`, `language`, `prompt` |
 | PATCH question | `question_updated` | only the names that actually changed, plus `contentRevision` |
-| verify / retire question | `question_verified` / `question_retired` | `status` |
+| verify question | `question_verified` | `status`, `canonicalRubricVersionId` |
+| repair historical canonical | `canonical_rubric_selected` | `canonicalRubricVersionId` |
+| retire question | `question_retired` | `status` |
 | create rubric version | `rubric_version_created` | `rubricVersion`, `questionRevision` |
 | verify rubric version | `rubric_version_verified` | `rubricVersionStatus` |
 

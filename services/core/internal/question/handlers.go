@@ -25,6 +25,7 @@ func Register(mux *http.ServeMux, store Store, v auth.Verifier) {
 	mux.HandleFunc("POST /questions", auth.Protect(v, auth.PermCreateQuestion, h.createQuestion))
 	mux.HandleFunc("PATCH /questions/{id}", auth.Protect(v, auth.PermCreateQuestion, h.updateQuestion))
 	mux.HandleFunc("POST /questions/{id}/verify", auth.Protect(v, auth.PermVerifyQuestion, h.verifyQuestion))
+	mux.HandleFunc("POST /questions/{id}/canonical-rubric", auth.Protect(v, auth.PermVerifyQuestion, h.setCanonicalRubric))
 	mux.HandleFunc("POST /questions/{id}/retire", auth.Protect(v, auth.PermVerifyQuestion, h.retireQuestion))
 	mux.HandleFunc("GET /questions/{id}/rubric-versions", auth.Protect(v, auth.PermReadQuestionRubric, h.listRubricVersions))
 	mux.HandleFunc("POST /questions/{id}/rubric-versions", auth.Protect(v, auth.PermCreateQuestion, h.createRubricVersion))
@@ -38,6 +39,7 @@ type handler struct {
 // internalErrorMessage is the only text ever returned for database, scan, transaction, or other
 // infrastructure failures. Raw Go/driver error text must never reach an HTTP response.
 const internalErrorMessage = "an internal error occurred"
+const maxPostgresInteger = 2_147_483_647
 
 func actorFromContext(r *http.Request) (string, bool) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
@@ -325,15 +327,59 @@ func (h *handler) updateQuestion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) verifyQuestion(w http.ResponseWriter, r *http.Request) {
-	h.transition(w, r, h.store.VerifyQuestion)
+	h.canonicalSelection(w, r, h.store.VerifyQuestion)
+}
+
+func (h *handler) setCanonicalRubric(w http.ResponseWriter, r *http.Request) {
+	h.canonicalSelection(w, r, h.store.SetCanonicalRubric)
 }
 
 func (h *handler) retireQuestion(w http.ResponseWriter, r *http.Request) {
 	h.transition(w, r, h.store.RetireQuestion)
 }
 
-// transition runs a lifecycle action with the verified subject as actor. Verify and retire carry
-// no request body, so there is nothing to decode and no way to supply an actor.
+var canonicalSelectionFields = map[string]struct{}{"rubricVersion": {}}
+
+type canonicalSelectionRequest struct {
+	RubricVersion *int `json:"rubricVersion"`
+}
+
+func (h *handler) canonicalSelection(
+	w http.ResponseWriter,
+	r *http.Request,
+	action func(context.Context, string, int, string) (Question, error),
+) {
+	var req canonicalSelectionRequest
+	if _, ok := decodeStrict(w, r, canonicalSelectionFields, &req); !ok {
+		return
+	}
+	if req.RubricVersion == nil {
+		writeMissingFields(w, []string{"rubricVersion"})
+		return
+	}
+	if *req.RubricVersion <= 0 || *req.RubricVersion > maxPostgresInteger {
+		writeError(w, http.StatusBadRequest, "invalid_rubric_version", "rubricVersion must be a positive integer")
+		return
+	}
+	actor, ok := actorFromContext(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "invalid_token", "authenticated subject required")
+		return
+	}
+	q, err := action(r.Context(), r.PathValue("id"), *req.RubricVersion, actor)
+	if mapped, ok := mapQuestionError(err); ok {
+		writeQuestionError(w, mapped)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
+		return
+	}
+	writeJSON(w, http.StatusOK, q)
+}
+
+// transition runs a bodyless lifecycle action with the verified subject as actor. Question
+// verification uses canonicalSelection above; retirement remains bodyless.
 func (h *handler) transition(w http.ResponseWriter, r *http.Request, action func(ctx context.Context, id, actorID string) (Question, error)) {
 	actor, ok := actorFromContext(r)
 	if !ok {
@@ -458,6 +504,14 @@ func mapQuestionError(err error) (questionErrorMapping, bool) {
 		return questionErrorMapping{http.StatusNotFound, "not_found", "question not found"}, true
 	case errors.Is(err, ErrRubricVersionNotFound):
 		return questionErrorMapping{http.StatusNotFound, "not_found", "rubric version not found"}, true
+	case errors.Is(err, ErrInvalidCanonicalRubric):
+		return questionErrorMapping{http.StatusBadRequest, "invalid_canonical_rubric", err.Error()}, true
+	case errors.Is(err, ErrUnverifiedCanonicalRubric):
+		return questionErrorMapping{http.StatusConflict, "canonical_rubric_not_verified", err.Error()}, true
+	case errors.Is(err, ErrStaleCanonicalRubric):
+		return questionErrorMapping{http.StatusConflict, "canonical_rubric_not_current", err.Error()}, true
+	case errors.Is(err, ErrCanonicalRubricAlreadySet):
+		return questionErrorMapping{http.StatusConflict, "canonical_rubric_already_set", err.Error()}, true
 	case errors.Is(err, ErrUnknownSyllabus):
 		return questionErrorMapping{http.StatusBadRequest, "unknown_syllabus", err.Error()}, true
 	case errors.Is(err, ErrUnknownNode):

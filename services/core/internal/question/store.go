@@ -11,6 +11,11 @@ var ErrNotFound = errors.New("question not found")
 // ErrRubricVersionNotFound is returned when a rubric version does not exist for a question.
 var ErrRubricVersionNotFound = errors.New("rubric version not found")
 
+var ErrInvalidCanonicalRubric = errors.New("selected rubric version is invalid for this question")
+var ErrUnverifiedCanonicalRubric = errors.New("selected rubric version is not verified")
+var ErrStaleCanonicalRubric = errors.New("selected rubric version is not current for this question")
+var ErrCanonicalRubricAlreadySet = errors.New("question already has a canonical rubric version")
+
 // ErrUnknownSyllabus is returned when the target syllabus does not resolve to a known, active
 // catalogue syllabus.
 var ErrUnknownSyllabus = errors.New("syllabus is unknown or not active")
@@ -93,7 +98,11 @@ type Store interface {
 	// rubric version whose QuestionRevision equals the question's current ContentRevision —
 	// otherwise ErrMissingVerifiedRubric (none verified at all) or ErrStaleVerifiedRubric (all
 	// verified versions predate the question's current content).
-	VerifyQuestion(ctx context.Context, id string, actorID string) (Question, error)
+	VerifyQuestion(ctx context.Context, id string, rubricVersion int, actorID string) (Question, error)
+
+	// SetCanonicalRubric repairs a historical verified question whose selection is nil. It never
+	// changes question content/status or replaces an existing selection.
+	SetCanonicalRubric(ctx context.Context, id string, rubricVersion int, actorID string) (Question, error)
 
 	// RetireQuestion transitions a draft or verified question to retired, hiding it from every
 	// reader endpoint.

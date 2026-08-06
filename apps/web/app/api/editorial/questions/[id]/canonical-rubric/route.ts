@@ -10,7 +10,7 @@ export async function POST(request: Request, { params }: RouteParams): Promise<N
   try {
     const { id } = await params;
     const rawBody = await readCanonicalRubricBody(request);
-    const result = await callCore({ kind: "verifyQuestion", id }, rawBody);
+    const result = await callCore({ kind: "setQuestionCanonicalRubric", id }, rawBody);
     return NextResponse.json(result.body, { status: result.status });
   } catch (err) {
     return errorResponse(err);

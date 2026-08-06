@@ -12,6 +12,7 @@ vi.mock("./api-client", () => ({
   createQuestion: vi.fn(),
   updateQuestion: vi.fn(),
   verifyQuestion: vi.fn(),
+  setCanonicalRubric: vi.fn(),
   retireQuestion: vi.fn(),
   createRubricVersion: vi.fn(),
   verifyRubricVersion: vi.fn(),

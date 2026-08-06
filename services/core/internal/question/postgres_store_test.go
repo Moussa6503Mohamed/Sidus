@@ -276,7 +276,7 @@ func TestPostgresStore_Integration_MCQOptionsRevisionAnswerKeyAndAudit(t *testin
 	if strings.Join(changed, ",") != "options,contentRevision" {
 		t.Fatalf("changed fields = %#v", changed)
 	}
-	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer"); !errors.Is(err, ErrStaleVerifiedRubric) {
+	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, 1, "test-reviewer"); !errors.Is(err, ErrStaleCanonicalRubric) {
 		t.Fatalf("verify with stale rubric = %v", err)
 	}
 }
@@ -451,7 +451,7 @@ func TestPostgresStore_Integration_VerifyQuestionRevalidatesGrounding(t *testing
 	runGroundingCases(t,
 		func(t *testing.T, f fixture, q Question) { verifyRubric(t, f, q) },
 		func(f fixture, q Question) error {
-			_, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer")
+			_, err := f.store.VerifyQuestion(f.ctx, q.ID, 1, "test-reviewer")
 			return err
 		},
 	)
@@ -602,8 +602,8 @@ func TestPostgresStore_Integration_VerifyRequiresVerifiedRubric(t *testing.T) {
 	q := f.createQuestion(t)
 
 	before := snapshotQuestionRow(t, f.db, q.ID)
-	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer"); !errors.Is(err, ErrMissingVerifiedRubric) {
-		t.Fatalf("no rubric: err = %v, want ErrMissingVerifiedRubric", err)
+	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, 1, "test-reviewer"); !errors.Is(err, ErrInvalidCanonicalRubric) {
+		t.Fatalf("no rubric: err = %v, want ErrInvalidCanonicalRubric", err)
 	}
 	assertQuestionRowUnchanged(t, f.db, q.ID, before)
 
@@ -614,17 +614,105 @@ func TestPostgresStore_Integration_VerifyRequiresVerifiedRubric(t *testing.T) {
 		t.Fatalf("create rubric version: %v", err)
 	}
 	beforeDraftRubric := snapshotQuestionRow(t, f.db, q.ID)
-	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer"); !errors.Is(err, ErrMissingVerifiedRubric) {
-		t.Fatalf("draft rubric only: err = %v, want ErrMissingVerifiedRubric", err)
+	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, 1, "test-reviewer"); !errors.Is(err, ErrUnverifiedCanonicalRubric) {
+		t.Fatalf("draft rubric only: err = %v, want ErrUnverifiedCanonicalRubric", err)
 	}
 	assertQuestionRowUnchanged(t, f.db, q.ID, beforeDraftRubric)
 
 	if _, err := f.store.VerifyRubricVersion(f.ctx, q.ID, 1, "test-reviewer"); err != nil {
 		t.Fatalf("verify rubric version: %v", err)
 	}
-	verified, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer")
+	verified, err := f.store.VerifyQuestion(f.ctx, q.ID, 1, "test-reviewer")
 	if err != nil || verified.Status != StatusVerified {
 		t.Fatalf("verify question: q=%+v err=%v", verified, err)
+	}
+	if verified.CanonicalRubricVersionID == nil {
+		t.Fatal("verify question did not store canonical rubric id")
+	}
+	var changed []string
+	if err := f.db.QueryRow(`SELECT changed_fields FROM question_events WHERE question_id=$1 AND event_type='question_verified'`, q.ID).Scan(pq.Array(&changed)); err != nil {
+		t.Fatalf("read verify event: %v", err)
+	}
+	if strings.Join(changed, ",") != "status,canonicalRubricVersionId" {
+		t.Fatalf("verify changed fields = %#v", changed)
+	}
+}
+
+func TestPostgresStore_Integration_SetCanonicalRubricRepairsHistoricalNullOnce(t *testing.T) {
+	f := newFixture(t)
+	q := f.createQuestion(t)
+	selected := verifyRubric(t, f, q)
+	if _, err := f.db.Exec(`UPDATE questions SET status='verified' WHERE id=$1`, q.ID); err != nil {
+		t.Fatalf("prepare historical verified question: %v", err)
+	}
+
+	repaired, err := f.store.SetCanonicalRubric(f.ctx, q.ID, selected.Version, "test-reviewer")
+	if err != nil {
+		t.Fatalf("set canonical rubric: %v", err)
+	}
+	if repaired.Status != StatusVerified || repaired.CanonicalRubricVersionID == nil || *repaired.CanonicalRubricVersionID != selected.ID {
+		t.Fatalf("repaired question = %+v", repaired)
+	}
+	var changed []string
+	if err := f.db.QueryRow(`SELECT changed_fields FROM question_events WHERE question_id=$1 AND event_type='canonical_rubric_selected'`, q.ID).Scan(pq.Array(&changed)); err != nil {
+		t.Fatalf("read canonical event: %v", err)
+	}
+	if strings.Join(changed, ",") != "canonicalRubricVersionId" {
+		t.Fatalf("canonical changed fields = %#v", changed)
+	}
+	if _, err := f.store.SetCanonicalRubric(f.ctx, q.ID, selected.Version, "test-admin"); !errors.Is(err, ErrCanonicalRubricAlreadySet) {
+		t.Fatalf("replace canonical rubric: err = %v", err)
+	}
+}
+
+func TestPostgresStore_Integration_CanonicalMigrationRerunDoesNotBackfill(t *testing.T) {
+	f := newFixture(t)
+	q := f.createQuestion(t)
+	if _, err := f.db.Exec(`UPDATE questions SET status='verified' WHERE id=$1`, q.ID); err != nil {
+		t.Fatalf("prepare historical question: %v", err)
+	}
+	body, err := os.ReadFile(migrationsDir + "/0018_add_canonical_rubric_selection.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	if _, err := f.db.Exec(string(body)); err != nil {
+		t.Fatalf("rerun migration: %v", err)
+	}
+	var canonical *string
+	if err := f.db.QueryRow(`SELECT canonical_rubric_version_id FROM questions WHERE id=$1`, q.ID).Scan(&canonical); err != nil {
+		t.Fatalf("read canonical value: %v", err)
+	}
+	if canonical != nil {
+		t.Fatalf("migration backfilled canonical rubric: %v", canonical)
+	}
+}
+
+func TestPostgresStore_Integration_CanonicalSelectionRejectsDraftStaleAndForeign(t *testing.T) {
+	f := newFixture(t)
+	q := f.createQuestion(t)
+	rubric, maxMarks := testRubric()
+	draft, err := f.store.CreateRubricVersion(f.ctx, q.ID, CreateRubricVersionInput{ActorID: "test-editor", Rubric: rubric, MaxMarks: maxMarks})
+	if err != nil {
+		t.Fatalf("create draft rubric: %v", err)
+	}
+	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, draft.Version, "test-reviewer"); !errors.Is(err, ErrUnverifiedCanonicalRubric) {
+		t.Fatalf("select draft rubric: err = %v", err)
+	}
+	if _, err := f.store.VerifyRubricVersion(f.ctx, q.ID, draft.Version, "test-reviewer"); err != nil {
+		t.Fatalf("verify rubric: %v", err)
+	}
+	prompt := "Changed original prompt"
+	if _, err := f.store.UpdateQuestion(f.ctx, q.ID, UpdateInput{ActorID: "test-editor", Prompt: &prompt}); err != nil {
+		t.Fatalf("update question: %v", err)
+	}
+	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, draft.Version, "test-reviewer"); !errors.Is(err, ErrStaleCanonicalRubric) {
+		t.Fatalf("select stale rubric: err = %v", err)
+	}
+	other := f.createQuestion(t)
+	foreign := verifyRubric(t, f, other)
+	targetWithoutRubrics := f.createQuestion(t)
+	if _, err := f.store.VerifyQuestion(f.ctx, targetWithoutRubrics.ID, foreign.Version, "test-reviewer"); !errors.Is(err, ErrInvalidCanonicalRubric) {
+		t.Fatalf("select foreign/unknown rubric: err = %v", err)
 	}
 }
 
@@ -667,7 +755,7 @@ func TestPostgresStore_Integration_ContentRevisionIncrementsOnce(t *testing.T) {
 
 	// Verify and retire are not content changes.
 	verifyRubric(t, f, q)
-	verified, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer")
+	verified, err := f.store.VerifyQuestion(f.ctx, q.ID, 1, "test-reviewer")
 	if err != nil {
 		t.Fatalf("verify question: %v", err)
 	}
@@ -701,8 +789,8 @@ func TestPostgresStore_Integration_VerifyRequiresRubricForCurrentRevision(t *tes
 	}
 
 	before := snapshotQuestionRow(t, f.db, q.ID)
-	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer"); !errors.Is(err, ErrStaleVerifiedRubric) {
-		t.Fatalf("verify with a stale rubric: err = %v, want ErrStaleVerifiedRubric", err)
+	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, 1, "test-reviewer"); !errors.Is(err, ErrStaleCanonicalRubric) {
+		t.Fatalf("verify with a stale rubric: err = %v, want ErrStaleCanonicalRubric", err)
 	}
 	assertQuestionRowUnchanged(t, f.db, q.ID, before)
 
@@ -720,7 +808,7 @@ func TestPostgresStore_Integration_VerifyRequiresRubricForCurrentRevision(t *tes
 	if current.Version != 2 || current.QuestionRevision != 2 {
 		t.Fatalf("new version = %+v, want version 2 at questionRevision 2", current)
 	}
-	verified, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer")
+	verified, err := f.store.VerifyQuestion(f.ctx, q.ID, 2, "test-reviewer")
 	if err != nil || verified.Status != StatusVerified {
 		t.Fatalf("verify after a current rubric: q=%+v err=%v", verified, err)
 	}
@@ -838,14 +926,14 @@ func TestPostgresStore_Integration_LifecycleAndAuditTrail(t *testing.T) {
 	q := f.createQuestion(t)
 	verifyRubric(t, f, q)
 
-	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer"); err != nil {
+	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, 1, "test-reviewer"); err != nil {
 		t.Fatalf("verify question: %v", err)
 	}
 	prompt := "Changed prompt"
 	if _, err := f.store.UpdateQuestion(f.ctx, q.ID, UpdateInput{ActorID: "test-editor", Prompt: &prompt}); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("update verified question: err = %v, want ErrInvalidTransition", err)
 	}
-	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer"); !errors.Is(err, ErrInvalidTransition) {
+	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, 1, "test-reviewer"); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("re-verify: err = %v, want ErrInvalidTransition", err)
 	}
 
@@ -940,7 +1028,7 @@ func TestPostgresStore_Integration_AuditRecordsNamesOnly(t *testing.T) {
 	allowed := map[string]bool{
 		"syllabusId": true, "curriculumMapNodeId": true, "responseType": true, "language": true,
 		"prompt": true, "status": true, "contentRevision": true, "rubricVersion": true,
-		"questionRevision": true, "rubricVersionStatus": true,
+		"questionRevision": true, "rubricVersionStatus": true, "canonicalRubricVersionId": true,
 	}
 	seenActors := 0
 	for rows.Next() {
@@ -992,7 +1080,7 @@ func TestPostgresStore_Integration_ListValidatesSyllabusAndFiltersNode(t *testin
 
 	q := f.createQuestion(t)
 	verifyRubric(t, f, q)
-	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, "test-reviewer"); err != nil {
+	if _, err := f.store.VerifyQuestion(f.ctx, q.ID, 1, "test-reviewer"); err != nil {
 		t.Fatalf("verify question: %v", err)
 	}
 
@@ -1081,7 +1169,7 @@ func TestPostgresStore_Integration_UnknownQuestionIDs(t *testing.T) {
 			if _, err := f.store.UpdateQuestion(f.ctx, id, UpdateInput{ActorID: "a", Prompt: &prompt}); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("update: err = %v, want ErrNotFound", err)
 			}
-			if _, err := f.store.VerifyQuestion(f.ctx, id, "a"); !errors.Is(err, ErrNotFound) {
+			if _, err := f.store.VerifyQuestion(f.ctx, id, 1, "a"); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("verify: err = %v, want ErrNotFound", err)
 			}
 		})

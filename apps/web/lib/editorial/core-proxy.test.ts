@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { auth } from "@clerk/nextjs/server";
-import { callCore, ProxyError, readSafeJsonBody } from "./core-proxy";
+import { callCore, ProxyError, readCanonicalRubricBody, readSafeJsonBody } from "./core-proxy";
 
 vi.mock("@clerk/nextjs/server", () => ({
   auth: vi.fn(),
@@ -288,6 +288,7 @@ describe("callCore", () => {
     { name: "question create", op: { kind: "createQuestion" }, method: "POST", path: "/questions" },
     { name: "question update", op: { kind: "updateQuestion", id: "question-1" }, method: "PATCH", path: "/questions/question-1" },
     { name: "question verify", op: { kind: "verifyQuestion", id: "question-1" }, method: "POST", path: "/questions/question-1/verify" },
+    { name: "canonical rubric repair", op: { kind: "setQuestionCanonicalRubric", id: "question-1" }, method: "POST", path: "/questions/question-1/canonical-rubric" },
     { name: "question retire", op: { kind: "retireQuestion", id: "question-1" }, method: "POST", path: "/questions/question-1/retire" },
     { name: "rubric list", op: { kind: "listQuestionRubricVersions", id: "question-1" }, method: "GET", path: "/questions/question-1/rubric-versions" },
     { name: "rubric create", op: { kind: "createQuestionRubricVersion", id: "question-1" }, method: "POST", path: "/questions/question-1/rubric-versions" },
@@ -464,5 +465,29 @@ describe("readSafeJsonBody", () => {
     const result = await readSafeJsonBody(request);
 
     expect(result).toBe(raw);
+  });
+});
+
+describe("readCanonicalRubricBody", () => {
+  it("returns exact valid raw body", async () => {
+    const raw = ` {"rubricVersion": 7} `;
+    const request = new Request("http://localhost/x", { method: "POST", headers: { "content-type": "application/json" }, body: raw });
+    await expect(readCanonicalRubricBody(request)).resolves.toBe(raw);
+  });
+
+  it.each([
+    `{}`,
+    `null`,
+    `{"rubricVersion":null}`,
+    `{"rubricVersion":0}`,
+    `{"rubricVersion":1.5}`,
+    `{"rubricVersion":2147483648}`,
+    `{"RubricVersion":1}`,
+    `{"rubricVersion":1,"actorId":"forged"}`,
+  ])("rejects invalid fixed body %s", async (raw) => {
+    const request = new Request("http://localhost/x", { method: "POST", headers: { "content-type": "application/json" }, body: raw });
+    const err = await readCanonicalRubricBody(request).catch((error) => error);
+    expect(err).toBeInstanceOf(ProxyError);
+    expect((err as ProxyError).status).toBe(400);
   });
 });

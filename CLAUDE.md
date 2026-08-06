@@ -127,4 +127,12 @@ cd services/ai && python -m pytest
   endpoint, attempt/session, marking, AI, explanation, timer, Exam Mode, or seeded content exists.
   Full release validation passed on 2026-08-06; see `docs/question-delivery-schema.md`, D-0015, and
   `docs/handoffs/T-0013.md`. T-0013 moved to `docs/tasks/history.md` as `done / released`.
+- Explicit canonical rubric selection built in T-0014: additive migration 0018 adds nullable
+  `questions.canonical_rubric_version_id` with no backfill. Question verification now requires a
+  reviewer/admin to select one owned, verified rubric for current content revision; Core locks and
+  writes status, selection, and names-only audit atomically after grounding recheck. Historical
+  verified null rows have one reviewer/admin-only repair endpoint; selection replacement and
+  automatic latest-version choice are forbidden. Editorial BFF/UI expose selection and marker.
+  No learner route exists; future learner projection must omit canonical id, rubric, and answer
+  key. See `docs/canonical-rubric-selection.md` and D-0016. Status remains `review` in T-0014.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.

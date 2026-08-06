@@ -51,6 +51,7 @@ export type EditorialOperation =
   | { kind: "createQuestion" }
   | { kind: "updateQuestion"; id: string }
   | { kind: "verifyQuestion"; id: string }
+  | { kind: "setQuestionCanonicalRubric"; id: string }
   | { kind: "retireQuestion"; id: string }
   | { kind: "listQuestionRubricVersions"; id: string }
   | { kind: "createQuestionRubricVersion"; id: string }
@@ -138,6 +139,8 @@ function resolveRoute(op: EditorialOperation): { method: Method; path: string } 
       return { method: "PATCH", path: `/questions/${requireValidId(op.id)}` };
     case "verifyQuestion":
       return { method: "POST", path: `/questions/${requireValidId(op.id)}/verify` };
+    case "setQuestionCanonicalRubric":
+      return { method: "POST", path: `/questions/${requireValidId(op.id)}/canonical-rubric` };
     case "retireQuestion":
       return { method: "POST", path: `/questions/${requireValidId(op.id)}/retire` };
     case "listQuestionRubricVersions":
@@ -236,6 +239,25 @@ export async function readSafeJsonBody(request: Request): Promise<string> {
     JSON.parse(text);
   } catch {
     throw new ProxyError(400, "invalid_json", "request body must be valid JSON");
+  }
+  return text;
+}
+
+/** Validates fixed canonical-selection shape at BFF boundary, then preserves raw JSON for Core's
+ * stricter duplicate-key/token validation. */
+export async function readCanonicalRubricBody(request: Request): Promise<string> {
+  const text = await readSafeJsonBody(request);
+  const value = JSON.parse(text) as unknown;
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    throw new ProxyError(400, "invalid_json", "request body must contain only a positive rubricVersion");
+  }
+  const keys = Object.keys(value);
+  const version = (value as Record<string, unknown>).rubricVersion;
+  if (
+    keys.length !== 1 || keys[0] !== "rubricVersion" ||
+    !Number.isInteger(version) || (version as number) <= 0 || (version as number) > MAX_POSTGRES_INTEGER
+  ) {
+    throw new ProxyError(400, "invalid_rubric_version", "request body must contain only a positive rubricVersion");
   }
   return text;
 }

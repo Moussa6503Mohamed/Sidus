@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,6 +180,9 @@ func (m *memoryStore) UpdateQuestion(_ context.Context, id string, in UpdateInpu
 	if q.Status != StatusDraft {
 		return Question{}, ErrInvalidTransition
 	}
+	if q.CanonicalRubricVersionID != nil {
+		return Question{}, ErrCanonicalRubricAlreadySet
+	}
 	effectiveNode := q.CurriculumMapNodeID
 	if in.CurriculumMapNodeID != nil {
 		effectiveNode = *in.CurriculumMapNodeID
@@ -237,7 +241,7 @@ func (m *memoryStore) UpdateQuestion(_ context.Context, id string, in UpdateInpu
 	return q, nil
 }
 
-func (m *memoryStore) VerifyQuestion(_ context.Context, id, actorID string) (Question, error) {
+func (m *memoryStore) VerifyQuestion(_ context.Context, id string, rubricVersion int, actorID string) (Question, error) {
 	q, ok := m.questions[id]
 	if !ok {
 		return Question{}, ErrNotFound
@@ -245,30 +249,68 @@ func (m *memoryStore) VerifyQuestion(_ context.Context, id, actorID string) (Que
 	if q.Status != StatusDraft {
 		return Question{}, ErrInvalidTransition
 	}
+	if q.CanonicalRubricVersionID != nil {
+		return Question{}, ErrCanonicalRubricAlreadySet
+	}
 	if err := m.validateGrounding(q.CurriculumMapNodeID, q.SyllabusID); err != nil {
 		return Question{}, err
 	}
-	verifiedTotal, verifiedCurrent := 0, 0
+	var selected *RubricVersion
 	for _, v := range m.rubrics[id] {
-		if v.Status != RubricVerified {
-			continue
-		}
-		verifiedTotal++
-		if v.QuestionRevision == q.ContentRevision {
-			verifiedCurrent++
+		if v.Version == rubricVersion {
+			copy := v
+			selected = &copy
+			break
 		}
 	}
-	if verifiedCurrent == 0 {
-		if verifiedTotal == 0 {
-			return Question{}, ErrMissingVerifiedRubric
-		}
-		return Question{}, ErrStaleVerifiedRubric
+	if selected == nil {
+		return Question{}, ErrInvalidCanonicalRubric
+	}
+	if selected.Status != RubricVerified {
+		return Question{}, ErrUnverifiedCanonicalRubric
+	}
+	if selected.QuestionRevision != q.ContentRevision {
+		return Question{}, ErrStaleCanonicalRubric
 	}
 	q.Status = StatusVerified
+	q.CanonicalRubricVersionID = &selected.ID
 	q.UpdatedAt = time.Now().UTC()
 	m.questions[id] = q
-	m.events = append(m.events, Event{QuestionID: id, EventType: EventQuestionVerified, ActorID: actorID, ChangedFields: []string{"status"}, EventTime: q.UpdatedAt})
+	m.events = append(m.events, Event{QuestionID: id, EventType: EventQuestionVerified, ActorID: actorID, ChangedFields: []string{"status", "canonicalRubricVersionId"}, EventTime: q.UpdatedAt})
 	return q, nil
+}
+
+func (m *memoryStore) SetCanonicalRubric(_ context.Context, id string, rubricVersion int, actorID string) (Question, error) {
+	q, ok := m.questions[id]
+	if !ok {
+		return Question{}, ErrNotFound
+	}
+	if q.Status != StatusVerified {
+		return Question{}, ErrInvalidTransition
+	}
+	if q.CanonicalRubricVersionID != nil {
+		return Question{}, ErrCanonicalRubricAlreadySet
+	}
+	if err := m.validateGrounding(q.CurriculumMapNodeID, q.SyllabusID); err != nil {
+		return Question{}, err
+	}
+	for _, v := range m.rubrics[id] {
+		if v.Version != rubricVersion {
+			continue
+		}
+		if v.Status != RubricVerified {
+			return Question{}, ErrUnverifiedCanonicalRubric
+		}
+		if v.QuestionRevision != q.ContentRevision {
+			return Question{}, ErrStaleCanonicalRubric
+		}
+		q.CanonicalRubricVersionID = &v.ID
+		q.UpdatedAt = time.Now().UTC()
+		m.questions[id] = q
+		m.events = append(m.events, Event{QuestionID: id, EventType: EventCanonicalRubricSet, ActorID: actorID, ChangedFields: []string{"canonicalRubricVersionId"}, EventTime: q.UpdatedAt})
+		return q, nil
+	}
+	return Question{}, ErrInvalidCanonicalRubric
 }
 
 func (m *memoryStore) RetireQuestion(_ context.Context, id, actorID string) (Question, error) {
@@ -768,7 +810,7 @@ func TestVerifyRubricVersion_RevalidatesGrounding(t *testing.T) {
 
 func TestVerifyQuestion_RevalidatesGrounding(t *testing.T) {
 	runBrokenGroundingCases(t, func(t *testing.T, srvURL string, q Question) *http.Response {
-		return doJSONAs(t, http.MethodPost, srvURL+"/questions/"+q.ID+"/verify", reviewerToken, nil)
+		return doJSONAs(t, http.MethodPost, srvURL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": 1})
 	}, func(t *testing.T, srvURL string, q Question) {
 		createVerifiedRubric(t, srvURL, q)
 	})
@@ -951,7 +993,7 @@ func TestCreateRubricVersion_NonDraftQuestion_Returns409(t *testing.T) {
 
 	q := createQuestion(t, srv.URL)
 	createVerifiedRubric(t, srv.URL, q)
-	if resp := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil); resp.StatusCode != http.StatusOK {
+	if resp := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": 1}); resp.StatusCode != http.StatusOK {
 		t.Fatalf("verify question status = %d, want 200", resp.StatusCode)
 	}
 
@@ -966,7 +1008,7 @@ func TestCreateRubricVersion_NonDraftQuestion_Returns409(t *testing.T) {
 
 // --- Question lifecycle ---
 
-func TestVerifyQuestion_WithoutVerifiedRubric_Returns409(t *testing.T) {
+func TestVerifyQuestion_RejectsMissingAndDraftSelectedRubric(t *testing.T) {
 	srv, store := newTestServer()
 	defer srv.Close()
 
@@ -974,12 +1016,12 @@ func TestVerifyQuestion_WithoutVerifiedRubric_Returns409(t *testing.T) {
 
 	// No rubric at all.
 	before := snapshotOf(t, store, q.ID)
-	resp := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil)
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	resp := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": 1})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
-	if body := decodeJSON[map[string]string](t, resp); body["error"] != "missing_verified_rubric" {
-		t.Fatalf("error = %q, want missing_verified_rubric", body["error"])
+	if body := decodeJSON[map[string]string](t, resp); body["error"] != "invalid_canonical_rubric" {
+		t.Fatalf("error = %q, want invalid_canonical_rubric", body["error"])
 	}
 	assertUnchanged(t, store, q.ID, before)
 
@@ -987,9 +1029,12 @@ func TestVerifyQuestion_WithoutVerifiedRubric_Returns409(t *testing.T) {
 	if r := doJSON(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions", validRubric()); r.StatusCode != http.StatusCreated {
 		t.Fatalf("create rubric status = %d, want 201", r.StatusCode)
 	}
-	resp2 := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil)
+	resp2 := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": 1})
 	if resp2.StatusCode != http.StatusConflict {
 		t.Fatalf("draft-rubric verify status = %d, want 409", resp2.StatusCode)
+	}
+	if body := decodeJSON[map[string]string](t, resp2); body["error"] != "canonical_rubric_not_verified" {
+		t.Fatalf("error = %q, want canonical_rubric_not_verified", body["error"])
 	}
 }
 
@@ -1000,7 +1045,7 @@ func TestQuestionLifecycle_VerifyThenRetire(t *testing.T) {
 	q := createQuestion(t, srv.URL)
 	createVerifiedRubric(t, srv.URL, q)
 
-	verifyResp := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil)
+	verifyResp := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": 1})
 	if verifyResp.StatusCode != http.StatusOK {
 		t.Fatalf("verify status = %d, want 200", verifyResp.StatusCode)
 	}
@@ -1008,7 +1053,7 @@ func TestQuestionLifecycle_VerifyThenRetire(t *testing.T) {
 		t.Fatalf("status = %q, want verified", verified.Status)
 	}
 
-	if reverify := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil); reverify.StatusCode != http.StatusConflict {
+	if reverify := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": 1}); reverify.StatusCode != http.StatusConflict {
 		t.Fatalf("re-verify status = %d, want 409", reverify.StatusCode)
 	}
 
@@ -1030,13 +1075,138 @@ func TestQuestionLifecycle_VerifyThenRetire(t *testing.T) {
 	}
 }
 
+func TestVerifyQuestion_StrictCanonicalSelectionBodyBeforeMutation(t *testing.T) {
+	for name, raw := range map[string]string{
+		"missing":      `{}`,
+		"null":         `null`,
+		"null version": `{"rubricVersion":null}`,
+		"zero":         `{"rubricVersion":0}`,
+		"fraction":     `{"rubricVersion":1.5}`,
+		"too large":    `{"rubricVersion":2147483648}`,
+		"case variant": `{"RubricVersion":1}`,
+		"actor":        `{"rubricVersion":1,"actorId":"forged"}`,
+		"duplicate":    `{"rubricVersion":1,"rubricVersion":2}`,
+		"unknown":      `{"rubricVersion":1,"extra":true}`,
+		"trailing":     `{"rubricVersion":1}{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+			q := createQuestion(t, srv.URL)
+			createVerifiedRubric(t, srv.URL, q)
+			before := snapshotOf(t, store, q.ID)
+			resp := doRaw(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", raw)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			resp.Body.Close()
+			assertUnchanged(t, store, q.ID, before)
+		})
+	}
+}
+
+func TestVerifyQuestion_ExplicitSelectionStoresCanonicalAndNamesOnlyAudit(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	q := createQuestion(t, srv.URL)
+	selected := createVerifiedRubric(t, srv.URL, q)
+
+	resp := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": selected.Version})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	verified := decodeJSON[Question](t, resp)
+	if verified.CanonicalRubricVersionID == nil || *verified.CanonicalRubricVersionID != selected.ID {
+		t.Fatalf("canonical rubric = %v, want %s", verified.CanonicalRubricVersionID, selected.ID)
+	}
+	event := store.events[len(store.events)-1]
+	if event.EventType != EventQuestionVerified || strings.Join(event.ChangedFields, ",") != "status,canonicalRubricVersionId" || event.ActorID != reviewerSubject {
+		t.Fatalf("verification event = %+v", event)
+	}
+}
+
+func TestCanonicalRubricRepair_HistoricalVerifiedOnlyAndNoReplacement(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	q := createQuestion(t, srv.URL)
+	selected := createVerifiedRubric(t, srv.URL, q)
+	historical := store.questions[q.ID]
+	historical.Status = StatusVerified
+	historical.CanonicalRubricVersionID = nil
+	store.questions[q.ID] = historical
+
+	path := srv.URL + "/questions/" + q.ID + "/canonical-rubric"
+	if denied := doJSONAs(t, http.MethodPost, path, editorToken, map[string]any{"rubricVersion": 1}); denied.StatusCode != http.StatusForbidden {
+		t.Fatalf("editor status = %d, want 403", denied.StatusCode)
+	}
+	resp := doJSONAs(t, http.MethodPost, path, reviewerToken, map[string]any{"rubricVersion": 1})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("repair status = %d, want 200", resp.StatusCode)
+	}
+	repaired := decodeJSON[Question](t, resp)
+	if repaired.Status != StatusVerified || repaired.CanonicalRubricVersionID == nil || *repaired.CanonicalRubricVersionID != selected.ID {
+		t.Fatalf("repaired question = %+v", repaired)
+	}
+	event := store.events[len(store.events)-1]
+	if event.EventType != EventCanonicalRubricSet || strings.Join(event.ChangedFields, ",") != "canonicalRubricVersionId" || event.ActorID != reviewerSubject {
+		t.Fatalf("canonical event = %+v", event)
+	}
+	if repeat := doJSONAs(t, http.MethodPost, path, adminToken, map[string]any{"rubricVersion": 1}); repeat.StatusCode != http.StatusConflict {
+		t.Fatalf("replacement status = %d, want 409", repeat.StatusCode)
+	}
+}
+
+func TestCanonicalRubricRepair_RejectsLifecycleAndRubricState(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+	q := createQuestion(t, srv.URL)
+	draft := decodeJSON[RubricVersion](t, doJSON(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions", validRubric()))
+	path := srv.URL + "/questions/" + q.ID + "/canonical-rubric"
+
+	if resp := doJSONAs(t, http.MethodPost, path, reviewerToken, map[string]any{"rubricVersion": draft.Version}); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("draft question status = %d, want 409", resp.StatusCode)
+	}
+	historical := store.questions[q.ID]
+	historical.Status = StatusVerified
+	store.questions[q.ID] = historical
+	if resp := doJSONAs(t, http.MethodPost, path, reviewerToken, map[string]any{"rubricVersion": draft.Version}); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("draft rubric status = %d, want 409", resp.StatusCode)
+	}
+
+	other := createQuestion(t, srv.URL)
+	createVerifiedRubric(t, srv.URL, other)
+	foreignTarget := createQuestion(t, srv.URL)
+	foreignHistorical := store.questions[foreignTarget.ID]
+	foreignHistorical.Status = StatusVerified
+	store.questions[foreignTarget.ID] = foreignHistorical
+	foreignPath := srv.URL + "/questions/" + foreignTarget.ID + "/canonical-rubric"
+	if resp := doJSONAs(t, http.MethodPost, foreignPath, reviewerToken, map[string]any{"rubricVersion": 1}); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("foreign/unknown rubric status = %d, want 400", resp.StatusCode)
+	}
+	staleQuestion := createQuestion(t, srv.URL)
+	createVerifiedRubric(t, srv.URL, staleQuestion)
+	patchPrompt(t, srv.URL, staleQuestion.ID, "Changed original prompt for stale selection.")
+	staleHistorical := store.questions[staleQuestion.ID]
+	staleHistorical.Status = StatusVerified
+	store.questions[staleQuestion.ID] = staleHistorical
+	stalePath := srv.URL + "/questions/" + staleQuestion.ID + "/canonical-rubric"
+	if resp := doJSONAs(t, http.MethodPost, stalePath, reviewerToken, map[string]any{"rubricVersion": 1}); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("stale rubric status = %d, want 409", resp.StatusCode)
+	}
+	historical.Status = StatusRetired
+	store.questions[q.ID] = historical
+	if resp := doJSONAs(t, http.MethodPost, path, reviewerToken, map[string]any{"rubricVersion": 1}); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("retired question status = %d, want 409", resp.StatusCode)
+	}
+}
+
 func TestQuestionReads_ReturnAllStatusesAndSupportFilters(t *testing.T) {
 	srv, _ := newTestServer()
 	defer srv.Close()
 
 	q := createQuestion(t, srv.URL)
 	createVerifiedRubric(t, srv.URL, q)
-	doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil)
+	doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": 1})
 
 	// Visible while verified.
 	if resp := doJSON(t, http.MethodGet, srv.URL+"/questions/"+q.ID, nil); resp.StatusCode != http.StatusOK {
@@ -1129,7 +1299,7 @@ func TestListQuestions_OptionalNodeFilter(t *testing.T) {
 
 	q := createQuestion(t, srv.URL)
 	createVerifiedRubric(t, srv.URL, q)
-	doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil)
+	doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": 1})
 
 	matching := decodeJSON[map[string][]Question](t, doJSON(t, http.MethodGet,
 		srv.URL+"/questions?syllabusId=syl-active&curriculumMapNodeId=node-verified", nil))
@@ -1161,6 +1331,7 @@ func TestRoleMatrix_LearnerAndUnknownDenied(t *testing.T) {
 			{http.MethodPost, "/questions", validCreateReq()},
 			{http.MethodPatch, "/questions/any-id", map[string]any{"prompt": "x"}},
 			{http.MethodPost, "/questions/any-id/verify", nil},
+			{http.MethodPost, "/questions/any-id/canonical-rubric", nil},
 			{http.MethodPost, "/questions/any-id/retire", nil},
 			{http.MethodGet, "/questions/any-id/rubric-versions", nil},
 			{http.MethodPost, "/questions/any-id/rubric-versions", validRubric()},
@@ -1209,6 +1380,7 @@ func TestRoleMatrix_EditorDrafts_ReviewerVerifies(t *testing.T) {
 	for _, path := range []string{
 		"/questions/" + q.ID + "/rubric-versions/1/verify",
 		"/questions/" + q.ID + "/verify",
+		"/questions/" + q.ID + "/canonical-rubric",
 		"/questions/" + q.ID + "/retire",
 	} {
 		if resp := doJSONAs(t, http.MethodPost, srv.URL+path, editorToken, nil); resp.StatusCode != http.StatusForbidden {
@@ -1220,7 +1392,7 @@ func TestRoleMatrix_EditorDrafts_ReviewerVerifies(t *testing.T) {
 	if resp := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions/1/verify", reviewerToken, nil); resp.StatusCode != http.StatusOK {
 		t.Fatalf("reviewer rubric verify status = %d, want 200", resp.StatusCode)
 	}
-	if resp := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil); resp.StatusCode != http.StatusOK {
+	if resp := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": 1}); resp.StatusCode != http.StatusOK {
 		t.Fatalf("reviewer question verify status = %d, want 200", resp.StatusCode)
 	}
 	if resp := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/retire", reviewerToken, nil); resp.StatusCode != http.StatusOK {
@@ -1239,7 +1411,7 @@ func TestAuditIdentity_IsVerifiedSubjectOnly(t *testing.T) {
 		t.Fatalf("rubric createdBy = %q, want %q", rubric.CreatedBy, editorSubject)
 	}
 	doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions/1/verify", reviewerToken, nil)
-	doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil)
+	doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": 1})
 
 	wantActors := []string{editorSubject, editorSubject, reviewerSubject, reviewerSubject}
 	if len(store.events) != len(wantActors) {
@@ -1408,12 +1580,12 @@ func TestVerifyQuestion_StaleRubricAfterEdit_Returns409(t *testing.T) {
 			resp.Body.Close()
 			before := snapshotOf(t, store, q.ID)
 
-			verify := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil)
+			verify := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": 1})
 			if verify.StatusCode != http.StatusConflict {
 				t.Fatalf("verify status = %d, want 409", verify.StatusCode)
 			}
-			if body := decodeJSON[map[string]string](t, verify); body["error"] != "missing_current_verified_rubric" {
-				t.Fatalf("error = %q, want missing_current_verified_rubric", body["error"])
+			if body := decodeJSON[map[string]string](t, verify); body["error"] != "canonical_rubric_not_current" {
+				t.Fatalf("error = %q, want canonical_rubric_not_current", body["error"])
 			}
 			assertUnchanged(t, store, q.ID, before)
 		})
@@ -1438,7 +1610,7 @@ func TestVerifyQuestion_NewRubricAfterEdit_Succeeds(t *testing.T) {
 		t.Fatalf("second version = %+v, want version 2 at questionRevision 2", second)
 	}
 
-	verify := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil)
+	verify := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": 2})
 	if verify.StatusCode != http.StatusOK {
 		t.Fatalf("verify status = %d, want 200", verify.StatusCode)
 	}
@@ -1689,8 +1861,8 @@ func TestUpdateQuestion_OptionsRevisionAuditAndStaleness(t *testing.T) {
 		t.Fatalf("rejected status = %d", rejected.StatusCode)
 	}
 	assertUnchanged(t, store, q.ID, before)
-	verifyQuestion := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, nil)
-	if body := decodeJSON[map[string]string](t, verifyQuestion); body["error"] != "missing_current_verified_rubric" {
+	verifyQuestion := doJSONAs(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/verify", reviewerToken, map[string]any{"rubricVersion": 1})
+	if body := decodeJSON[map[string]string](t, verifyQuestion); body["error"] != "canonical_rubric_not_current" {
 		t.Fatalf("error = %q", body["error"])
 	}
 }

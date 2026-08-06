@@ -4,6 +4,7 @@ import type {
   CurriculumMapNode,
   Question,
   QuestionRubricVersion,
+  SelectCanonicalRubricRequest,
   Syllabus,
   UpdateQuestionRequest,
 } from "./types";
@@ -74,8 +75,20 @@ export function updateQuestion(id: string, input: UpdateQuestionRequest): Promis
   });
 }
 
-export function verifyQuestion(id: string): Promise<Question> {
-  return request(`/api/editorial/questions/${encodeURIComponent(id)}/verify`, { method: "POST", body: "{}" });
+export function verifyQuestion(id: string, rubricVersion: number): Promise<Question> {
+  const input: SelectCanonicalRubricRequest = { rubricVersion };
+  return request(`/api/editorial/questions/${encodeURIComponent(id)}/verify`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function setCanonicalRubric(id: string, rubricVersion: number): Promise<Question> {
+  const input: SelectCanonicalRubricRequest = { rubricVersion };
+  return request(`/api/editorial/questions/${encodeURIComponent(id)}/canonical-rubric`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export function retireQuestion(id: string): Promise<Question> {
@@ -114,6 +127,10 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_lifecycle_transition: "Action is not allowed for current question or rubric lifecycle state.",
   missing_verified_rubric: "Verify at least one rubric version before verifying this question.",
   missing_current_verified_rubric: "Question content changed. Create and verify a rubric for current revision.",
+  invalid_canonical_rubric: "Selected rubric does not belong to this question.",
+  canonical_rubric_not_verified: "Selected rubric is not verified.",
+  canonical_rubric_not_current: "Selected rubric was reviewed against an older question revision.",
+  canonical_rubric_already_set: "Canonical rubric is already set and cannot be replaced.",
   invalid_rubric: "Rubric criteria are invalid. Check ids, marks, descriptors, and structure.",
   invalid_max_marks: "Maximum marks must be positive and equal sum of criterion marks.",
   duplicate_rubric_version: "Rubric version could not be allocated because of a duplicate. Retry.",

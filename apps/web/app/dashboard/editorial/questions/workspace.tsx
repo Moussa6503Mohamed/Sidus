@@ -12,6 +12,7 @@ import {
   listSyllabuses,
   listVerifiedNodes,
   retireQuestion,
+  setCanonicalRubric,
   updateQuestion,
   verifyQuestion,
   verifyRubricVersion,
@@ -229,10 +230,13 @@ export function QuestionsWorkspace({ role }: { role: EditingRole }) {
         onVerify={handleVerifyRubric}
       />
       {canReview(role) && <QuestionReviewActions
+        key={selected.id}
         question={selected}
+        versions={versions}
         submitting={mutating}
         error={mutationError}
-        onVerify={(id) => void mutate(() => verifyQuestion(id), replaceQuestion)}
+        onVerify={(id, rubricVersion) => void mutate(() => verifyQuestion(id, rubricVersion), replaceQuestion)}
+        onSetCanonical={(id, rubricVersion) => void mutate(() => setCanonicalRubric(id, rubricVersion), replaceQuestion)}
         onRetire={(id) => void mutate(() => retireQuestion(id), replaceQuestion)}
       />}
     </>}

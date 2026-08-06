@@ -8,6 +8,7 @@ export type {
   QuestionRubricVersion,
   RubricCriterion,
   RubricAnswerKey,
+  SelectCanonicalRubricRequest,
   Syllabus,
   UpdateQuestionRequest,
 } from "@sidus/shared";

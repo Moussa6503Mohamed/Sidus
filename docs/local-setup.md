@@ -37,6 +37,10 @@ Migration 0017 adds nullable `questions.options` JSONB only. It is safe on exist
 rerunnable; existing rows remain `NULL`. Core, not migration SQL, enforces MCQ option and rubric
 answer-key rules. No question, option, rubric, answer key, or other content is seeded.
 
+Migration 0018 adds nullable canonical-rubric FK and partial index. It is additive/rerunnable and
+does not backfill historical verified questions or select any rubric. Reviewer/admin performs
+selection explicitly through editorial question workflow.
+
 ## Authentication (Clerk)
 
 Clerk owns authentication; Sidus Core owns authorization. Set up keys and the `sidus_role`
@@ -53,8 +57,8 @@ cd services/ai && python -m venv .venv && .venv/Scripts/pip install -r requireme
 
 To use editorial source (`/dashboard/editorial/sources`, T-0009), curriculum-map
 (`/dashboard/editorial/curriculum`, T-0010), or question/rubric
-(`/dashboard/editorial/questions`, T-0012/T-0013, including draft MCQ options and answer-key
-selection) workflow, also add
+(`/dashboard/editorial/questions`, T-0012–T-0014, including draft MCQ options, answer-key editing,
+and explicit canonical-rubric selection) workflow, also add
 `SIDUS_CORE_API_URL=http://localhost:8080` to `apps/web/.env.local` (server-only — never
 `NEXT_PUBLIC_*`; see `docs/editorial-source-workflow.md`,
 `docs/editorial-curriculum-workflow.md`, and `docs/editorial-question-rubric-workflow.md` — all

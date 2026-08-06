@@ -56,7 +56,7 @@ export function RubricWorkspace(props: Props) {
       {versions !== null && versions.length === 0 && !loadingError && <p className={sourceStyles.bannerEmpty} role="status">No rubric versions yet.</p>}
       {versions !== null && versions.length > 0 && <div className={sourceStyles.tableWrap}>
         <table>
-          <thead><tr><th>Version</th><th>Status</th><th>Question revision</th><th>Marks</th><th>Freshness</th><th>Action</th></tr></thead>
+          <thead><tr><th>Version</th><th>Status</th><th>Question revision</th><th>Marks</th><th>Freshness</th><th>Canonical</th><th>Action</th></tr></thead>
           <tbody>{versions.map((version) => {
             const current = version.questionRevision === question.contentRevision;
             return <tr key={version.id}>
@@ -65,6 +65,7 @@ export function RubricWorkspace(props: Props) {
               <td>{version.questionRevision}</td>
               <td>{version.maxMarks}</td>
               <td><span className={styles.badge} data-status={current ? "current" : "stale"}>{current ? "current" : "stale"}</span></td>
+              <td>{question.canonicalRubricVersionId === version.id ? <span className={styles.badge} data-status="current">canonical</span> : "—"}</td>
               <td>{canReview(role) && version.status === "draft" ? <button type="button" className={sourceStyles.buttonSecondary} onClick={() => setPendingVersion(version.version)} disabled={submitting}>Verify rubric</button> : "—"}</td>
             </tr>;
           })}</tbody>

@@ -113,3 +113,29 @@ func TestMigrations_QuestionOptionsIsAdditiveAndRerunnable(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrations_CanonicalRubricSelectionIsAdditiveRerunnableAndDoesNotBackfill(t *testing.T) {
+	const file = "0018_add_canonical_rubric_selection.sql"
+	body, err := os.ReadFile(filepath.Join(migrationsDir, file))
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	sql := string(body)
+	for _, want := range []string{
+		"ALTER TABLE questions",
+		"ADD COLUMN IF NOT EXISTS canonical_rubric_version_id UUID NULL",
+		"REFERENCES question_rubric_versions(id)",
+		"CREATE INDEX IF NOT EXISTS idx_questions_canonical_rubric_version_id",
+		"'canonical_rubric_selected'",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("%s does not contain %q", file, want)
+		}
+	}
+	upper := strings.ToUpper(sql)
+	for _, forbidden := range []string{"DROP TABLE", "DROP COLUMN", "INSERT INTO QUESTIONS", "UPDATE QUESTIONS", "SELECT MAX(", "ORDER BY VERSION"} {
+		if strings.Contains(upper, forbidden) {
+			t.Fatalf("%s contains forbidden %q", file, forbidden)
+		}
+	}
+}

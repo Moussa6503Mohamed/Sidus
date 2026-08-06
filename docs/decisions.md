@@ -572,6 +572,35 @@ migration).
 
 **Owner/date:** Codex, 2026-08-06 (T-0013).
 
+## D-0016 — Explicit canonical rubric selection
+
+**Status:** Approved
+**Decision:** Add nullable `questions.canonical_rubric_version_id` through additive, rerunnable
+migration 0018 with no backfill. `POST /questions/{id}/verify` requires exact
+`{"rubricVersion": positiveInteger}`. Core locks question then selected owned rubric in one
+transaction, rechecks grounding/source gate, requires draft question plus verified rubric stamped
+at current content revision, and atomically stores verified status, canonical rubric FK, and
+names-only audit event. Core never selects latest or replaces canonical automatically. Historical
+verified rows left null by migration may be repaired once through reviewer/admin-only
+`POST /questions/{id}/canonical-rubric` using same strict selection and eligibility checks; draft,
+retired, foreign, draft-rubric, stale-rubric, and already-selected cases fail safely. Editorial
+contracts/reads expose nullable canonical id. Fixed BFF operation and role-gated UI require
+selection plus confirmation and show marker. No learner route exists; future learner projection
+must omit canonical id, rubric, and answer key.
+
+**Reason:** Multiple verified current rubric versions may coexist. Automatically choosing highest
+or latest version makes future delivery/marking depend on mutable query ordering rather than
+reviewer intent. Explicit immutable choice makes pairing reproducible while preserving historical
+rows without invented decisions.
+
+**Alternatives:** Auto-select latest verified rubric (rejected: violates approved reviewer intent
+and can silently change behavior); backfill historical verified rows (rejected: invents selection);
+store only per-question version number (rejected: weaker referential integrity than rubric-row FK);
+allow reviewer replacement (rejected: breaks stable verified lifecycle and reproducibility); add
+learner delivery now (rejected: separate projection/auth/session scope).
+
+**Owner/date:** Codex, 2026-08-06 (T-0014).
+
 ## Decision template
 
 ```md

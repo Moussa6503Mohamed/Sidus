@@ -14,6 +14,7 @@ vi.mock("./api-client", async () => {
     createQuestion: vi.fn(),
     updateQuestion: vi.fn(),
     verifyQuestion: vi.fn(),
+    setCanonicalRubric: vi.fn(),
     retireQuestion: vi.fn(),
     createRubricVersion: vi.fn(),
     verifyRubricVersion: vi.fn(),
@@ -50,6 +51,7 @@ function question(overrides: Partial<Question> = {}): Question {
     createdAt: "2026-08-05T00:00:00Z",
     updatedAt: "2026-08-05T00:00:00Z",
     ...overrides,
+    canonicalRubricVersionId: overrides.canonicalRubricVersionId ?? null,
   };
 }
 
@@ -229,18 +231,52 @@ describe("QuestionsWorkspace editing and review", () => {
   it("requires confirmation before question verification and retirement", async () => {
     const draft = question();
     vi.mocked(api.listQuestions).mockResolvedValue({ items: [draft] });
-    vi.mocked(api.verifyQuestion).mockResolvedValue({ ...draft, status: "verified" });
+    const verifiedRubric = version(draft.contentRevision, "verified", 1);
+    vi.mocked(api.listRubricVersions).mockResolvedValue({ items: [verifiedRubric] });
+    vi.mocked(api.verifyQuestion).mockResolvedValue({ ...draft, status: "verified", canonicalRubricVersionId: verifiedRubric.id });
     vi.mocked(api.retireQuestion).mockResolvedValue({ ...draft, status: "retired" });
     render(<QuestionsWorkspace role="admin" />);
     fireEvent.click(await screen.findByRole("button", { name: "Question 1" }));
+    fireEvent.change(await screen.findByLabelText("Canonical rubric version"), { target: { value: "1" } });
     fireEvent.click(await screen.findByRole("button", { name: "Verify question" }));
     expect(api.verifyQuestion).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Confirm verification" }));
-    await waitFor(() => expect(api.verifyQuestion).toHaveBeenCalledWith(draft.id));
+    await waitFor(() => expect(api.verifyQuestion).toHaveBeenCalledWith(draft.id, 1));
     fireEvent.click(await screen.findByRole("button", { name: "Retire question" }));
     expect(api.retireQuestion).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Confirm retirement" }));
     await waitFor(() => expect(api.retireQuestion).toHaveBeenCalledWith(draft.id));
+  });
+
+  it("offers only verified current rubrics and blocks empty selection", async () => {
+    const draft = question();
+    vi.mocked(api.listQuestions).mockResolvedValue({ items: [draft] });
+    vi.mocked(api.listRubricVersions).mockResolvedValue({ items: [
+      version(draft.contentRevision - 1, "verified", 1),
+      version(draft.contentRevision, "draft", 2),
+    ] });
+    render(<QuestionsWorkspace role="reviewer" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Question 1" }));
+    expect(await screen.findByText(/no verified rubric exists for current/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Verify question" })).toBeDisabled();
+    expect(screen.getByLabelText("Canonical rubric version")).toBeDisabled();
+  });
+
+  it("repairs historical verified null canonical and shows marker", async () => {
+    const historical = question({ status: "verified", canonicalRubricVersionId: null });
+    const selected = version(historical.contentRevision, "verified", 3);
+    vi.mocked(api.listQuestions).mockResolvedValue({ items: [historical] });
+    vi.mocked(api.listRubricVersions).mockResolvedValue({ items: [selected] });
+    vi.mocked(api.setCanonicalRubric).mockResolvedValue({ ...historical, canonicalRubricVersionId: selected.id });
+    render(<QuestionsWorkspace role="admin" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Question 1" }));
+    fireEvent.change(await screen.findByLabelText("Canonical rubric version"), { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set canonical rubric" }));
+    expect(api.setCanonicalRubric).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm canonical selection" }));
+    await waitFor(() => expect(api.setCanonicalRubric).toHaveBeenCalledWith(historical.id, 3));
+    expect(await screen.findByText("canonical")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Set canonical rubric" })).not.toBeInTheDocument();
   });
 
   it("hides reviewer actions from editor", async () => {

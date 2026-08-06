@@ -64,3 +64,7 @@ freshness remain visible.
 Current editorial reads include rubric `answerKey`, as reviewers need it. No learner endpoint exists.
 Any future learner contract must use a dedicated response projection that omits rubric documents and
 `answerKey`; reusing editorial `QuestionRubricVersion` would violate this boundary.
+
+T-0014 also adds editorial-only nullable `canonicalRubricVersionId`. Future learner projection must
+omit this id as well as rubric documents and `answerKey`. Core will use explicit canonical relation
+internally for reproducible future delivery/marking; no learner route is added here.

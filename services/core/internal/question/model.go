@@ -75,6 +75,9 @@ type Question struct {
 	// serialized as null so pre-T-0013 rows remain explicit and backward compatible.
 	Options []MultipleChoiceOption `json:"options"`
 	Status  Status                 `json:"status"`
+	// CanonicalRubricVersionID is selected explicitly by a reviewer/admin. Historical and draft
+	// questions may remain nil; Core never derives or replaces it automatically.
+	CanonicalRubricVersionID *string `json:"canonicalRubricVersionId"`
 	// ContentRevision starts at 1 and increases by exactly one on every successful draft-content
 	// update. It is never caller-settable. A rubric version is only current — and so only counts
 	// towards question verification — while its QuestionRevision equals this value.
@@ -113,6 +116,7 @@ const (
 	EventQuestionRetired      EventType = "question_retired"
 	EventRubricVersionCreated EventType = "rubric_version_created"
 	EventRubricVersionVerify  EventType = "rubric_version_verified"
+	EventCanonicalRubricSet   EventType = "canonical_rubric_selected"
 )
 
 // Event is an immutable audit record of a question or rubric-version mutation. It records which

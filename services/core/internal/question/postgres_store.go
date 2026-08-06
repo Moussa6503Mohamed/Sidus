@@ -23,7 +23,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
-const questionColumns = `id, syllabus_id, curriculum_map_node_id, response_type, language, prompt, options, status, content_revision, created_at, updated_at`
+const questionColumns = `id, syllabus_id, curriculum_map_node_id, response_type, language, prompt, options, status, canonical_rubric_version_id, content_revision, created_at, updated_at`
 
 const rubricColumns = `id, question_id, version, question_revision, rubric, max_marks, status, created_by, reviewed_by, created_at, updated_at`
 
@@ -34,7 +34,7 @@ func scanQuestion(row scanner) (Question, error) {
 	var options []byte
 	err := row.Scan(
 		&q.ID, &q.SyllabusID, &q.CurriculumMapNodeID, &q.ResponseType, &q.Language, &q.Prompt,
-		&options, &q.Status, &q.ContentRevision, &q.CreatedAt, &q.UpdatedAt,
+		&options, &q.Status, &q.CanonicalRubricVersionID, &q.ContentRevision, &q.CreatedAt, &q.UpdatedAt,
 	)
 	if err == nil && options != nil {
 		err = json.Unmarshal(options, &q.Options)
@@ -225,6 +225,9 @@ func (p *PostgresStore) UpdateQuestion(ctx context.Context, id string, in Update
 	if current.Status != StatusDraft {
 		return Question{}, ErrInvalidTransition
 	}
+	if current.CanonicalRubricVersionID != nil {
+		return Question{}, ErrCanonicalRubricAlreadySet
+	}
 
 	// The grounding gate re-runs on every update, against the effective node (the supplied one if
 	// present, otherwise the stored one), before any diff, write, or event.
@@ -320,12 +323,125 @@ func (p *PostgresStore) UpdateQuestion(ctx context.Context, id string, in Update
 	return updated, nil
 }
 
-func (p *PostgresStore) VerifyQuestion(ctx context.Context, id string, actorID string) (Question, error) {
-	return p.transitionStatus(ctx, id, actorID, EventQuestionVerified, StatusVerified, []Status{StatusDraft}, true)
+func (p *PostgresStore) VerifyQuestion(ctx context.Context, id string, rubricVersion int, actorID string) (Question, error) {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Question{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	current, err := lockQuestion(ctx, tx, id)
+	if err != nil {
+		return Question{}, err
+	}
+	if current.Status != StatusDraft {
+		return Question{}, ErrInvalidTransition
+	}
+	if current.CanonicalRubricVersionID != nil {
+		return Question{}, ErrCanonicalRubricAlreadySet
+	}
+	if err := validateGrounding(ctx, tx, current.CurriculumMapNodeID, current.SyllabusID); err != nil {
+		return Question{}, err
+	}
+	selected, err := lockCanonicalRubric(ctx, tx, id, rubricVersion)
+	if err != nil {
+		return Question{}, err
+	}
+	if err := validateCanonicalRubric(selected, current.ContentRevision); err != nil {
+		return Question{}, err
+	}
+
+	updated, err := scanQuestion(tx.QueryRowContext(ctx, `
+		UPDATE questions
+		SET status = 'verified', canonical_rubric_version_id = $1, updated_at = now()
+		WHERE id = $2
+		RETURNING `+questionColumns,
+		selected.ID, id,
+	))
+	if err != nil {
+		return Question{}, fmt.Errorf("verify question with canonical rubric: %w", err)
+	}
+	if err := insertEvent(ctx, tx, id, EventQuestionVerified, actorID, []string{"status", "canonicalRubricVersionId"}); err != nil {
+		return Question{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Question{}, fmt.Errorf("commit: %w", err)
+	}
+	return updated, nil
+}
+
+func (p *PostgresStore) SetCanonicalRubric(ctx context.Context, id string, rubricVersion int, actorID string) (Question, error) {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Question{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	current, err := lockQuestion(ctx, tx, id)
+	if err != nil {
+		return Question{}, err
+	}
+	if current.Status != StatusVerified {
+		return Question{}, ErrInvalidTransition
+	}
+	if current.CanonicalRubricVersionID != nil {
+		return Question{}, ErrCanonicalRubricAlreadySet
+	}
+	if err := validateGrounding(ctx, tx, current.CurriculumMapNodeID, current.SyllabusID); err != nil {
+		return Question{}, err
+	}
+	selected, err := lockCanonicalRubric(ctx, tx, id, rubricVersion)
+	if err != nil {
+		return Question{}, err
+	}
+	if err := validateCanonicalRubric(selected, current.ContentRevision); err != nil {
+		return Question{}, err
+	}
+
+	updated, err := scanQuestion(tx.QueryRowContext(ctx, `
+		UPDATE questions SET canonical_rubric_version_id = $1, updated_at = now()
+		WHERE id = $2
+		RETURNING `+questionColumns,
+		selected.ID, id,
+	))
+	if err != nil {
+		return Question{}, fmt.Errorf("set canonical rubric: %w", err)
+	}
+	if err := insertEvent(ctx, tx, id, EventCanonicalRubricSet, actorID, []string{"canonicalRubricVersionId"}); err != nil {
+		return Question{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Question{}, fmt.Errorf("commit: %w", err)
+	}
+	return updated, nil
 }
 
 func (p *PostgresStore) RetireQuestion(ctx context.Context, id string, actorID string) (Question, error) {
 	return p.transitionStatus(ctx, id, actorID, EventQuestionRetired, StatusRetired, []Status{StatusDraft, StatusVerified}, false)
+}
+
+func lockCanonicalRubric(ctx context.Context, tx *sql.Tx, questionID string, version int) (RubricVersion, error) {
+	selected, err := scanRubricVersion(tx.QueryRowContext(ctx,
+		`SELECT `+rubricColumns+` FROM question_rubric_versions
+		 WHERE question_id = $1 AND version = $2 FOR UPDATE`, questionID, version,
+	))
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
+		return RubricVersion{}, ErrInvalidCanonicalRubric
+	}
+	if err != nil {
+		return RubricVersion{}, fmt.Errorf("lock selected rubric version: %w", err)
+	}
+	return selected, nil
+}
+
+func validateCanonicalRubric(selected RubricVersion, currentRevision int) error {
+	if selected.Status != RubricVerified {
+		return ErrUnverifiedCanonicalRubric
+	}
+	if selected.QuestionRevision != currentRevision {
+		return ErrStaleCanonicalRubric
+	}
+	return nil
 }
 
 func (p *PostgresStore) transitionStatus(

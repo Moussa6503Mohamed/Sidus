@@ -380,6 +380,8 @@ export interface Question {
   /** Present only for multiple_choice; pre-T-0013 rows can return null until edited. */
   options: MultipleChoiceOption[] | null;
   status: QuestionStatus;
+  /** Explicit reviewer-selected rubric row id; null for drafts and unrepaired historical rows. */
+  canonicalRubricVersionId: string | null;
   /**
    * Revision of the question's content. Starts at 1 and increases by exactly one on every
    * successful draft update (curriculumMapNodeId, responseType, language, prompt); a rejected or
@@ -479,13 +481,19 @@ export interface CreateQuestionRubricVersionRequest {
   maxMarks: number;
 }
 
+/** Exact body for question verification and historical canonical-rubric repair. */
+export interface SelectCanonicalRubricRequest {
+  rubricVersion: number;
+}
+
 export type QuestionEventType =
   | "question_created"
   | "question_updated"
   | "question_verified"
   | "question_retired"
   | "rubric_version_created"
-  | "rubric_version_verified";
+  | "rubric_version_verified"
+  | "canonical_rubric_selected";
 
 /**
  * Immutable audit record of a question or rubric-version mutation. Records which fields changed

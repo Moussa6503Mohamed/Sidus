@@ -20,6 +20,7 @@ Actual Core routes used:
 | `/questions` | POST | create draft question |
 | `/questions/{id}` | GET, PATCH | get question; edit draft |
 | `/questions/{id}/verify` | POST | verify question |
+| `/questions/{id}/canonical-rubric` | POST | repair historical verified null canonical selection |
 | `/questions/{id}/retire` | POST | retire question |
 | `/questions/{id}/rubric-versions` | GET, POST | list or append rubric version |
 | `/questions/{id}/rubric-versions/{version}/verify` | POST | verify rubric version |
@@ -34,6 +35,7 @@ Existing `/catalogue/syllabuses` and
 | `/api/editorial/questions` | GET, POST | list/create questions |
 | `/api/editorial/questions/{id}` | GET, PATCH | get/update question |
 | `/api/editorial/questions/{id}/verify` | POST | verify question |
+| `/api/editorial/questions/{id}/canonical-rubric` | POST | set historical canonical rubric |
 | `/api/editorial/questions/{id}/retire` | POST | retire question |
 | `/api/editorial/questions/{id}/rubric-versions` | GET, POST | list/create versions |
 | `/api/editorial/questions/{id}/rubric-versions/{version}/verify` | POST | verify version |
@@ -44,7 +46,8 @@ PostgreSQL integer. Question list requires valid `syllabusId`; optional node id 
 validation; optional status is exactly `draft`, `verified`, `retired`, or `all`. Route resolution
 validates these before Clerk lookup or fetch. JSON mutations require `application/json`, maximum
 100 KB raw body, and valid JSON before fetch; body is forwarded verbatim for Core strict decoding.
-Lifecycle POST handlers ignore browser body and send fixed `{}`.
+Question verify and canonical-repair handlers require exact `{rubricVersion: positiveInteger}`;
+retire and rubric-verify lifecycle handlers ignore browser body and send fixed `{}`.
 
 Fail closed behavior remains shared: missing Core URL → generic 503 before auth; missing token →
 generic 401 before fetch; network failure or redirect → generic 502; every Core 5xx body is consumed
@@ -68,6 +71,9 @@ verify, question verify, and retire controls; this is visibility only, never aut
 - Empty structured criteria editor supports id, positive integer marks, optional nonblank
   descriptor, unique ids, 1–200 criteria, per-criterion maximum 1000, and exact max-mark sum.
   Client validation mirrors safe shape; Core remains authority.
+- Reviewer/admin sees only verified rubric versions for current question revision in canonical
+  selector. Question verification requires selection plus confirmation. Historical verified null
+  row can be repaired explicitly; existing canonical marker is visible and replacement unavailable.
 - Verify/retire actions require explicit confirmation. Loading, empty, error/retry, locked,
   denied, and horizontally scrollable mobile table states are present.
 
