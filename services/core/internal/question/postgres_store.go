@@ -23,7 +23,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
-const questionColumns = `id, syllabus_id, curriculum_map_node_id, response_type, language, prompt, options, status, canonical_rubric_version_id, content_revision, created_at, updated_at`
+const questionColumns = `id, syllabus_id, curriculum_map_node_id, response_type, language, prompt, options, origin_type, status, canonical_rubric_version_id, content_revision, created_at, updated_at`
 
 const rubricColumns = `id, question_id, version, question_revision, rubric, max_marks, status, created_by, reviewed_by, created_at, updated_at`
 
@@ -32,14 +32,48 @@ type scanner interface{ Scan(...any) error }
 func scanQuestion(row scanner) (Question, error) {
 	var q Question
 	var options []byte
+	var originType *string
 	err := row.Scan(
 		&q.ID, &q.SyllabusID, &q.CurriculumMapNodeID, &q.ResponseType, &q.Language, &q.Prompt,
-		&options, &q.Status, &q.CanonicalRubricVersionID, &q.ContentRevision, &q.CreatedAt, &q.UpdatedAt,
+		&options, &originType, &q.Status, &q.CanonicalRubricVersionID, &q.ContentRevision, &q.CreatedAt, &q.UpdatedAt,
 	)
 	if err == nil && options != nil {
 		err = json.Unmarshal(options, &q.Options)
 	}
+	if err == nil && originType != nil {
+		origin := OriginType(*originType)
+		q.OriginType = &origin
+	}
 	return q, err
+}
+
+func loadQuestionProvenance(ctx context.Context, q queryRower, questionID string) (*QuestionProvenance, error) {
+	var provenance QuestionProvenance
+	err := q.QueryRowContext(ctx, `
+		SELECT question_id, content_source_id, source_locator, origin_type,
+		       verified_actor_id, verified_at, created_at
+		FROM question_provenance WHERE question_id = $1
+	`, questionID).Scan(
+		&provenance.QuestionID, &provenance.ContentSourceID, &provenance.SourceLocator,
+		&provenance.OriginType, &provenance.VerifiedActorID, &provenance.VerifiedAt,
+		&provenance.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load question provenance: %w", err)
+	}
+	return &provenance, nil
+}
+
+func attachQuestionProvenance(ctx context.Context, db queryRower, q *Question) error {
+	provenance, err := loadQuestionProvenance(ctx, db, q.ID)
+	if err != nil {
+		return err
+	}
+	q.Provenance = provenance
+	return nil
 }
 
 func scanRubricVersion(row scanner) (RubricVersion, error) {
@@ -134,6 +168,72 @@ func validateGrounding(ctx context.Context, q queryRower, nodeID, syllabusID str
 	return nil
 }
 
+// validateLicensedSource enforces same human-entered rights completeness required for source
+// approval, plus live approval and catalogue linkage. It reads metadata only.
+func validateLicensedSource(ctx context.Context, q queryRower, sourceID, syllabusID string) error {
+	var status string
+	var catalogueSyllabusID, owner, sourceHash, licenceReference, permittedUse, allowedAudience *string
+	var title, sourceURL string
+	err := q.QueryRowContext(ctx, `
+		SELECT status, catalogue_syllabus_id, owner, title, source_url, source_hash,
+		       licence_reference, permitted_use, allowed_audience
+		FROM content_sources WHERE id = $1
+	`, sourceID).Scan(
+		&status, &catalogueSyllabusID, &owner, &title, &sourceURL, &sourceHash,
+		&licenceReference, &permittedUse, &allowedAudience,
+	)
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
+		return ErrUnknownSource
+	}
+	if err != nil {
+		return fmt.Errorf("check licensed content source: %w", err)
+	}
+	if status != "approved" {
+		return ErrUnapprovedSource
+	}
+	if catalogueSyllabusID == nil {
+		return ErrUnlinkedSource
+	}
+	if *catalogueSyllabusID != syllabusID {
+		return ErrMismatchedSource
+	}
+	if blankOptional(owner) || strings.TrimSpace(title) == "" || strings.TrimSpace(sourceURL) == "" ||
+		blankOptional(sourceHash) || blankOptional(licenceReference) || blankOptional(permittedUse) ||
+		blankOptional(allowedAudience) {
+		return ErrIncompleteSourceRights
+	}
+	return nil
+}
+
+func blankOptional(value *string) bool {
+	return value == nil || strings.TrimSpace(*value) == ""
+}
+
+func validateLicensedProvenance(ctx context.Context, q queryRower, question Question) error {
+	if question.OriginType == nil || *question.OriginType == OriginOriginal {
+		return nil
+	}
+	if *question.OriginType != OriginLicensedAdaptation {
+		return ErrInvalidOriginType
+	}
+	provenance, err := loadQuestionProvenance(ctx, q, question.ID)
+	if err != nil {
+		return err
+	}
+	if provenance == nil || provenance.OriginType != OriginLicensedAdaptation ||
+		strings.TrimSpace(provenance.SourceLocator) == "" {
+		return ErrInvalidProvenance
+	}
+	return validateLicensedSource(ctx, q, provenance.ContentSourceID, question.SyllabusID)
+}
+
+func validateQuestionForWrite(ctx context.Context, q queryRower, question Question) error {
+	if err := validateGrounding(ctx, q, question.CurriculumMapNodeID, question.SyllabusID); err != nil {
+		return err
+	}
+	return validateLicensedProvenance(ctx, q, question)
+}
+
 // validateNodeFilter resolves an optional list filter against the curriculum map. It is weaker
 // than validateGrounding on purpose: a reader may legitimately filter by a node that has since
 // been retired or whose source has regressed, and would then get an empty list. What it must not
@@ -156,6 +256,17 @@ func validateNodeFilter(ctx context.Context, q queryRower, nodeID, syllabusID st
 }
 
 func (p *PostgresStore) CreateQuestion(ctx context.Context, in CreateInput) (Question, error) {
+	if !IsValidOriginType(in.OriginType) {
+		return Question{}, ErrInvalidOriginType
+	}
+	if in.OriginType == OriginOriginal {
+		if in.ContentSourceID != nil || in.SourceLocator != nil {
+			return Question{}, ErrInvalidProvenance
+		}
+	} else if in.ContentSourceID == nil || in.SourceLocator == nil ||
+		strings.TrimSpace(*in.ContentSourceID) == "" || strings.TrimSpace(*in.SourceLocator) == "" {
+		return Question{}, ErrInvalidProvenance
+	}
 	if !IsValidResponseType(in.ResponseType) || validateOptionsForResponseType(in.ResponseType, in.Options) != nil {
 		return Question{}, ErrInvalidOptions
 	}
@@ -176,6 +287,11 @@ func (p *PostgresStore) CreateQuestion(ctx context.Context, in CreateInput) (Que
 	if err := validateGrounding(ctx, tx, in.CurriculumMapNodeID, in.SyllabusID); err != nil {
 		return Question{}, err
 	}
+	if in.OriginType == OriginLicensedAdaptation {
+		if err := validateLicensedSource(ctx, tx, *in.ContentSourceID, in.SyllabusID); err != nil {
+			return Question{}, err
+		}
+	}
 
 	var optionsJSON any
 	if in.Options != nil {
@@ -186,10 +302,11 @@ func (p *PostgresStore) CreateQuestion(ctx context.Context, in CreateInput) (Que
 		optionsJSON = encoded
 	}
 	row := tx.QueryRowContext(ctx, `
-		INSERT INTO questions (syllabus_id, curriculum_map_node_id, response_type, language, prompt, options)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO questions (syllabus_id, curriculum_map_node_id, response_type, language, prompt, options, origin_type)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING `+questionColumns,
-		in.SyllabusID, in.CurriculumMapNodeID, string(in.ResponseType), in.Language, in.Prompt, optionsJSON,
+		in.SyllabusID, in.CurriculumMapNodeID, string(in.ResponseType), in.Language, in.Prompt,
+		optionsJSON, string(in.OriginType),
 	)
 	q, err := scanQuestion(row)
 	if err != nil {
@@ -197,12 +314,21 @@ func (p *PostgresStore) CreateQuestion(ctx context.Context, in CreateInput) (Que
 	}
 
 	// Field NAMES only — a prompt value is never written to the audit trail.
-	changed := []string{"syllabusId", "curriculumMapNodeId", "responseType", "language", "prompt"}
+	changed := []string{"syllabusId", "curriculumMapNodeId", "responseType", "language", "prompt", "originType"}
 	if in.Options != nil {
 		changed = append(changed, "options")
 	}
 	if err := insertEvent(ctx, tx, q.ID, EventQuestionCreated, in.ActorID, changed); err != nil {
 		return Question{}, err
+	}
+	if in.OriginType == OriginLicensedAdaptation {
+		provenance, err := insertQuestionProvenance(
+			ctx, tx, q.ID, *in.ContentSourceID, strings.TrimSpace(*in.SourceLocator), in.ActorID,
+		)
+		if err != nil {
+			return Question{}, err
+		}
+		q.Provenance = &provenance
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -235,7 +361,9 @@ func (p *PostgresStore) UpdateQuestion(ctx context.Context, id string, in Update
 	if in.CurriculumMapNodeID != nil {
 		effectiveNodeID = *in.CurriculumMapNodeID
 	}
-	if err := validateGrounding(ctx, tx, effectiveNodeID, current.SyllabusID); err != nil {
+	effectiveQuestion := current
+	effectiveQuestion.CurriculumMapNodeID = effectiveNodeID
+	if err := validateQuestionForWrite(ctx, tx, effectiveQuestion); err != nil {
 		return Question{}, err
 	}
 
@@ -316,6 +444,9 @@ func (p *PostgresStore) UpdateQuestion(ctx context.Context, id string, in Update
 	if err := insertEvent(ctx, tx, id, EventQuestionUpdated, in.ActorID, changed); err != nil {
 		return Question{}, err
 	}
+	if err := attachQuestionProvenance(ctx, tx, &updated); err != nil {
+		return Question{}, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return Question{}, fmt.Errorf("commit: %w", err)
@@ -340,7 +471,7 @@ func (p *PostgresStore) VerifyQuestion(ctx context.Context, id string, rubricVer
 	if current.CanonicalRubricVersionID != nil {
 		return Question{}, ErrCanonicalRubricAlreadySet
 	}
-	if err := validateGrounding(ctx, tx, current.CurriculumMapNodeID, current.SyllabusID); err != nil {
+	if err := validateQuestionForWrite(ctx, tx, current); err != nil {
 		return Question{}, err
 	}
 	selected, err := lockCanonicalRubric(ctx, tx, id, rubricVersion)
@@ -362,6 +493,9 @@ func (p *PostgresStore) VerifyQuestion(ctx context.Context, id string, rubricVer
 		return Question{}, fmt.Errorf("verify question with canonical rubric: %w", err)
 	}
 	if err := insertEvent(ctx, tx, id, EventQuestionVerified, actorID, []string{"status", "canonicalRubricVersionId"}); err != nil {
+		return Question{}, err
+	}
+	if err := attachQuestionProvenance(ctx, tx, &updated); err != nil {
 		return Question{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -387,7 +521,7 @@ func (p *PostgresStore) SetCanonicalRubric(ctx context.Context, id string, rubri
 	if current.CanonicalRubricVersionID != nil {
 		return Question{}, ErrCanonicalRubricAlreadySet
 	}
-	if err := validateGrounding(ctx, tx, current.CurriculumMapNodeID, current.SyllabusID); err != nil {
+	if err := validateQuestionForWrite(ctx, tx, current); err != nil {
 		return Question{}, err
 	}
 	selected, err := lockCanonicalRubric(ctx, tx, id, rubricVersion)
@@ -408,6 +542,9 @@ func (p *PostgresStore) SetCanonicalRubric(ctx context.Context, id string, rubri
 		return Question{}, fmt.Errorf("set canonical rubric: %w", err)
 	}
 	if err := insertEvent(ctx, tx, id, EventCanonicalRubricSet, actorID, []string{"canonicalRubricVersionId"}); err != nil {
+		return Question{}, err
+	}
+	if err := attachQuestionProvenance(ctx, tx, &updated); err != nil {
 		return Question{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -476,7 +613,7 @@ func (p *PostgresStore) transitionStatus(
 
 	// Verify/retire are question writes too: the grounding gate re-runs against the stored node
 	// before the status change and its event.
-	if err := validateGrounding(ctx, tx, current.CurriculumMapNodeID, current.SyllabusID); err != nil {
+	if err := validateQuestionForWrite(ctx, tx, current); err != nil {
 		return Question{}, err
 	}
 
@@ -495,6 +632,9 @@ func (p *PostgresStore) transitionStatus(
 	}
 
 	if err := insertEvent(ctx, tx, id, eventType, actorID, []string{"status"}); err != nil {
+		return Question{}, err
+	}
+	if err := attachQuestionProvenance(ctx, tx, &updated); err != nil {
 		return Question{}, err
 	}
 
@@ -541,6 +681,9 @@ func (p *PostgresStore) GetQuestion(ctx context.Context, id string) (Question, e
 	}
 	if err != nil {
 		return Question{}, fmt.Errorf("get question: %w", err)
+	}
+	if err := attachQuestionProvenance(ctx, p.db, &q); err != nil {
+		return Question{}, err
 	}
 	return q, nil
 }
@@ -595,7 +738,18 @@ func (p *PostgresStore) ListQuestions(ctx context.Context, syllabusID string, no
 		}
 		questions = append(questions, q)
 	}
-	return questions, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close question rows: %w", err)
+	}
+	for i := range questions {
+		if err := attachQuestionProvenance(ctx, p.db, &questions[i]); err != nil {
+			return nil, err
+		}
+	}
+	return questions, nil
 }
 
 func (p *PostgresStore) CreateRubricVersion(ctx context.Context, questionID string, in CreateRubricVersionInput) (RubricVersion, error) {
@@ -618,7 +772,7 @@ func (p *PostgresStore) CreateRubricVersion(ctx context.Context, questionID stri
 	if current.Status != StatusDraft {
 		return RubricVersion{}, ErrInvalidTransition
 	}
-	if err := validateGrounding(ctx, tx, current.CurriculumMapNodeID, current.SyllabusID); err != nil {
+	if err := validateQuestionForWrite(ctx, tx, current); err != nil {
 		return RubricVersion{}, err
 	}
 	if err := ValidateRubricForQuestion(in.Rubric, in.MaxMarks, current.ResponseType, current.Options); err != nil {
@@ -701,7 +855,7 @@ func (p *PostgresStore) VerifyRubricVersion(ctx context.Context, questionID stri
 	if current.Status != StatusDraft && current.Status != StatusVerified {
 		return RubricVersion{}, ErrInvalidTransition
 	}
-	if err := validateGrounding(ctx, tx, current.CurriculumMapNodeID, current.SyllabusID); err != nil {
+	if err := validateQuestionForWrite(ctx, tx, current); err != nil {
 		return RubricVersion{}, err
 	}
 
@@ -780,6 +934,37 @@ func insertEvent(ctx context.Context, tx *sql.Tx, questionID string, eventType E
 		return fmt.Errorf("insert question event: %w", err)
 	}
 	return nil
+}
+
+func insertQuestionProvenance(
+	ctx context.Context,
+	tx *sql.Tx,
+	questionID, contentSourceID, sourceLocator, actor string,
+) (QuestionProvenance, error) {
+	var provenance QuestionProvenance
+	err := tx.QueryRowContext(ctx, `
+		INSERT INTO question_provenance
+			(question_id, content_source_id, source_locator, origin_type, verified_actor_id)
+		VALUES ($1, $2, $3, 'licensed_adaptation', $4)
+		RETURNING question_id, content_source_id, source_locator, origin_type,
+		          verified_actor_id, verified_at, created_at
+	`, questionID, contentSourceID, sourceLocator, actor).Scan(
+		&provenance.QuestionID, &provenance.ContentSourceID, &provenance.SourceLocator,
+		&provenance.OriginType, &provenance.VerifiedActorID, &provenance.VerifiedAt,
+		&provenance.CreatedAt,
+	)
+	if err != nil {
+		return QuestionProvenance{}, fmt.Errorf("insert question provenance: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO question_provenance_events
+			(question_id, event_type, actor_id, changed_fields)
+		VALUES ($1, 'provenance_recorded', $2,
+		        ARRAY['questionId','contentSourceId','sourceLocator','originType','verifiedActorId','verifiedAt'])
+	`, questionID, actor); err != nil {
+		return QuestionProvenance{}, fmt.Errorf("insert question provenance event: %w", err)
+	}
+	return provenance, nil
 }
 
 func isUniqueViolation(err error) bool {

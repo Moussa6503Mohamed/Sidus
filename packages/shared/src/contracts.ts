@@ -336,10 +336,11 @@ export interface CurriculumMapEvent {
   createdAt: string;
 }
 
-// --- Original questions and versioned rubrics (T-0007) ---
-// Private infrastructure for a future Exam Mode. Question prompts and rubric structures are
-// ORIGINAL content authored at runtime by a future private, approved editorial workflow — never
-// copied or lightly rewritten source material, and never committed to this repository. Core is
+// --- Editorial questions, licensed provenance, and versioned rubrics (T-0007/T-0018) ---
+// Private infrastructure. Question prompts and rubric structures are authored at runtime by a
+// private approved editorial workflow and never committed as repository content. Licensed
+// adaptations carry metadata-only provenance; source material is never copied, uploaded,
+// extracted, or returned. Core is
 // the sole authority: on every write it re-validates that the question's curriculum-map node is
 // verified, belongs to the question's syllabus, and that the node's content source still passes
 // the T-0006 source gate. Mirrors services/core/internal/question. Editorial reads of questions
@@ -363,6 +364,21 @@ export interface MultipleChoiceOption {
 /** Lifecycle state of a question. Retired questions remain visible only to editorial readers. */
 export type QuestionStatus = "draft" | "verified" | "retired";
 
+/** Editorial-only origin. Null exists only on historical pre-T-0018 Question rows. */
+export type QuestionOriginType = "original" | "licensed_adaptation";
+
+/** Immutable metadata-only licensed provenance. Never use this type on learner surfaces. */
+export interface QuestionProvenance {
+  questionId: string;
+  contentSourceId: string;
+  sourceLocator: string;
+  originType: "licensed_adaptation";
+  /** Authenticated Clerk subject recorded by Core, never supplied by request body. */
+  verifiedActorId: string;
+  verifiedAt: string;
+  createdAt: string;
+}
+
 /** Lifecycle state of a rubric version. A version is superseded by a new version, never retired. */
 export type RubricVersionStatus = "draft" | "verified";
 
@@ -379,6 +395,10 @@ export interface Question {
   prompt: string;
   /** Present only for multiple_choice; pre-T-0013 rows can return null until edited. */
   options: MultipleChoiceOption[] | null;
+  /** Null only for historical rows. Editorial-only; learner projections omit it. */
+  originType: QuestionOriginType | null;
+  /** Present exactly for licensed adaptations. Editorial-only. */
+  provenance: QuestionProvenance | null;
   status: QuestionStatus;
   /** Explicit reviewer-selected rubric row id; null for drafts and unrepaired historical rows. */
   canonicalRubricVersionId: string | null;
@@ -459,10 +479,20 @@ interface CreateQuestionRequestBase {
 }
 
 /** Create shape enforces options only for MCQ at compile time; Core remains runtime authority. */
-export type CreateQuestionRequest = CreateQuestionRequestBase & (
+type CreateQuestionContent =
   | { responseType: "multiple_choice"; options: MultipleChoiceOption[] }
-  | { responseType: "short_answer" | "structured_response"; options?: never }
-);
+  | { responseType: "short_answer" | "structured_response"; options?: never };
+
+type CreateQuestionOrigin =
+  | { originType: "original"; contentSourceId?: never; sourceLocator?: never }
+  | {
+      originType: "licensed_adaptation";
+      contentSourceId: string;
+      /** Metadata locator only, such as human-entered paper/session/question or chapter/page. */
+      sourceLocator: string;
+    };
+
+export type CreateQuestionRequest = CreateQuestionRequestBase & CreateQuestionContent & CreateQuestionOrigin;
 
 /**
  * Update a draft question (editor/reviewer/admin). Only a draft question may be updated. At
@@ -515,7 +545,8 @@ export interface QuestionEvent {
 // The first surface any `learner`-role session may call. A strictly read-only, structurally
 // reduced projection over the private editorial `Question`/`QuestionRubricVersion` types above:
 // it can never carry `status`, `canonicalRubricVersionId`, a rubric, an answer key, marks, event
-// data, actor identity, timestamps, or internal source metadata (source id/URL/hash). Mirrors
+// data, actor identity, timestamps, origin/provenance, licence facts, or internal source metadata
+// (source id/URL/hash). Mirrors
 // services/core/internal/learner, which independently defines its own Go types (no import of the
 // question package) so the projection cannot gain an editorial field by accident. `GET
 // /learner/questions*` requires `learner_question:read`, held by every recognized role

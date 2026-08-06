@@ -88,7 +88,7 @@ describe("question route delegation", () => {
   });
 
   it("forwards MCQ options and answer key bodies verbatim through fixed operations", async () => {
-    const questionBody = `{"syllabusId":"s","curriculumMapNodeId":"n","responseType":"multiple_choice","language":"en","prompt":"runtime","options":[{"id":"one","label":"runtime one"},{"id":"two","label":"runtime two"}]}`;
+    const questionBody = `{"syllabusId":"s","curriculumMapNodeId":"n","responseType":"multiple_choice","language":"en","prompt":"runtime","originType":"licensed_adaptation","contentSourceId":"source-1","sourceLocator":"metadata-ref","options":[{"id":"one","label":"runtime one"},{"id":"two","label":"runtime two"}]}`;
     mockedReadBody.mockResolvedValueOnce(questionBody);
     await create(new Request("http://localhost/x", { method: "POST", body: questionBody }));
     expect(mockedCallCore).toHaveBeenLastCalledWith({ kind: "createQuestion" }, questionBody);

@@ -808,6 +808,35 @@ this fix's scope, no existing scale to snap to, and inventing one risks a much l
 visual diff across every page for a P3 ask that only names spacing/sizing).
 **Owner/date:** Claude Code agent, 2026-08-06 (T-0017 review fix).
 
+## D-0020 — Licensed-adaptation question provenance
+
+**Status:** Approved
+**Decision:** Every new question declares exact case-sensitive `original` or
+`licensed_adaptation`. Add nullable historical `questions.origin_type` with no backfill and one
+immutable metadata-only `question_provenance` row for licensed adaptations. Licensed create and
+every subsequent question/rubric write validate authenticated actor, non-blank locator, approved
+source, full existing human-entered rights fields, and catalogue link to question syllabus.
+Question verification and learner list/get/attempt-create/feedback-submit recheck live licensed
+gate; regression makes question unavailable with no source fallback. Editorial contracts expose
+origin/provenance; independently handwritten learner contracts omit all provenance/licence data.
+Append-only provenance audit stores field names only. Existing curriculum grounding, canonical
+rubric, revision, and attempt pins remain authoritative. Migration creates no rows and source
+material never enters repository or API. Human written evidence must cover adaptation, digital
+delivery, learner audience, marking feedback, and AI processing where applicable before approval;
+software checks metadata completeness, not legal sufficiency.
+**Reason:** Licensed adaptations need durable evidence linkage and live rights enforcement without
+copying protected material or silently classifying historical questions. Separate learner types
+and conditional SQL gate prevent editorial provenance leakage. Database immutability makes origin
+stable even outside application path.
+**Alternatives:** Label all existing questions original (rejected: forbidden backfill and invented
+fact); reuse curriculum node source as adaptation source (rejected: grounding source need not be
+licensed adaptation source); store licence values or source excerpt on question (rejected:
+duplication, drift, and content exposure); resolve newest approved source during delivery
+(rejected: breaks explicit provenance); machine-interpret free-text licence scope as legal approval
+(rejected: licence approval is human decision); permit source regression after attempt creation to
+deliver feedback (rejected: feedback is learner delivery covered by licence gate).
+**Owner/date:** Codex, 2026-08-06 (T-0018).
+
 ## Decision template
 
 ```md

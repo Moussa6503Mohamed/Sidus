@@ -1,13 +1,14 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QuestionsWorkspace } from "./workspace";
-import type { CurriculumMapNode, Question, QuestionRubricVersion, Syllabus } from "./types";
+import type { ContentSource, CurriculumMapNode, Question, QuestionRubricVersion, Syllabus } from "./types";
 
 vi.mock("./api-client", async () => {
   const actual = await vi.importActual<typeof import("./api-client")>("./api-client");
   return {
     ...actual,
     listSyllabuses: vi.fn(),
+    listApprovedContentSources: vi.fn(),
     listVerifiedNodes: vi.fn(),
     listQuestions: vi.fn(),
     listRubricVersions: vi.fn(),
@@ -37,6 +38,25 @@ const node = {
   status: "verified",
 } as CurriculumMapNode;
 
+function approvedSource(overrides: Partial<ContentSource> = {}): ContentSource {
+  return {
+    id: "source-1",
+    title: "Approved source metadata",
+    owner: "Rights owner",
+    sourceUrl: "https://example.invalid/metadata",
+    sourceHash: "metadata-hash",
+    licenceReference: "human-entered-reference",
+    permittedUse: "human-entered-rights-scope",
+    allowedAudience: "human-entered-audience",
+    syllabusCode: syllabus.syllabusCode,
+    catalogueSyllabusId: syllabus.id,
+    status: "approved",
+    createdAt: "2026-08-06T00:00:00Z",
+    updatedAt: "2026-08-06T00:00:00Z",
+    ...overrides,
+  };
+}
+
 function question(overrides: Partial<Question> = {}): Question {
   return {
     id: "question-1",
@@ -46,6 +66,8 @@ function question(overrides: Partial<Question> = {}): Question {
     language: "lang-1",
     prompt: crypto.randomUUID(),
     options: null,
+    originType: "original",
+    provenance: null,
     status: "draft",
     contentRevision: 2,
     createdAt: "2026-08-05T00:00:00Z",
@@ -74,6 +96,7 @@ function version(revision: number, status: "draft" | "verified", number: number)
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(api.listSyllabuses).mockResolvedValue({ items: [syllabus] });
+  vi.mocked(api.listApprovedContentSources).mockResolvedValue({ items: [] });
   vi.mocked(api.listVerifiedNodes).mockResolvedValue({ items: [node] });
   vi.mocked(api.listQuestions).mockResolvedValue({ items: [] });
   vi.mocked(api.listRubricVersions).mockResolvedValue({ items: [] });
@@ -106,6 +129,7 @@ describe("QuestionsWorkspace editing and review", () => {
     render(<QuestionsWorkspace role="editor" />);
     await screen.findByText(/no questions yet/i);
     fireEvent.click(screen.getByRole("button", { name: /new question/i }));
+    fireEvent.change(screen.getByLabelText(/origin/i), { target: { value: "original" } });
     fireEvent.change(screen.getByLabelText(/verified curriculum node/i), { target: { value: node.id } });
     fireEvent.change(screen.getByLabelText(/response type/i), { target: { value: "short_answer" } });
     fireEvent.change(screen.getByLabelText(/language/i), { target: { value: "lang-1" } });
@@ -117,6 +141,7 @@ describe("QuestionsWorkspace editing and review", () => {
       responseType: "short_answer",
       language: "lang-1",
       prompt: runtimePrompt,
+      originType: "original",
     }));
   });
 
@@ -129,6 +154,7 @@ describe("QuestionsWorkspace editing and review", () => {
     render(<QuestionsWorkspace role="editor" />);
     await screen.findByText(/no questions yet/i);
     fireEvent.click(screen.getByRole("button", { name: /new question/i }));
+    fireEvent.change(screen.getByLabelText(/origin/i), { target: { value: "original" } });
     expect(screen.queryByText(/multiple-choice options/i)).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(/verified curriculum node/i), { target: { value: node.id } });
     fireEvent.change(screen.getByLabelText(/response type/i), { target: { value: "multiple_choice" } });
@@ -153,13 +179,52 @@ describe("QuestionsWorkspace editing and review", () => {
     })));
   });
 
+  it("creates licensed adaptation from approved syllabus-linked source metadata only", async () => {
+    const source = approvedSource();
+    vi.mocked(api.listApprovedContentSources).mockResolvedValue({
+      items: [source, approvedSource({ id: "foreign-source", title: "Foreign source", catalogueSyllabusId: "other-syllabus" })],
+    });
+    vi.mocked(api.createQuestion).mockResolvedValue(question({
+      originType: "licensed_adaptation",
+      provenance: {
+        questionId: "question-1", contentSourceId: source.id, sourceLocator: "metadata locator",
+        originType: "licensed_adaptation", verifiedActorId: "actor", verifiedAt: "2026-08-06T00:00:00Z",
+        createdAt: "2026-08-06T00:00:00Z",
+      },
+    }));
+    render(<QuestionsWorkspace role="editor" />);
+    await screen.findByText(/no questions yet/i);
+    fireEvent.click(screen.getByRole("button", { name: /new question/i }));
+    fireEvent.change(screen.getByLabelText(/origin/i), { target: { value: "licensed_adaptation" } });
+    expect(screen.getByText(/written licence evidence covers adaptation/i)).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Foreign source" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/approved licensed source/i), { target: { value: source.id } });
+    fireEvent.change(screen.getByLabelText(/source locator metadata/i), { target: { value: "metadata locator" } });
+    fireEvent.change(screen.getByLabelText(/verified curriculum node/i), { target: { value: node.id } });
+    fireEvent.change(screen.getByLabelText(/response type/i), { target: { value: "short_answer" } });
+    fireEvent.change(screen.getByLabelText(/language/i), { target: { value: "en" } });
+    fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: "runtime question" } });
+    fireEvent.click(screen.getByRole("button", { name: /create draft/i }));
+    await waitFor(() => expect(api.createQuestion).toHaveBeenCalledWith({
+      syllabusId: syllabus.id,
+      curriculumMapNodeId: node.id,
+      responseType: "short_answer",
+      language: "en",
+      prompt: "runtime question",
+      originType: "licensed_adaptation",
+      contentSourceId: source.id,
+      sourceLocator: "metadata locator",
+    }));
+  });
+
   it("edits draft with minimal patch and shows provenance warning", async () => {
     const draft = question();
     vi.mocked(api.listQuestions).mockResolvedValue({ items: [draft] });
     vi.mocked(api.updateQuestion).mockResolvedValue({ ...draft, language: "lang-2", contentRevision: 3 });
     render(<QuestionsWorkspace role="editor" />);
     fireEvent.click(await screen.findByRole("button", { name: "Question 1" }));
-    expect(screen.getByRole("note")).toHaveTextContent(/original editorial content only/i);
+    expect(screen.getByRole("note")).toHaveTextContent(/never paste source text/i);
+    expect(screen.getByLabelText(/origin/i)).toBeDisabled();
     fireEvent.change(screen.getByLabelText(/language/i), { target: { value: "lang-2" } });
     fireEvent.click(screen.getByRole("button", { name: /save draft/i }));
     await waitFor(() => expect(api.updateQuestion).toHaveBeenCalledWith(draft.id, { language: "lang-2" }));

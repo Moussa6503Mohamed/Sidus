@@ -127,7 +127,11 @@ func (m *memoryStore) validateGrounding(nodeID, syllabusID string) error {
 	if n.status != "verified" {
 		return ErrUnverifiedNode
 	}
-	s, ok := m.sources[n.sourceID]
+	return m.validateSource(n.sourceID, syllabusID)
+}
+
+func (m *memoryStore) validateSource(sourceID, syllabusID string) error {
+	s, ok := m.sources[sourceID]
 	if !ok {
 		return ErrUnknownSource
 	}
@@ -144,6 +148,20 @@ func (m *memoryStore) validateGrounding(nodeID, syllabusID string) error {
 }
 
 func (m *memoryStore) CreateQuestion(_ context.Context, in CreateInput) (Question, error) {
+	if !IsValidOriginType(in.OriginType) {
+		return Question{}, ErrInvalidOriginType
+	}
+	if in.OriginType == OriginOriginal && (in.ContentSourceID != nil || in.SourceLocator != nil) {
+		return Question{}, ErrInvalidProvenance
+	}
+	if in.OriginType == OriginLicensedAdaptation {
+		if in.ContentSourceID == nil || in.SourceLocator == nil || blank(*in.ContentSourceID) || blank(*in.SourceLocator) {
+			return Question{}, ErrInvalidProvenance
+		}
+		if err := m.validateSource(*in.ContentSourceID, in.SyllabusID); err != nil {
+			return Question{}, err
+		}
+	}
 	if err := validateOptionsForResponseType(in.ResponseType, in.Options); err != nil {
 		return Question{}, err
 	}
@@ -162,10 +180,17 @@ func (m *memoryStore) CreateQuestion(_ context.Context, in CreateInput) (Questio
 		Language:            in.Language,
 		Prompt:              in.Prompt,
 		Options:             in.Options,
+		OriginType:          &in.OriginType,
 		Status:              StatusDraft,
 		ContentRevision:     1,
 		CreatedAt:           now,
 		UpdatedAt:           now,
+	}
+	if in.OriginType == OriginLicensedAdaptation {
+		q.Provenance = &QuestionProvenance{
+			QuestionID: q.ID, ContentSourceID: *in.ContentSourceID, SourceLocator: *in.SourceLocator,
+			OriginType: OriginLicensedAdaptation, VerifiedActorID: in.ActorID, VerifiedAt: now, CreatedAt: now,
+		}
 	}
 	m.questions[q.ID] = q
 	m.events = append(m.events, Event{QuestionID: q.ID, EventType: EventQuestionCreated, ActorID: in.ActorID, EventTime: now})
@@ -513,12 +538,14 @@ func decodeJSON[T any](t *testing.T, resp *http.Response) T {
 }
 
 func validCreateReq() createQuestionRequest {
+	origin := string(OriginOriginal)
 	return createQuestionRequest{
 		SyllabusID:          "syl-active",
 		CurriculumMapNodeID: "node-verified",
 		ResponseType:        "short_answer",
 		Language:            "en",
 		Prompt:              "Original question body written by an editor.",
+		OriginType:          &origin,
 	}
 }
 
@@ -574,6 +601,63 @@ func TestCreateQuestion_Success(t *testing.T) {
 	if len(store.events) != 1 || store.events[0].ActorID != adminSubject {
 		t.Fatalf("expected one question_created event with the verified actor, got %+v", store.events)
 	}
+}
+
+func TestCreateQuestion_OriginContract(t *testing.T) {
+	for name, body := range map[string]string{
+		"missing":          `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"short_answer","language":"en","prompt":"runtime"}`,
+		"case variant":     `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"short_answer","language":"en","prompt":"runtime","originType":"Original"}`,
+		"unknown":          `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"short_answer","language":"en","prompt":"runtime","originType":"external"}`,
+		"whitespace value": `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"short_answer","language":"en","prompt":"runtime","originType":" original "}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, store := newTestServer()
+			defer srv.Close()
+			resp := doRaw(t, http.MethodPost, srv.URL+"/questions", body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", resp.StatusCode)
+			}
+			if len(store.questions) != 0 || len(store.events) != 0 {
+				t.Fatal("invalid origin mutated store")
+			}
+		})
+	}
+
+	t.Run("original rejects provenance keys including null", func(t *testing.T) {
+		srv, store := newTestServer()
+		defer srv.Close()
+		for _, suffix := range []string{`,"contentSourceId":"src-approved-active"`, `,"sourceLocator":"ref"`, `,"contentSourceId":null`} {
+			body := `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"short_answer","language":"en","prompt":"runtime","originType":"original"` + suffix + `}`
+			resp := doRaw(t, http.MethodPost, srv.URL+"/questions", body)
+			if resp.StatusCode != http.StatusBadRequest || decodeJSON[map[string]any](t, resp)["error"] != "invalid_provenance" {
+				t.Fatal("original provenance fields must be rejected")
+			}
+		}
+		if len(store.questions) != 0 {
+			t.Fatal("rejected original provenance mutated store")
+		}
+	})
+
+	t.Run("licensed requires metadata and records authenticated actor", func(t *testing.T) {
+		srv, store := newTestServer()
+		defer srv.Close()
+		missing := doRaw(t, http.MethodPost, srv.URL+"/questions", `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"short_answer","language":"en","prompt":"runtime","originType":"licensed_adaptation","contentSourceId":"src-approved-active"}`)
+		if missing.StatusCode != http.StatusBadRequest || decodeJSON[map[string]any](t, missing)["error"] != "missing_required_fields" {
+			t.Fatal("licensed locator must be required")
+		}
+		valid := doRaw(t, http.MethodPost, srv.URL+"/questions", `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"short_answer","language":"en","prompt":"runtime","originType":"licensed_adaptation","contentSourceId":"src-approved-active","sourceLocator":"metadata-ref"}`)
+		if valid.StatusCode != http.StatusCreated {
+			t.Fatalf("status = %d, want 201", valid.StatusCode)
+		}
+		q := decodeJSON[Question](t, valid)
+		if q.OriginType == nil || *q.OriginType != OriginLicensedAdaptation || q.Provenance == nil ||
+			q.Provenance.VerifiedActorID != adminSubject || q.Provenance.SourceLocator != "metadata-ref" {
+			t.Fatalf("licensed provenance = %+v", q)
+		}
+		if len(store.questions) != 1 {
+			t.Fatal("expected exactly one licensed question")
+		}
+	})
 }
 
 func TestCreateQuestion_NodeGate(t *testing.T) {
@@ -1754,6 +1838,10 @@ func TestUpdateQuestion_ForbiddenAndUnknownFields_Returns400(t *testing.T) {
 		"id":               `{"prompt":"new","id":"other-question"}`,
 		"createdAt":        `{"prompt":"new","createdAt":"2020-01-01T00:00:00Z"}`,
 		"updatedAt":        `{"prompt":"new","updatedAt":"2020-01-01T00:00:00Z"}`,
+		"originType":       `{"prompt":"new","originType":"licensed_adaptation"}`,
+		"contentSourceId":  `{"prompt":"new","contentSourceId":"src-approved-active"}`,
+		"sourceLocator":    `{"prompt":"new","sourceLocator":"metadata-ref"}`,
+		"provenance":       `{"prompt":"new","provenance":null}`,
 		"unknown field":    `{"prompt":"new","totallyUnknown":"x"}`,
 		"typo field":       `{"promptt":"new"}`,
 		"case variant":     `{"Prompt":"new"}`,
@@ -1787,7 +1875,7 @@ func TestUpdateQuestion_ForbiddenAndUnknownFields_Returns400(t *testing.T) {
 }
 
 func TestCreateQuestion_MultipleChoiceOptionsValidation(t *testing.T) {
-	valid := `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","options":[{"id":"one","label":"runtime one"},{"id":"two","label":"runtime two"}]}`
+	valid := `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","originType":"original","options":[{"id":"one","label":"runtime one"},{"id":"two","label":"runtime two"}]}`
 	t.Run("valid", func(t *testing.T) {
 		srv, _ := newTestServer()
 		defer srv.Close()
@@ -1802,10 +1890,10 @@ func TestCreateQuestion_MultipleChoiceOptionsValidation(t *testing.T) {
 	})
 
 	for name, tc := range map[string]struct{ body, code string }{
-		"MC missing":           {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime"}`, "missing_required_fields"},
-		"non-MC present":       {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"short_answer","language":"en","prompt":"runtime","options":[{"id":"one","label":"x"},{"id":"two","label":"y"}]}`, "invalid_options"},
-		"case variant":         {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","options":[{"ID":"one","label":"x"},{"id":"two","label":"y"}]}`, "invalid_options"},
-		"duplicate option key": {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","options":[{"id":"one","id":"other","label":"x"},{"id":"two","label":"y"}]}`, "invalid_options"},
+		"MC missing":           {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","originType":"original"}`, "missing_required_fields"},
+		"non-MC present":       {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"short_answer","language":"en","prompt":"runtime","originType":"original","options":[{"id":"one","label":"x"},{"id":"two","label":"y"}]}`, "invalid_options"},
+		"case variant":         {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","originType":"original","options":[{"ID":"one","label":"x"},{"id":"two","label":"y"}]}`, "invalid_options"},
+		"duplicate option key": {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","originType":"original","options":[{"id":"one","id":"other","label":"x"},{"id":"two","label":"y"}]}`, "invalid_options"},
 		"trailing nested JSON": {`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","options":[{"id":"one","label":"x"},{"id":"two","label":"y"}] {}}`, "invalid_json"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1828,7 +1916,7 @@ func TestCreateQuestion_MultipleChoiceOptionsValidation(t *testing.T) {
 func TestUpdateQuestion_OptionsRevisionAuditAndStaleness(t *testing.T) {
 	srv, store := newTestServer()
 	defer srv.Close()
-	create := doRaw(t, http.MethodPost, srv.URL+"/questions", `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","options":[{"id":"one","label":"runtime one"},{"id":"two","label":"runtime two"}]}`)
+	create := doRaw(t, http.MethodPost, srv.URL+"/questions", `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","originType":"original","options":[{"id":"one","label":"runtime one"},{"id":"two","label":"runtime two"}]}`)
 	q := decodeJSON[Question](t, create)
 	rubric := doRaw(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions", `{"rubric":{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"one"},"feedback":{"correctExplanation":"runtime-c","incorrectExplanations":[{"optionId":"two","explanation":"runtime-w"}]}},"maxMarks":1}`)
 	if rubric.StatusCode != http.StatusCreated {
@@ -1876,7 +1964,7 @@ func TestCreateRubricVersion_AnswerKeyMatchesQuestion(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			srv, store := newTestServer()
 			defer srv.Close()
-			createBody := fmt.Sprintf(`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":%q,"language":"en","prompt":"runtime"%s}`, tc.responseType, tc.options)
+			createBody := fmt.Sprintf(`{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":%q,"language":"en","prompt":"runtime","originType":"original"%s}`, tc.responseType, tc.options)
 			q := decodeJSON[Question](t, doRaw(t, http.MethodPost, srv.URL+"/questions", createBody))
 			before := snapshotOf(t, store, q.ID)
 			resp := doRaw(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions", fmt.Sprintf(`{"rubric":%s,"maxMarks":1}`, tc.rubric))

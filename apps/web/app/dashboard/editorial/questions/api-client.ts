@@ -2,6 +2,7 @@ import type {
   CreateQuestionRequest,
   CreateQuestionRubricVersionRequest,
   CurriculumMapNode,
+  ContentSource,
   Question,
   QuestionRubricVersion,
   SelectCanonicalRubricRequest,
@@ -51,6 +52,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function listSyllabuses(): Promise<ListResponse<Syllabus>> {
   return request("/api/editorial/syllabuses");
+}
+
+export function listApprovedContentSources(): Promise<ListResponse<ContentSource>> {
+  return request("/api/editorial/content-sources?status=approved");
 }
 
 export function listVerifiedNodes(syllabusId: string): Promise<ListResponse<CurriculumMapNode>> {
@@ -124,6 +129,9 @@ const ERROR_MESSAGES: Record<string, string> = {
   unapproved_source: "Question grounding source is no longer approved.",
   unlinked_source: "Question grounding source is not linked to its syllabus.",
   mismatched_source: "Question grounding source belongs to another syllabus.",
+  incomplete_source_rights: "Licensed source rights metadata is incomplete. Human review must complete it before use.",
+  invalid_origin_type: "Select a valid question origin.",
+  invalid_provenance: "Licensed provenance is incomplete or conflicts with selected origin.",
   invalid_lifecycle_transition: "Action is not allowed for current question or rubric lifecycle state.",
   missing_verified_rubric: "Verify at least one rubric version before verifying this question.",
   missing_current_verified_rubric: "Question content changed. Create and verify a rubric for current revision.",

@@ -185,4 +185,13 @@ cd services/ai && python -m pytest
   reduced-motion-safe Skeleton opacity pulse. Full release validation passed on 2026-08-06;
   T-0017 moved to `docs/tasks/history.md` as `done / released`; implementation commits remain
   unchanged.
+- Licensed-adaptation question provenance built in T-0018: every new question explicitly chooses
+  `original` or `licensed_adaptation`; additive migration 0020 leaves historical rows unclassified
+  and adds immutable metadata-only provenance plus names-only audit. Licensed create, verification,
+  learner question delivery, attempt creation, and feedback submission recheck approved,
+  rights-complete, catalogue-linked source with no fallback. Editorial UI uses approved source
+  metadata picker and locator only; learner types/responses remain provenance-free. Human must
+  enter written licence evidence and approve it before use; software never invents licence facts or
+  handles source material. See `docs/licensed-adaptation-provenance.md`, D-0020, and
+  `docs/handoffs/T-0018.md`. Status remains `review`; not released or pushed.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.

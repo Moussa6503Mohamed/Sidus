@@ -33,6 +33,43 @@ func seedPracticeQuestion(t *testing.T, f fixture) (string, string) {
 	return seedPracticeQuestionWith(t, f, options, raw)
 }
 
+func seedLicensedPracticeQuestion(t *testing.T, f fixture, licensedSourceID string) string {
+	t.Helper()
+	options := []Option{{ID: "opt-a", Label: "opaque-a"}, {ID: "opt-b", Label: "opaque-b"}}
+	encoded, err := json.Marshal(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var questionID string
+	if err := f.db.QueryRow(`
+		INSERT INTO questions
+			(syllabus_id, curriculum_map_node_id, response_type, language, prompt, options,
+			 status, content_revision, origin_type)
+		VALUES ($1, $2, 'multiple_choice', 'en', $3, $4, 'verified', 1, 'licensed_adaptation')
+		RETURNING id
+	`, f.syllabusID, f.nodeID, "learner runtime prompt "+randomSuffix(), encoded).Scan(&questionID); err != nil {
+		t.Fatalf("seed licensed question: %v", err)
+	}
+	if _, err := f.db.Exec(`
+		INSERT INTO question_provenance
+			(question_id, content_source_id, source_locator, origin_type, verified_actor_id)
+		VALUES ($1, $2, $3, 'licensed_adaptation', 'opaque-editor')
+	`, questionID, licensedSourceID, "metadata-locator-"+randomSuffix()); err != nil {
+		t.Fatalf("seed licensed provenance: %v", err)
+	}
+	raw := json.RawMessage(`{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"opt-b"},"feedback":{"correctExplanation":"opaque-correct","incorrectExplanations":[{"optionId":"opt-a","explanation":"opaque-wrong"}]}}`)
+	var rubricID string
+	if err := f.db.QueryRow(`
+		INSERT INTO question_rubric_versions
+			(question_id, version, question_revision, rubric, max_marks, status, created_by, reviewed_by)
+		VALUES ($1, 1, 1, $2, 1, 'verified', 'opaque-editor', 'opaque-reviewer') RETURNING id
+	`, questionID, raw).Scan(&rubricID); err != nil {
+		t.Fatalf("seed licensed rubric: %v", err)
+	}
+	setCanonicalRubric(t, f.db, questionID, rubricID)
+	return questionID
+}
+
 // These integration tests run against a real, disposable PostgreSQL instance that has had the
 // migrations applied. They write questions/rubric-version/curriculum-map/content-source rows
 // (some immutable at the DB level) and cannot clean up after themselves, so TEST_DATABASE_URL
@@ -372,6 +409,70 @@ func TestPostgresStore_Integration_GetQuestion_UnknownID_NotFound(t *testing.T) 
 	f := newFixture(t)
 	if _, err := f.store.GetQuestion(f.ctx, "00000000-0000-0000-0000-000000000000"); err != ErrNotFound {
 		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPostgresStore_Integration_LicensedSourceRegressionExcludesDeliveryAndAttempt(t *testing.T) {
+	tests := map[string]func(*testing.T, fixture, string){
+		"expired": func(t *testing.T, f fixture, id string) {
+			if _, err := f.db.Exec(`UPDATE content_sources SET status='expired' WHERE id=$1`, id); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"rejected": func(t *testing.T, f fixture, id string) {
+			if _, err := f.db.Exec(`UPDATE content_sources SET status='rejected' WHERE id=$1`, id); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"unlinked": func(t *testing.T, f fixture, id string) {
+			if _, err := f.db.Exec(`UPDATE content_sources SET catalogue_syllabus_id=NULL WHERE id=$1`, id); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"rights incomplete": func(t *testing.T, f fixture, id string) {
+			if _, err := f.db.Exec(`UPDATE content_sources SET licence_reference=NULL WHERE id=$1`, id); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"foreign link": func(t *testing.T, f fixture, id string) {
+			other := seedActiveTestSyllabus(t, f.db)
+			if _, err := f.db.Exec(`UPDATE content_sources SET catalogue_syllabus_id=$1 WHERE id=$2`, other, id); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			licensedSourceID := seedApprovedLinkedSource(t, f.db, f.syllabusID)
+			questionID := seedLicensedPracticeQuestion(t, f, licensedSourceID)
+			if _, err := f.store.GetQuestion(f.ctx, questionID); err != nil {
+				t.Fatalf("licensed question should start eligible: %v", err)
+			}
+			attempt, err := f.store.CreateAttempt(f.ctx, "owner-a", questionID)
+			if err != nil {
+				t.Fatalf("licensed attempt should start eligible: %v", err)
+			}
+			mutate(t, f, licensedSourceID)
+			if _, err := f.store.GetQuestion(f.ctx, questionID); err != ErrNotFound {
+				t.Fatalf("GetQuestion err=%v want ErrNotFound", err)
+			}
+			items, err := f.store.ListQuestions(f.ctx, f.syllabusID, nil)
+			if err != nil {
+				t.Fatalf("ListQuestions: %v", err)
+			}
+			for _, item := range items {
+				if item.ID == questionID {
+					t.Fatal("regressed licensed question leaked through list")
+				}
+			}
+			if _, err := f.store.CreateAttempt(f.ctx, "owner-a", questionID); err != ErrNotFound {
+				t.Fatalf("CreateAttempt err=%v want ErrNotFound", err)
+			}
+			if _, err := f.store.SubmitAttempt(f.ctx, "owner-a", attempt.AttemptID, "opt-b"); err != ErrAttemptNotFound {
+				t.Fatalf("SubmitAttempt err=%v want ErrAttemptNotFound", err)
+			}
+		})
 	}
 }
 

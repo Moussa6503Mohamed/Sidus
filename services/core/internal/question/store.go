@@ -44,6 +44,13 @@ var ErrUnlinkedSource = errors.New("content source is not linked to a catalogue 
 // syllabus than the question.
 var ErrMismatchedSource = errors.New("content source is linked to a different syllabus")
 
+// ErrIncompleteSourceRights is returned when a licensed-adaptation source lacks one or more
+// human-entered rights fields required by source approval.
+var ErrIncompleteSourceRights = errors.New("content source rights metadata is incomplete")
+
+var ErrInvalidOriginType = errors.New("question origin type is invalid")
+var ErrInvalidProvenance = errors.New("question provenance metadata is invalid")
+
 // ErrNoChanges is returned when an update supplies no field that actually differs.
 var ErrNoChanges = errors.New("supplied fields match current values")
 

@@ -20,8 +20,9 @@ docker run --rm --network sidus_default -v "$(pwd)/services/core:/app" -w /app \
 
 See `infra/README.md` for details. `services/core` mounts the `/content-sources`,
 `/catalogue` (curriculum catalogue — see `docs/curriculum-catalogue.md`),
-`/curriculum-map` (see `docs/curriculum-map.md`), **and** `/questions` (original questions and
-versioned rubrics — see `docs/question-rubric-model.md`) endpoints only when
+`/curriculum-map` (see `docs/curriculum-map.md`), **and** `/questions` (editorial questions,
+licensed provenance, and versioned rubrics — see `docs/question-rubric-model.md` and
+`docs/licensed-adaptation-provenance.md`) endpoints only when
 `DATABASE_URL` is set **and** Clerk is safely configured — `CLERK_SECRET_KEY` and
 `CLERK_JWT_ISSUER` present and non-blank, and `CLERK_AUTHORIZED_PARTIES` either absent (dev
 default `http://localhost:3000`) or with at least one valid origin. A missing issuer or an
@@ -46,6 +47,11 @@ additive/rerunnable, seeds and backfills nothing, and preserves existing questio
 Practice routes use existing Core/Clerk and `SIDUS_CORE_API_URL` configuration. See
 `docs/practice-mcq-marking.md`.
 
+Migration 0020 adds nullable historical question origin, immutable metadata-only licensed
+provenance, and append-only names-only provenance audit. It is additive/rerunnable and performs no
+backfill or seed. Existing question origins remain `NULL`; new creates require explicit origin.
+No new environment variable is required.
+
 ## Authentication (Clerk)
 
 Clerk owns authentication; Sidus Core owns authorization. Set up keys and the `sidus_role`
@@ -62,8 +68,8 @@ cd services/ai && python -m venv .venv && .venv/Scripts/pip install -r requireme
 
 To use editorial source (`/dashboard/editorial/sources`, T-0009), curriculum-map
 (`/dashboard/editorial/curriculum`, T-0010), or question/rubric
-(`/dashboard/editorial/questions`, T-0012–T-0014, including draft MCQ options, answer-key editing,
-and explicit canonical-rubric selection) workflow, also add
+(`/dashboard/editorial/questions`, T-0012–T-0014/T-0018, including origin/provenance selection,
+draft MCQ options, answer-key editing, and explicit canonical-rubric selection) workflow, also add
 `SIDUS_CORE_API_URL=http://localhost:8080` to `apps/web/.env.local` (server-only — never
 `NEXT_PUBLIC_*`; see `docs/editorial-source-workflow.md`,
 `docs/editorial-curriculum-workflow.md`, and `docs/editorial-question-rubric-workflow.md` — all

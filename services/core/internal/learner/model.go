@@ -2,7 +2,8 @@
 // Question reads remain a strictly reduced surface over private editorial infrastructure built in
 // T-0007/T-0013/T-0014 (services/core/internal/question): a structurally reduced view that can
 // never carry a question's lifecycle status, canonical rubric id, rubric structure, answer key,
-// marks, event data, actor identity, timestamps, or internal source metadata.
+// marks, event data, actor identity, timestamps, question origin, provenance, licence facts, or
+// internal source metadata.
 //
 // Every type in this package is independent of the question package by design — it does not
 // import it — so the learner projection can never gain an editorial field by accident (e.g. by

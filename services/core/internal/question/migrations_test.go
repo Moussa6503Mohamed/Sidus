@@ -13,7 +13,7 @@ const migrationsDir = "../../migrations"
 
 // seedPattern matches any statement that would insert or copy rows into the private-content
 // tables introduced by T-0007.
-var seedPattern = regexp.MustCompile(`(?is)(insert\s+into|copy)\s+"?(questions|question_rubric_versions|question_events)"?`)
+var seedPattern = regexp.MustCompile(`(?is)(insert\s+into|copy)\s+"?(questions|question_rubric_versions|question_events|question_provenance|question_provenance_events)"?`)
 
 // TestMigrations_SeedNoQuestionOrRubricContent is a guard, not a formality: the public repository
 // may hold schema, code, contracts, docs, and tests — never question prompts, rubric structures,
@@ -134,6 +134,37 @@ func TestMigrations_CanonicalRubricSelectionIsAdditiveRerunnableAndDoesNotBackfi
 	}
 	upper := strings.ToUpper(sql)
 	for _, forbidden := range []string{"DROP TABLE", "DROP COLUMN", "INSERT INTO QUESTIONS", "UPDATE QUESTIONS", "SELECT MAX(", "ORDER BY VERSION"} {
+		if strings.Contains(upper, forbidden) {
+			t.Fatalf("%s contains forbidden %q", file, forbidden)
+		}
+	}
+}
+
+func TestMigrations_QuestionProvenanceIsAdditiveRerunnableAndDoesNotBackfill(t *testing.T) {
+	const file = "0020_add_question_provenance.sql"
+	body, err := os.ReadFile(filepath.Join(migrationsDir, file))
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	sql := string(body)
+	for _, want := range []string{
+		"ADD COLUMN IF NOT EXISTS origin_type TEXT NULL",
+		"CREATE TABLE IF NOT EXISTS question_provenance",
+		"CREATE TABLE IF NOT EXISTS question_provenance_events",
+		"prevent_question_origin_mutation",
+		"prevent_question_provenance_mutation",
+		"prevent_question_provenance_event_mutation",
+		"changed_fields TEXT[] NOT NULL",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("%s does not contain %q", file, want)
+		}
+	}
+	upper := strings.ToUpper(sql)
+	for _, forbidden := range []string{
+		"DROP TABLE", "DROP COLUMN", "UPDATE QUESTIONS", "INSERT INTO QUESTIONS",
+		"INSERT INTO QUESTION_PROVENANCE", "COPY ",
+	} {
 		if strings.Contains(upper, forbidden) {
 			t.Fatalf("%s contains forbidden %q", file, forbidden)
 		}

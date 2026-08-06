@@ -456,8 +456,9 @@ func assertErrorCode(t *testing.T, rec *httptest.ResponseRecorder, want string) 
 
 // allowedProjectionKeys is the exhaustive, explicit set of keys the learner projection may ever
 // carry. Any other key present in a response — status, canonicalRubricVersionId, rubric,
-// answerKey, marks, actorId, reviewerId, createdAt, updatedAt, sourceId/sourceUrl/sourceHash, or
-// anything else — is a leak of editorial/internal data to a learner-role-reachable route.
+// answerKey, marks, actorId, reviewerId, createdAt, updatedAt, originType, provenance,
+// contentSourceId, sourceLocator, licenceReference, or anything else — is a leak of
+// editorial/internal data to a learner-role-reachable route.
 var allowedProjectionKeys = []string{
 	"id", "syllabusId", "curriculumMapNodeId", "responseType", "language", "prompt", "options", "contentRevision",
 }

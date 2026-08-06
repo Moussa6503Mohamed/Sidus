@@ -1,4 +1,4 @@
-import type { CreateQuestionRequest, MultipleChoiceOption, Question, QuestionResponseType, UpdateQuestionRequest } from "./types";
+import type { CreateQuestionRequest, MultipleChoiceOption, Question, QuestionOriginType, QuestionResponseType, UpdateQuestionRequest } from "./types";
 
 export interface QuestionFieldValues {
   curriculumMapNodeId: string;
@@ -6,6 +6,9 @@ export interface QuestionFieldValues {
   language: string;
   prompt: string;
   options: MultipleChoiceOption[];
+  originType: "" | QuestionOriginType;
+  contentSourceId: string;
+  sourceLocator: string;
 }
 
 export const EMPTY_QUESTION_VALUES: QuestionFieldValues = {
@@ -14,6 +17,9 @@ export const EMPTY_QUESTION_VALUES: QuestionFieldValues = {
   language: "",
   prompt: "",
   options: [],
+  originType: "",
+  contentSourceId: "",
+  sourceLocator: "",
 };
 
 export function valuesFromQuestion(question: Question): QuestionFieldValues {
@@ -23,10 +29,13 @@ export function valuesFromQuestion(question: Question): QuestionFieldValues {
     language: question.language,
     prompt: question.prompt,
     options: question.options ?? [],
+    originType: question.originType ?? "",
+    contentSourceId: question.provenance?.contentSourceId ?? "",
+    sourceLocator: question.provenance?.sourceLocator ?? "",
   };
 }
 
-function validate(values: QuestionFieldValues): string | null {
+function validateContent(values: QuestionFieldValues): string | null {
   if (!values.curriculumMapNodeId || !values.responseType || !values.language.trim() || !values.prompt.trim()) {
     return "Node, response type, language, and prompt are required.";
   }
@@ -53,8 +62,15 @@ export function buildCreateInput(
   syllabusId: string,
   values: QuestionFieldValues,
 ): { input: CreateQuestionRequest } | { error: string } {
-  const error = validate(values);
+  const error = validateContent(values);
   if (error) return { error };
+  if (!values.originType) return { error: "Select original or licensed adaptation." };
+  if (values.originType === "original" && (values.contentSourceId || values.sourceLocator.trim())) {
+    return { error: "Original questions cannot include external provenance." };
+  }
+  if (values.originType === "licensed_adaptation" && (!values.contentSourceId || !values.sourceLocator.trim())) {
+    return { error: "Licensed adaptations require approved source and source locator." };
+  }
   const common = {
     syllabusId,
     curriculumMapNodeId: values.curriculumMapNodeId,
@@ -62,16 +78,22 @@ export function buildCreateInput(
     prompt: values.prompt.trim(),
   };
   if (values.responseType === "multiple_choice") {
-    return { input: { ...common, responseType: values.responseType, options: normalizedOptions(values.options) } };
+    const content = { ...common, responseType: values.responseType, options: normalizedOptions(values.options) };
+    return values.originType === "original"
+      ? { input: { ...content, originType: "original" } }
+      : { input: { ...content, originType: "licensed_adaptation", contentSourceId: values.contentSourceId, sourceLocator: values.sourceLocator.trim() } };
   }
-  return { input: { ...common, responseType: values.responseType as "short_answer" | "structured_response" } };
+  const content = { ...common, responseType: values.responseType as "short_answer" | "structured_response" };
+  return values.originType === "original"
+    ? { input: { ...content, originType: "original" } }
+    : { input: { ...content, originType: "licensed_adaptation", contentSourceId: values.contentSourceId, sourceLocator: values.sourceLocator.trim() } };
 }
 
 export function buildUpdatePatch(
   original: QuestionFieldValues,
   values: QuestionFieldValues,
 ): { patch: UpdateQuestionRequest } | { error: string } {
-  const error = validate(values);
+  const error = validateContent(values);
   if (error) return { error };
   const patch: UpdateQuestionRequest = {};
   if (values.curriculumMapNodeId !== original.curriculumMapNodeId) patch.curriculumMapNodeId = values.curriculumMapNodeId;

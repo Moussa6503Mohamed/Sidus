@@ -1,9 +1,12 @@
 export type {
   CreateQuestionRequest,
   CreateQuestionRubricVersionRequest,
+  ContentSource,
   CurriculumMapNode,
   MultipleChoiceOption,
   Question,
+  QuestionOriginType,
+  QuestionProvenance,
   QuestionResponseType,
   QuestionRubricVersion,
   RubricCriterion,

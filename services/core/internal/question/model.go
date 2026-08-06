@@ -1,8 +1,9 @@
-// Package question implements private, original-question and versioned-rubric infrastructure
-// for a future Exam Mode. It stores original question prompts and original rubric structures
-// that a future private, approved editorial workflow writes at runtime — never copied or
-// lightly rewritten source material (no past papers, mark schemes, syllabus text, extracted
-// text, diagrams, or OCR output), and never any seeded content.
+// Package question implements private question, licensed-provenance, and versioned-rubric
+// infrastructure. It stores runtime question prompts, original rubric structures, and
+// metadata-only provenance for licensed adaptations. Runtime records are written by a private
+// approved editorial workflow; source material is never stored (no past papers, mark schemes,
+// syllabus text, extracted text, diagrams, or OCR output), and no content or licence facts are
+// seeded.
 //
 // Every question is grounded in exactly one curriculum-map node (T-0006). Core is the sole
 // authority for that grounding: on every question write it re-validates that the node exists, is
@@ -37,6 +38,19 @@ func IsValidResponseType(t ResponseType) bool {
 	default:
 		return false
 	}
+}
+
+// OriginType declares how a newly-created question was authored. Historical questions created
+// before T-0018 retain a nil origin and are never silently classified.
+type OriginType string
+
+const (
+	OriginOriginal           OriginType = "original"
+	OriginLicensedAdaptation OriginType = "licensed_adaptation"
+)
+
+func IsValidOriginType(t OriginType) bool {
+	return t == OriginOriginal || t == OriginLicensedAdaptation
 }
 
 // Status is the lifecycle state of a question.
@@ -74,7 +88,11 @@ type Question struct {
 	// Options is question content. It is non-nil only for multiple-choice questions; nil is
 	// serialized as null so pre-T-0013 rows remain explicit and backward compatible.
 	Options []MultipleChoiceOption `json:"options"`
-	Status  Status                 `json:"status"`
+	// OriginType is nil only for historical pre-T-0018 rows. New creates require an explicit
+	// value. Provenance is present exactly for licensed adaptations and is editorial-only.
+	OriginType *OriginType         `json:"originType"`
+	Provenance *QuestionProvenance `json:"provenance"`
+	Status     Status              `json:"status"`
 	// CanonicalRubricVersionID is selected explicitly by a reviewer/admin. Historical and draft
 	// questions may remain nil; Core never derives or replaces it automatically.
 	CanonicalRubricVersionID *string `json:"canonicalRubricVersionId"`
@@ -84,6 +102,18 @@ type Question struct {
 	ContentRevision int       `json:"contentRevision"`
 	CreatedAt       time.Time `json:"createdAt"`
 	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
+// QuestionProvenance is immutable metadata for one licensed adaptation. It never stores source
+// text, copied wording, images, diagrams, answers, mark schemes, or licence-field values.
+type QuestionProvenance struct {
+	QuestionID      string     `json:"questionId"`
+	ContentSourceID string     `json:"contentSourceId"`
+	SourceLocator   string     `json:"sourceLocator"`
+	OriginType      OriginType `json:"originType"`
+	VerifiedActorID string     `json:"verifiedActorId"`
+	VerifiedAt      time.Time  `json:"verifiedAt"`
+	CreatedAt       time.Time  `json:"createdAt"`
 }
 
 // RubricVersion is one immutable, numbered marking rubric for a question. Its content
@@ -142,6 +172,9 @@ type CreateInput struct {
 	Language            string
 	Prompt              string
 	Options             []MultipleChoiceOption
+	OriginType          OriginType
+	ContentSourceID     *string
+	SourceLocator       *string
 }
 
 // UpdateInput is the payload for PATCHing a draft Question. Every field is an optional pointer:

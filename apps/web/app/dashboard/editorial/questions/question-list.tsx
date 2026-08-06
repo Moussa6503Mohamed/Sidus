@@ -14,12 +14,13 @@ export function QuestionList({ questions, nodes, selectedId, onSelect }: Questio
   return (
     <div className={sourceStyles.tableWrap}>
       <table>
-        <thead><tr><th>Question</th><th>Status</th><th>Response</th><th>Language</th><th>Node</th><th>Revision</th></tr></thead>
+        <thead><tr><th>Question</th><th>Status</th><th>Origin</th><th>Response</th><th>Language</th><th>Node</th><th>Revision</th></tr></thead>
         <tbody>
           {questions.map((question, index) => (
             <tr key={question.id} className={selectedId === question.id ? sourceStyles.rowSelected : undefined}>
               <td><button type="button" className={sourceStyles.rowButton} onClick={() => onSelect(question.id)}>Question {index + 1}</button></td>
               <td><StatusBadge status={question.status} /></td>
+              <td>{question.originType?.replaceAll("_", " ") ?? "Historical / unclassified"}</td>
               <td>{question.responseType.replaceAll("_", " ")}</td>
               <td>{question.language}</td>
               <td>{nodeNames.get(question.curriculumMapNodeId) ?? question.curriculumMapNodeId}</td>

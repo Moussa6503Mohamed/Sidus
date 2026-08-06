@@ -23,6 +23,30 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 
 const projectionColumns = `q.id, q.syllabus_id, q.curriculum_map_node_id, q.response_type, q.language, q.prompt, q.options, q.content_revision`
 
+// Historical questions have NULL origin_type and keep pre-T-0018 behavior. New original rows need
+// no external provenance. Licensed adaptations must retain one immutable provenance row whose
+// source is still approved, rights-complete, and linked to question syllabus.
+const licensedEligibilityPredicate = `
+	  AND (
+		q.origin_type IS NULL
+		OR q.origin_type = 'original'
+		OR (
+			q.origin_type = 'licensed_adaptation'
+			AND qp.question_id IS NOT NULL
+			AND btrim(qp.source_locator) <> ''
+			AND ps.status = 'approved'
+			AND ps.catalogue_syllabus_id = q.syllabus_id
+			AND NULLIF(btrim(ps.owner), '') IS NOT NULL
+			AND NULLIF(btrim(ps.title), '') IS NOT NULL
+			AND NULLIF(btrim(ps.source_url), '') IS NOT NULL
+			AND NULLIF(btrim(ps.source_hash), '') IS NOT NULL
+			AND NULLIF(btrim(ps.licence_reference), '') IS NOT NULL
+			AND NULLIF(btrim(ps.permitted_use), '') IS NOT NULL
+			AND NULLIF(btrim(ps.allowed_audience), '') IS NOT NULL
+		)
+	  )
+`
+
 // eligibleQuestionsQuery is the single authority for learner eligibility. It is a plain SELECT —
 // not cached, not a materialized view — so every read re-evaluates the gate against current
 // table state:
@@ -49,13 +73,15 @@ const eligibleQuestionsQuery = `
 	JOIN curriculum_map_nodes n ON n.id = q.curriculum_map_node_id
 	JOIN content_sources s ON s.id = n.content_source_id
 	JOIN question_rubric_versions rv ON rv.id = q.canonical_rubric_version_id AND rv.question_id = q.id
+	LEFT JOIN question_provenance qp ON qp.question_id = q.id AND qp.origin_type = q.origin_type
+	LEFT JOIN content_sources ps ON ps.id = qp.content_source_id
 	WHERE q.status = 'verified'
 	  AND rv.status = 'verified'
 	  AND rv.question_revision = q.content_revision
 	  AND n.status = 'verified'
 	  AND s.status = 'approved'
 	  AND s.catalogue_syllabus_id = q.syllabus_id
-`
+` + licensedEligibilityPredicate
 
 type scanner interface{ Scan(...any) error }
 
@@ -222,10 +248,13 @@ func (p *PostgresStore) CreateAttempt(ctx context.Context, learnerSubjectID, que
 		JOIN curriculum_map_nodes n ON n.id = q.curriculum_map_node_id
 		JOIN content_sources s ON s.id = n.content_source_id
 		JOIN question_rubric_versions rv ON rv.id = q.canonical_rubric_version_id AND rv.question_id = q.id
+		LEFT JOIN question_provenance qp ON qp.question_id = q.id AND qp.origin_type = q.origin_type
+		LEFT JOIN content_sources ps ON ps.id = qp.content_source_id
 		WHERE q.id = $1 AND q.response_type = 'multiple_choice' AND q.status = 'verified'
 		  AND rv.status = 'verified' AND rv.question_revision = q.content_revision
 		  AND n.status = 'verified' AND s.status = 'approved'
 		  AND s.catalogue_syllabus_id = q.syllabus_id
+		`+licensedEligibilityPredicate+`
 		FOR SHARE OF q, rv, n, s
 	`, questionID).Scan(&revision, &canonicalID, &maxMarks, &rubricRaw, &optionsRaw)
 	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
@@ -333,11 +362,15 @@ func (p *PostgresStore) SubmitAttempt(ctx context.Context, learnerSubjectID, att
 	err = tx.QueryRowContext(ctx, `
 		SELECT a.id, a.question_id, a.status, a.max_marks, rv.rubric
 		FROM learner_attempts a
+		JOIN questions q ON q.id = a.question_id
 		JOIN question_rubric_versions rv
 		  ON rv.id = a.canonical_rubric_version_id
 		 AND rv.question_id = a.question_id
 		 AND rv.question_revision = a.question_content_revision
+		LEFT JOIN question_provenance qp ON qp.question_id = q.id AND qp.origin_type = q.origin_type
+		LEFT JOIN content_sources ps ON ps.id = qp.content_source_id
 		WHERE a.id = $1 AND a.learner_subject_id = $2
+		`+licensedEligibilityPredicate+`
 		FOR UPDATE OF a
 	`, attemptID, learnerSubjectID).Scan(
 		&result.AttemptID, &result.QuestionID, &status, &result.MaxMarks, &rubricRaw,

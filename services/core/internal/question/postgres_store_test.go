@@ -150,6 +150,7 @@ func (f fixture) createQuestion(t *testing.T) Question {
 		ResponseType:        ResponseShortAnswer,
 		Language:            "en",
 		Prompt:              "Original prompt written by the test.",
+		OriginType:          OriginOriginal,
 	})
 	if err != nil {
 		t.Fatalf("create question: %v", err)
@@ -187,7 +188,7 @@ func TestPostgresStore_Integration_CreateAndNodeGate(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if _, err := f.store.CreateQuestion(f.ctx, CreateInput{
 				ActorID: "test-editor", SyllabusID: f.syllabusID, CurriculumMapNodeID: tc.nodeID,
-				ResponseType: ResponseShortAnswer, Language: "en", Prompt: "p",
+				ResponseType: ResponseShortAnswer, Language: "en", Prompt: "p", OriginType: OriginOriginal,
 			}); !errors.Is(err, tc.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
 			}
@@ -196,7 +197,7 @@ func TestPostgresStore_Integration_CreateAndNodeGate(t *testing.T) {
 
 	if _, err := f.store.CreateQuestion(f.ctx, CreateInput{
 		ActorID: "test-editor", SyllabusID: "00000000-0000-0000-0000-000000000000",
-		CurriculumMapNodeID: f.nodeID, ResponseType: ResponseShortAnswer, Language: "en", Prompt: "p",
+		CurriculumMapNodeID: f.nodeID, ResponseType: ResponseShortAnswer, Language: "en", Prompt: "p", OriginType: OriginOriginal,
 	}); !errors.Is(err, ErrUnknownSyllabus) {
 		t.Fatalf("unknown syllabus: err = %v, want ErrUnknownSyllabus", err)
 	}
@@ -234,12 +235,144 @@ func TestPostgresStore_Integration_OptionsMigrationRerunAndExistingNull(t *testi
 	}
 }
 
+func TestPostgresStore_Integration_ProvenanceMigrationRerunNoBackfill(t *testing.T) {
+	f := newFixture(t)
+	var historicalID string
+	if err := f.db.QueryRow(`
+		INSERT INTO questions (syllabus_id, curriculum_map_node_id, response_type, language, prompt)
+		VALUES ($1, $2, 'short_answer', 'en', 'historical runtime row') RETURNING id
+	`, f.syllabusID, f.nodeID).Scan(&historicalID); err != nil {
+		t.Fatalf("insert historical question: %v", err)
+	}
+	body, err := os.ReadFile(`../../migrations/0020_add_question_provenance.sql`)
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	for pass := 1; pass <= 2; pass++ {
+		if _, err := f.db.Exec(string(body)); err != nil {
+			t.Fatalf("rerun migration pass %d: %v", pass, err)
+		}
+	}
+	var origin *string
+	if err := f.db.QueryRow(`SELECT origin_type FROM questions WHERE id=$1`, historicalID).Scan(&origin); err != nil {
+		t.Fatalf("read historical origin: %v", err)
+	}
+	if origin != nil {
+		t.Fatalf("historical origin = %q, want NULL", *origin)
+	}
+	var count int
+	if err := f.db.QueryRow(`SELECT count(*) FROM question_provenance WHERE question_id=$1`, historicalID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("historical provenance count=%d err=%v", count, err)
+	}
+}
+
+func createLicensedQuestion(t *testing.T, f fixture, licensedSourceID string) Question {
+	t.Helper()
+	locator := "metadata locator " + randomSuffix()
+	q, err := f.store.CreateQuestion(f.ctx, CreateInput{
+		ActorID: "test-editor", SyllabusID: f.syllabusID, CurriculumMapNodeID: f.nodeID,
+		ResponseType: ResponseShortAnswer, Language: "en", Prompt: "Runtime adaptation prompt.",
+		OriginType: OriginLicensedAdaptation, ContentSourceID: &licensedSourceID, SourceLocator: &locator,
+	})
+	if err != nil {
+		t.Fatalf("create licensed question: %v", err)
+	}
+	return q
+}
+
+func TestPostgresStore_Integration_LicensedProvenanceImmutableAndNamesOnly(t *testing.T) {
+	f := newFixture(t)
+	licensedSourceID := seedApprovedLinkedSource(t, f.db, f.syllabusID)
+	q := createLicensedQuestion(t, f, licensedSourceID)
+	if q.OriginType == nil || *q.OriginType != OriginLicensedAdaptation || q.Provenance == nil {
+		t.Fatalf("licensed question missing provenance: %+v", q)
+	}
+	if q.Provenance.ContentSourceID != licensedSourceID || q.Provenance.VerifiedActorID != "test-editor" {
+		t.Fatalf("provenance mismatch: %+v", q.Provenance)
+	}
+	for name, statement := range map[string]string{
+		"origin update":     `UPDATE questions SET origin_type='original' WHERE id=$1`,
+		"provenance update": `UPDATE question_provenance SET source_locator='other' WHERE question_id=$1`,
+		"provenance delete": `DELETE FROM question_provenance WHERE question_id=$1`,
+		"event update":      `UPDATE question_provenance_events SET changed_fields=ARRAY['other'] WHERE question_id=$1`,
+		"event delete":      `DELETE FROM question_provenance_events WHERE question_id=$1`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := f.db.Exec(statement, q.ID); err == nil {
+				t.Fatal("immutable database write unexpectedly succeeded")
+			}
+		})
+	}
+	var changed []string
+	if err := f.db.QueryRow(`SELECT changed_fields FROM question_provenance_events WHERE question_id=$1`, q.ID).Scan(pq.Array(&changed)); err != nil {
+		t.Fatalf("read provenance event: %v", err)
+	}
+	if strings.Join(changed, ",") != "questionId,contentSourceId,sourceLocator,originType,verifiedActorId,verifiedAt" {
+		t.Fatalf("changed fields = %#v", changed)
+	}
+	for _, forbidden := range []string{q.Prompt, q.Provenance.SourceLocator, licensedSourceID} {
+		if strings.Contains(strings.Join(changed, ","), forbidden) {
+			t.Fatalf("audit leaked value %q", forbidden)
+		}
+	}
+}
+
+func TestPostgresStore_Integration_LicensedSourceRegressionBlocksVerification(t *testing.T) {
+	tests := map[string]struct {
+		mutate  func(*testing.T, fixture, string)
+		wantErr error
+	}{
+		"expired": {func(t *testing.T, f fixture, id string) {
+			_, err := f.db.Exec(`UPDATE content_sources SET status='expired' WHERE id=$1`, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}, ErrUnapprovedSource},
+		"rejected": {func(t *testing.T, f fixture, id string) {
+			_, err := f.db.Exec(`UPDATE content_sources SET status='rejected' WHERE id=$1`, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}, ErrUnapprovedSource},
+		"unlinked": {func(t *testing.T, f fixture, id string) {
+			_, err := f.db.Exec(`UPDATE content_sources SET catalogue_syllabus_id=NULL WHERE id=$1`, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}, ErrUnlinkedSource},
+		"rights incomplete": {func(t *testing.T, f fixture, id string) {
+			_, err := f.db.Exec(`UPDATE content_sources SET allowed_audience=NULL WHERE id=$1`, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}, ErrIncompleteSourceRights},
+		"foreign link": {func(t *testing.T, f fixture, id string) {
+			_, err := f.db.Exec(`UPDATE content_sources SET catalogue_syllabus_id=$1 WHERE id=$2`, f.otherSyl, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}, ErrMismatchedSource},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			licensedSourceID := seedApprovedLinkedSource(t, f.db, f.syllabusID)
+			q := createLicensedQuestion(t, f, licensedSourceID)
+			v := verifyRubric(t, f, q)
+			tc.mutate(t, f, licensedSourceID)
+			if _, err := f.store.VerifyQuestion(f.ctx, q.ID, v.Version, "test-reviewer"); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("verify err=%v want=%v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestPostgresStore_Integration_MCQOptionsRevisionAnswerKeyAndAudit(t *testing.T) {
 	f := newFixture(t)
 	options := []MultipleChoiceOption{{ID: "one", Label: "runtime one"}, {ID: "two", Label: "runtime two"}}
 	q, err := f.store.CreateQuestion(f.ctx, CreateInput{
 		ActorID: "test-editor", SyllabusID: f.syllabusID, CurriculumMapNodeID: f.nodeID,
-		ResponseType: ResponseMultipleChoice, Language: "en", Prompt: "Original runtime prompt.", Options: options,
+		ResponseType: ResponseMultipleChoice, Language: "en", Prompt: "Original runtime prompt.", Options: options, OriginType: OriginOriginal,
 	})
 	if err != nil {
 		t.Fatalf("create MCQ: %v", err)
@@ -1012,7 +1145,7 @@ func TestPostgresStore_Integration_AuditRecordsNamesOnly(t *testing.T) {
 	prompt := "A uniquely identifiable original prompt " + randomSuffix()
 	q, err := f.store.CreateQuestion(f.ctx, CreateInput{
 		ActorID: "test-editor", SyllabusID: f.syllabusID, CurriculumMapNodeID: f.nodeID,
-		ResponseType: ResponseStructuredResponse, Language: "en", Prompt: prompt,
+		ResponseType: ResponseStructuredResponse, Language: "en", Prompt: prompt, OriginType: OriginOriginal,
 	})
 	if err != nil {
 		t.Fatalf("create question: %v", err)
@@ -1029,6 +1162,7 @@ func TestPostgresStore_Integration_AuditRecordsNamesOnly(t *testing.T) {
 		"syllabusId": true, "curriculumMapNodeId": true, "responseType": true, "language": true,
 		"prompt": true, "status": true, "contentRevision": true, "rubricVersion": true,
 		"questionRevision": true, "rubricVersionStatus": true, "canonicalRubricVersionId": true,
+		"originType": true,
 	}
 	seenActors := 0
 	for rows.Next() {

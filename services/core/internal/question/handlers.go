@@ -142,6 +142,9 @@ var createQuestionFields = map[string]struct{}{
 	"language":            {},
 	"prompt":              {},
 	"options":             {},
+	"originType":          {},
+	"contentSourceId":     {},
+	"sourceLocator":       {},
 }
 
 type createQuestionRequest struct {
@@ -151,6 +154,9 @@ type createQuestionRequest struct {
 	Language            string          `json:"language"`
 	Prompt              string          `json:"prompt"`
 	Options             json.RawMessage `json:"options,omitempty"`
+	OriginType          *string         `json:"originType"`
+	ContentSourceID     *string         `json:"contentSourceId,omitempty"`
+	SourceLocator       *string         `json:"sourceLocator,omitempty"`
 }
 
 func (h *handler) createQuestion(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +189,36 @@ func (h *handler) createQuestion(w http.ResponseWriter, r *http.Request) {
 	if len(missing) > 0 {
 		writeMissingFields(w, missing)
 		return
+	}
+	if req.OriginType == nil || blank(*req.OriginType) {
+		writeMissingFields(w, []string{"originType"})
+		return
+	}
+	originType := OriginType(*req.OriginType)
+	if !IsValidOriginType(originType) {
+		writeError(w, http.StatusBadRequest, "invalid_origin_type",
+			"originType must be exactly one of: original, licensed_adaptation")
+		return
+	}
+	_, hasContentSourceID := raw["contentSourceId"]
+	_, hasSourceLocator := raw["sourceLocator"]
+	if originType == OriginOriginal && (hasContentSourceID || hasSourceLocator) {
+		writeError(w, http.StatusBadRequest, "invalid_provenance",
+			"original questions must not include external provenance fields")
+		return
+	}
+	if originType == OriginLicensedAdaptation {
+		var provenanceMissing []string
+		if req.ContentSourceID == nil || blank(*req.ContentSourceID) {
+			provenanceMissing = append(provenanceMissing, "contentSourceId")
+		}
+		if req.SourceLocator == nil || blank(*req.SourceLocator) {
+			provenanceMissing = append(provenanceMissing, "sourceLocator")
+		}
+		if len(provenanceMissing) > 0 {
+			writeMissingFields(w, provenanceMissing)
+			return
+		}
 	}
 
 	responseType := ResponseType(strings.TrimSpace(req.ResponseType))
@@ -217,6 +253,9 @@ func (h *handler) createQuestion(w http.ResponseWriter, r *http.Request) {
 		Language:            strings.TrimSpace(req.Language),
 		Prompt:              strings.TrimSpace(req.Prompt),
 		Options:             options,
+		OriginType:          originType,
+		ContentSourceID:     trimPtr(req.ContentSourceID),
+		SourceLocator:       trimPtr(req.SourceLocator),
 	})
 	if mapped, ok := mapQuestionError(err); ok {
 		writeQuestionError(w, mapped)
@@ -528,6 +567,12 @@ func mapQuestionError(err error) (questionErrorMapping, bool) {
 		return questionErrorMapping{http.StatusBadRequest, "unlinked_source", err.Error()}, true
 	case errors.Is(err, ErrMismatchedSource):
 		return questionErrorMapping{http.StatusBadRequest, "mismatched_source", err.Error()}, true
+	case errors.Is(err, ErrIncompleteSourceRights):
+		return questionErrorMapping{http.StatusBadRequest, "incomplete_source_rights", err.Error()}, true
+	case errors.Is(err, ErrInvalidOriginType):
+		return questionErrorMapping{http.StatusBadRequest, "invalid_origin_type", err.Error()}, true
+	case errors.Is(err, ErrInvalidProvenance):
+		return questionErrorMapping{http.StatusBadRequest, "invalid_provenance", err.Error()}, true
 	case errors.Is(err, ErrInvalidRubric):
 		return questionErrorMapping{http.StatusBadRequest, "invalid_rubric", err.Error()}, true
 	case errors.Is(err, ErrInvalidMaxMarks):

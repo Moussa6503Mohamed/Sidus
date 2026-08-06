@@ -8,6 +8,7 @@ import {
   createQuestion,
   createRubricVersion,
   listQuestions,
+  listApprovedContentSources,
   listRubricVersions,
   listSyllabuses,
   listVerifiedNodes,
@@ -24,6 +25,7 @@ import { RubricWorkspace } from "./rubric-workspace";
 import styles from "./styles.module.css";
 import type {
   CreateQuestionRequest,
+  ContentSource,
   CreateQuestionRubricVersionRequest,
   CurriculumMapNode,
   EditingRole,
@@ -37,6 +39,7 @@ type Panel = { kind: "none" } | { kind: "create" } | { kind: "edit"; id: string 
 
 export function QuestionsWorkspace({ role }: { role: EditingRole }) {
   const [syllabuses, setSyllabuses] = useState<Syllabus[] | null>(null);
+  const [approvedSources, setApprovedSources] = useState<ContentSource[] | null>(null);
   const [selectedSyllabusId, setSelectedSyllabusId] = useState<string | null>(null);
   const [nodes, setNodes] = useState<CurriculumMapNode[] | null>(null);
   const [nodeFilter, setNodeFilter] = useState("");
@@ -51,12 +54,17 @@ export function QuestionsWorkspace({ role }: { role: EditingRole }) {
   const loadContext = useCallback(async () => {
     setLoadError(null);
     try {
-      const result = await listSyllabuses();
-      setSyllabuses(result.items);
-      setSelectedSyllabusId((current) => current ?? result.items[0]?.id ?? null);
+      const [syllabusResult, sourceResult] = await Promise.all([
+        listSyllabuses(),
+        listApprovedContentSources(),
+      ]);
+      setSyllabuses(syllabusResult.items);
+      setApprovedSources(sourceResult.items.filter((source) => source.status === "approved"));
+      setSelectedSyllabusId((current) => current ?? syllabusResult.items[0]?.id ?? null);
     } catch (error) {
       setLoadError(apiErrorMessage(error));
       setSyllabuses((current) => current ?? []);
+      setApprovedSources((current) => current ?? []);
     }
   }, []);
 
@@ -85,6 +93,11 @@ export function QuestionsWorkspace({ role }: { role: EditingRole }) {
   }, [selectedSyllabusId, nodeFilter, loadSyllabus]);
 
   const selected = panel.kind === "edit" ? questions?.find((question) => question.id === panel.id) ?? null : null;
+  const syllabusSources = (approvedSources ?? []).filter((source) =>
+    source.catalogueSyllabusId === selectedSyllabusId &&
+    [source.owner, source.title, source.sourceUrl, source.sourceHash, source.licenceReference,
+      source.permittedUse, source.allowedAudience].every((value) => typeof value === "string" && value.trim() !== ""),
+  );
 
   const loadVersions = useCallback(async (questionId: string) => {
     setRubricLoadError(null);
@@ -199,6 +212,7 @@ export function QuestionsWorkspace({ role }: { role: EditingRole }) {
       mode={{ kind: "create" }}
       syllabusId={selectedSyllabusId}
       verifiedNodes={nodes ?? []}
+      approvedSources={syllabusSources}
       submitting={mutating}
       error={mutationError}
       onCreate={handleCreate}
@@ -212,6 +226,7 @@ export function QuestionsWorkspace({ role }: { role: EditingRole }) {
         mode={{ kind: "edit", question: selected }}
         syllabusId={selectedSyllabusId}
         verifiedNodes={nodes ?? []}
+        approvedSources={syllabusSources}
         submitting={mutating}
         error={mutationError}
         onCreate={handleCreate}

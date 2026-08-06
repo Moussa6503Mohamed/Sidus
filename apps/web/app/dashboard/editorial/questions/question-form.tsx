@@ -12,6 +12,7 @@ import {
 } from "./question-form-values";
 import type {
   CreateQuestionRequest,
+  ContentSource,
   CurriculumMapNode,
   Question,
   QuestionResponseType,
@@ -30,6 +31,7 @@ interface QuestionFormProps {
   mode: Mode;
   syllabusId: string;
   verifiedNodes: CurriculumMapNode[];
+  approvedSources: ContentSource[];
   submitting: boolean;
   error: string | null;
   onCreate: (input: CreateQuestionRequest) => void;
@@ -38,7 +40,7 @@ interface QuestionFormProps {
 }
 
 export function QuestionForm(props: QuestionFormProps) {
-  const { mode, syllabusId, verifiedNodes, submitting, error, onCreate, onUpdate, onCancel } = props;
+  const { mode, syllabusId, verifiedNodes, approvedSources, submitting, error, onCreate, onUpdate, onCancel } = props;
   const editable = mode.kind === "create" || mode.question.status === "draft";
   const [values, setValues] = useState<QuestionFieldValues>(
     mode.kind === "edit" ? valuesFromQuestion(mode.question) : EMPTY_QUESTION_VALUES,
@@ -83,10 +85,10 @@ export function QuestionForm(props: QuestionFormProps) {
 
   return (
     <form className={sourceStyles.form} onSubmit={submit} aria-labelledby={headingId}>
-      <h2 id={headingId}>{mode.kind === "create" ? "New original question" : "Question draft"}</h2>
+      <h2 id={headingId}>{mode.kind === "create" ? "New question" : "Question draft"}</h2>
       <p className={sourceStyles.bannerEmpty} role="note">
-        Original editorial content only. Do not copy or lightly rewrite source, syllabus, past-paper,
-        mark-scheme, extract, or diagram content.
+        Enter question content only in approved editorial workflow. Never paste source text, copied
+        wording, images, diagrams, answers, mark schemes, PDFs, or extracts into provenance fields.
       </p>
       {!editable && (
         <p className={sourceStyles.bannerEmpty} role="status">
@@ -95,6 +97,61 @@ export function QuestionForm(props: QuestionFormProps) {
       )}
       <fieldset disabled={!editable || submitting}>
         <legend>Question content</legend>
+        <div className={sourceStyles.grid}>
+          <div className={sourceStyles.field}>
+            <label htmlFor="question-origin">Origin (required)</label>
+            <select
+              id="question-origin"
+              value={values.originType}
+              disabled={mode.kind === "edit" || submitting}
+              onChange={(event) => setValues((previous) => ({
+                ...previous,
+                originType: event.target.value as QuestionFieldValues["originType"],
+                contentSourceId: "",
+                sourceLocator: "",
+              }))}
+              aria-required
+            >
+              <option value="">— select origin —</option>
+              <option value="original">Original</option>
+              <option value="licensed_adaptation">Licensed adaptation</option>
+            </select>
+          </div>
+          {values.originType === "licensed_adaptation" && <>
+            <div className={sourceStyles.field}>
+              <label htmlFor="question-provenance-source">Approved licensed source (required)</label>
+              <select
+                id="question-provenance-source"
+                value={values.contentSourceId}
+                disabled={mode.kind === "edit" || submitting}
+                onChange={(event) => setField("contentSourceId", event.target.value)}
+                aria-required
+              >
+                <option value="">— select approved source —</option>
+                {approvedSources.map((source) => <option key={source.id} value={source.id}>{source.title}</option>)}
+              </select>
+              {approvedSources.length === 0 && <p className={sourceStyles.fieldError} role="status">
+                No approved, rights-complete source is linked to this syllabus.
+              </p>}
+            </div>
+            <div className={sourceStyles.field}>
+              <label htmlFor="question-source-locator">Source locator metadata (required)</label>
+              <input
+                id="question-source-locator"
+                value={values.sourceLocator}
+                disabled={mode.kind === "edit" || submitting}
+                onChange={(event) => setField("sourceLocator", event.target.value)}
+                autoComplete="off"
+                aria-required
+              />
+            </div>
+          </>}
+        </div>
+        {values.originType === "licensed_adaptation" && <p className={sourceStyles.bannerEmpty} role="note">
+          Proceed only after human-entered written licence evidence covers adaptation, digital
+          delivery, learner audience, marking feedback, and AI processing where applicable.
+          Locator must contain reference metadata only—never copied source content.
+        </p>}
         <div className={sourceStyles.grid}>
           <div className={sourceStyles.field}>
             <label htmlFor="question-node">Verified curriculum node (required)</label>
