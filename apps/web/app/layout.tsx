@@ -29,7 +29,7 @@ export default async function RootLayout({
 
   return (
     <ClerkProvider>
-      <html lang="en">
+      <html lang="en" suppressHydrationWarning>
         {/* Constant script, no interpolated values — applies the persisted theme before first
             paint so there is no light/dark flash. See components/theme/theme-script.ts. */}
         <head>
