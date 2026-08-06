@@ -1,16 +1,22 @@
 .skel {
-  background: linear-gradient(90deg, var(--surface-sunken) 25%, var(--border-subtle) 37%, var(--surface-sunken) 63%);
-  background-size: 400% 100%;
-  animation: sidus-skel-shimmer 1.4s ease infinite;
+  background: var(--surface-sunken);
   border-radius: var(--radius-xs);
   height: 12px;
+  animation: sidus-skel-pulse 1.4s ease-in-out infinite;
 }
 
-@keyframes sidus-skel-shimmer {
-  0% {
-    background-position: 100% 50%;
+@media (prefers-reduced-motion: reduce) {
+  .skel {
+    animation: none;
   }
+}
+
+@keyframes sidus-skel-pulse {
+  0%,
   100% {
-    background-position: 0 50%;
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
   }
 }
