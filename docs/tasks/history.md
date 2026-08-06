@@ -1,5 +1,68 @@
 # Task history
 
+## T-0016 — Practice Mode MCQ attempts, deterministic marking, and verified feedback foundation
+
+**Status:** done / released
+**Owner:** Codex
+**Priority:** P1
+**Implementation commits:** `fddce8ea706cb43980ee35f5bd3ce393791b8bbc`, `f6b1b763902c9b88f95921fc5ec3115bc9b63a1a`
+**Depends on:** T-0015 (done / released)
+
+### Goal
+
+Add strict editorial MCQ feedback, owned immutable learner attempts, atomic deterministic submit,
+learner-safe BFF contracts, and Practice Mode feedback without widening into Exam Mode or AI.
+
+### Delivered
+
+- Immutable MCQ rubrics require complete, exact verified feedback bound to current option IDs;
+  non-MCQ feedback is forbidden, historical rows remain untouched, and no feedback/content is
+  seeded.
+- Additive migration 0019 creates owner-bound, pinned `open | submitted` attempts and append-only
+  names-only events. Attempt creation atomically rechecks learner eligibility and pins exact owned
+  canonical rubric plus current question revision.
+- Corrupt persisted rubric/option sets return learner-safe not-found before attempt/event mutation.
+- Submission locks own open attempt, marks all-or-zero once from pinned verified feedback, returns
+  exact learner-safe result fields, and makes replay/concurrent submit conflict. Foreign owners see
+  not-found.
+- Separate fixed-operation learner BFF write routes enforce exact bodies and a shared 4096-byte
+  hard cap. Declared and streamed oversized bodies return 413 before Clerk or Core access.
+- Practice UI explicitly labels selected/correct states, renders complete approved feedback only
+  after submit, retains pinned attempts for safe retry, and prevents duplicate creation/submission.
+- No raw rubric, source data, actor IDs, events, timestamps, canonical IDs, AI, timer, Exam Mode,
+  or learner-attempt administration route is exposed.
+
+### Release validation (final pass, 2026-08-06)
+
+| Check | Result |
+| --- | --- |
+| Protected working-tree audit | Pass — tracked tree/index clean; only `.claude/`, `.claude-flow/`, `DB.jpeg`, `arch.jpeg`, and `Sidus*.xlsx` untracked; ignored `.env.local` and `Guidelines.pdf` untouched |
+| Dev/test Compose config | Pass / Pass |
+| Web Vitest | Pass — 28 files, 256 tests |
+| Web typecheck / production build | Pass / Pass — learner create/submit and Practice routes present |
+| Strict shared-contract TypeScript | Pass |
+| Go changed-file gofmt / build / vet | Pass / Pass / Pass (Docker `golang:1.22-alpine`) |
+| Full Go unit tests | Pass — all packages green |
+| Fresh disposable migrate / rerun | Pass — 19 applied through 0019 / 0 applied |
+| Full integration suite | Pass — all packages green, including corrupt-data, ownership, pinned lifecycle, and parallel-submit regressions |
+| Disposable `sidus-test` teardown | Pass — `down -v`; container/network removed |
+| Python pytest | Pass — 18 tests; dependency/cache warnings only |
+| T-0016 release invariants | Pass — exact current-option feedback, owned/current canonical pins, atomic one-shot submit, exact projections, closed capped BFF, accessible guarded UI |
+| `git diff --check` | Pass |
+| Staged content and secret audit | Pass — docs-only release files; protected/content/secret/runtime artifacts excluded |
+
+### Constraints and remaining manual gates
+
+- Release commit contains documentation only. No question/rubric prose, source extract, PDF, ZIP,
+  secret, design artifact, runtime data, or `.env.local` is staged or committed.
+- Protected user files remain untouched.
+- Runtime Clerk/Core configuration and human-authored verified content remain operator/editorial
+  gates; release changes no runtime data or product behavior.
+
+### Handoff
+
+`docs/handoffs/T-0016.md`. See D-0018 in `docs/decisions.md`.
+
 ## T-0015 — Learner-safe verified-question delivery foundation
 
 **Status:** done / released

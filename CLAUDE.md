@@ -155,12 +155,14 @@ cd services/ai && python -m pytest
   `/dashboard/practice` in place of a raw-UUID text field) — see D-0017 "Update (T-0015 review)".
   Full release validation passed on 2026-08-06. T-0015 moved to `docs/tasks/history.md` as
   `done / released`; implementation commits remain unchanged.
-- Practice Mode MCQ marking built in T-0016: immutable MCQ rubrics require complete verified
+- Practice Mode MCQ marking released in T-0016: immutable MCQ rubrics require complete verified
   canonical feedback for current options; additive migration 0019 adds owner-bound, pinned,
   one-shot learner attempts and append-only names-only events. Core marks all-or-zero under row
   lock from exact pinned canonical rubric/revision and returns only learner-safe result fields.
   Separate fixed-operation learner BFF routes and `/dashboard/practice` provide explicit submit,
   score, selected/correct labels, and every canonical explanation. Historical rubric rows are not
   backfilled; no content/seed, fallback, AI, timer, paper/session flow, or Exam Mode exists. See
-  `docs/practice-mcq-marking.md`, D-0018, and `docs/handoffs/T-0016.md`. Status: review.
+  `docs/practice-mcq-marking.md`, D-0018, and `docs/handoffs/T-0016.md`. Full release validation
+  passed on 2026-08-06. T-0016 moved to `docs/tasks/history.md` as `done / released`;
+  implementation commits remain unchanged.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.
