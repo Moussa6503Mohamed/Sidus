@@ -769,6 +769,45 @@ options (deferred: flagged as a known gap in `docs/sidus-observatory-design-syst
 risking a larger change to existing keyboard-interaction wiring within this pass).
 **Owner/date:** Claude Code agent, 2026-08-06 (T-0017).
 
+**Update (T-0017 review fix, 2026-08-06):** Fixed three Gemini-audit findings on top of `26a4a8a`,
+still at status `review` (not released, not pushed). (1) **P1 — accessible radiogroup:**
+`question-list.tsx`'s MCQ options are now a full WAI-ARIA APG roving-tabindex radiogroup —
+`aria-labelledby` pointing at the question prompt, one `tabIndex={0}` stop (selected option, else
+the first), `ArrowRight`/`Down`/`Left`/`Up`/`Home`/`End` move focus and selection together and
+wrap, `Space`/`Enter` select the focused option, `Tab` enters/exits the group once. After marking,
+the group becomes a disabled, non-interactive `role="list"`/`"listitem"` with the same non-color
+correctness tags as before. New `question-list.test.tsx` (11 tests: labelling, roving tabIndex,
+every key, focus movement, read-only post-result state, no pre-submit disclosure); this closes the
+"known gap" this decision's own Alternatives section previously deferred. (2) **P2 — mobile nav:**
+`nav.module.css`'s link strip becomes a single-row `overflow-x: auto` scroll region at `≤40rem`
+instead of wrapping into a tall multi-row header; every other top-nav child gets `flex-shrink: 0`
+so the scroll budget goes to the links, `.spacer` is hidden since the link strip now fills the row
+itself; no link is hidden/truncated, focus stays visible, header stays one row at 390px.
+(3) **P3 — token consistency:** every hard-coded spacing/sizing pixel value in `nav.module.css`,
+Practice Mode's `styles.module.css`, and `Logo.module.css` now resolves to `--space-*` (nearest
+token) or `--border-hairline`/`--border-emphasis`, except (a) the MCQ option's border-compensated
+padding, expressed as `calc()` over `--space-4`/`--border-emphasis`/`--border-hairline` so the
+option box's total size cannot shift by a stray pixel when its border grows on selection/marking —
+snapping each padding value independently would have broken that compensation — and (b) typography
+(font-size/line-height/letter-spacing), which has no token scale in `tokens.css` yet and was
+deliberately left literal rather than force-mapped onto the spacing scale. The one pre-existing hex
+exception (`Logo.module.css`'s fixed-white inverse lockup) is unchanged and re-documented inline.
+No Core/AI/BFF/database/route/business-rule/dependency change; no new hard-coded color was added.
+Full validation (web vitest 287/287, web typecheck, web build, Core Go build/vet/test, Python
+18/18, compose config, `git diff --check`, secret audit) passed — see
+`docs/handoffs/T-0017.md` "Update (T-0017 review fix)".
+**Alternatives:** Rewrite the MCQ list as native `<input type="radio">` elements instead of
+`role="radio"` `<button>`s (rejected: would touch the existing click/submit/disabled wiring far
+more broadly than the audit asked, and the ARIA-override-on-`<button>` pattern is a standard,
+fully-supported APG approach); hide overflowing nav links behind a "More" menu on mobile (rejected:
+instruction explicitly forbids hidden/truncated links); snap every spacing value to the nearest
+token with no exceptions (rejected: demonstrated in testing to reintroduce a 1–3px layout jump on
+MCQ marking; the `calc()` approach keeps the value token-derived without that regression); invent a
+new font-size token scale to eliminate the remaining literal typography values (rejected: out of
+this fix's scope, no existing scale to snap to, and inventing one risks a much larger, unreviewed
+visual diff across every page for a P3 ask that only names spacing/sizing).
+**Owner/date:** Claude Code agent, 2026-08-06 (T-0017 review fix).
+
 ## Decision template
 
 ```md

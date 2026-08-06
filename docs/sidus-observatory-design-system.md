@@ -77,18 +77,53 @@ only).
 | `selected-incorrect` | 2px `--danger-fg` + danger fill | filled red | "Your answer · incorrect" |
 | `disabled` | 1px `--border-subtle`, sunken fill | muted | "Locked" |
 
-Before marking, the option list is `role="radiogroup"` with each option `role="radio"
-aria-checked`. After marking (a result exists), it switches to `role="list"` /
-`role="listitem"` so arrow-key semantics no longer imply changeability, matching the source
-artifact's accessibility notes. A `sidus-visually-hidden` sentence
+Before marking, the option list is `role="radiogroup"` — labelled by the question prompt via
+`aria-labelledby`, not a generic string — with a **roving tabindex**: the selected option (or the
+first option, before anything is selected) is the sole `tabIndex={0}` stop, every other option is
+`-1`. `ArrowRight`/`ArrowDown` and `ArrowLeft`/`ArrowUp` move focus to the next/previous option and
+wrap; `Home`/`End` jump to the first/last option; each of these also updates the selection (matching
+native radio-button behavior) before submission. `Space`/`Enter` select whichever option currently
+has focus. `Tab` therefore enters the group once (at the roving stop) and leaves it once (at
+"Submit answer"), per the WAI-ARIA APG radiogroup pattern — see `question-list.tsx`'s
+`OptionGroup`. After marking (a result exists), the group switches to `role="list"` /
+`role="listitem"`, every option becomes `disabled` (no `tabIndex`/roving logic applies), and no
+answer, tag, or feedback is rendered before that point. A `sidus-visually-hidden` sentence
 ("You answered B. The correct answer is A. 0 of 1 mark.") is the first thing the `aria-live`
-feedback region announces, ahead of the visible heading/explanations.
+feedback region announces, ahead of the visible heading/explanations. Focused tests:
+`question-list.test.tsx` (roving tabindex, all five key groups, focus movement, read-only
+post-result state, no pre-submit disclosure).
 
-**Known gap vs. the source artifact:** options remain individually `Tab`-focusable native
-`<button>` elements rather than a full roving-tabindex radiogroup with arrow-key navigation
-between them. Tab/click/Enter/Space all work; arrow-key roving was not implemented in this pass
-to keep the change to existing interaction wiring minimal — flagged as follow-up scope, not
-silently dropped.
+## Mobile top nav (≤ 40rem)
+
+`components/nav/nav.module.css` — the link strip (`.navlinks`) becomes a single-row, horizontally
+scrolling region (`overflow-x: auto; flex-wrap: nowrap; min-width: 0`) instead of wrapping into a
+tall multi-row header. Every other direct child of `.topnav` (brand, theme toggle, role chip, user
+button) gets `flex-shrink: 0` in the same breakpoint so the scroll budget goes entirely to the
+links; `.spacer` is hidden since `.navlinks` now grows to fill the remaining row width itself. No
+link is hidden or truncated, every link stays reachable by keyboard, and the visible focus ring is
+unaffected — only the overflow behavior changed. Header height stays a single row down to 390px.
+
+## Token consistency
+
+Every hard-coded pixel spacing/sizing value in `nav.module.css`, Practice Mode's
+`styles.module.css`, and `Logo.module.css` was replaced with the closest `--space-*` token, or
+`--border-hairline`/`--border-emphasis` for 1px/2px border and outline widths. Two deliberate,
+documented carve-outs:
+
+- **Border-compensated MCQ padding.** `.optionButton`'s default padding is
+  `calc(var(--space-4) - var(--border-emphasis))`/`var(--space-4)`, and the selected/correct/
+  selected-incorrect states are `calc(var(--space-4) - var(--border-emphasis) - var(--border-hairline))`/
+  `calc(var(--space-4) - var(--border-hairline))`. This reproduces the original 14px/16px and
+  13px/15px pixel values exactly, purely from tokens — a plain nearest-token snap on each value
+  independently would have broken the padding-vs-border-width compensation and made the option box
+  visibly resize by a few pixels when a question is marked.
+- **Typography stays literal.** Font sizes, line-heights, and letter-spacing (in all three files)
+  are not on the `--space-*` scale and no font-size token exists yet in `tokens.css`, so they were
+  left as-is rather than force-mapped onto an unrelated token category. This is a known,
+  intentionally scoped gap, not an oversight — a font-size scale is follow-up work if needed.
+
+The one remaining literal color, `Logo.module.css`'s `.logo--inverse { color: #ffffff }`, stays as
+the single documented exception described above (fixed-white lockup on a fixed navy/brand ground).
 
 ## Status system
 
@@ -108,8 +143,11 @@ handoff for the itemized diff.
 
 ## Accessibility
 
-- Visible focus ring (`outline: 2px solid var(--focus-ring); outline-offset: 2px`) is a global
-  `:focus-visible` rule; never removed, never colour-only.
+- Visible focus ring (`outline: 2px solid var(--focus-ring); outline-offset: 2px`, token-derived
+  via `--border-emphasis` in Practice Mode's own focus rule) is a global `:focus-visible` rule;
+  never removed, never colour-only.
+- Practice Mode's MCQ options are a full roving-tabindex `radiogroup` (arrow/Home/End/Space/Enter,
+  single-stop `Tab` entry and exit) — see "MCQ option states" above.
 - `prefers-reduced-motion: reduce` stops both animated things in the app.
 - Every status/correctness signal pairs colour with an icon shape and/or border style and a text
   label — verified by `StatusBadge.test.tsx` and the MCQ result assertions in

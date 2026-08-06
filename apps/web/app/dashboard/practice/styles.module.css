@@ -22,7 +22,7 @@
   flex-wrap: wrap;
   align-items: flex-end;
   gap: var(--space-4);
-  border: 1px solid var(--border-subtle);
+  border: var(--border-hairline) solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: var(--space-4);
   background: var(--surface-raised);
@@ -32,7 +32,7 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .field label {
@@ -42,14 +42,14 @@
 
 .field input,
 .field select {
-  border: 1px solid var(--border-default);
+  border: var(--border-hairline) solid var(--border-default);
   border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  padding: var(--space-3);
   font: 400 14px/1.4 var(--font-sans);
   color: var(--text-primary);
   background: var(--surface-raised);
   min-width: 16rem;
-  min-height: 40px;
+  min-height: var(--space-10);
 }
 
 .field input:hover,
@@ -61,12 +61,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-2);
   border-radius: var(--radius-sm);
   font: 650 14px/1 var(--font-sans);
-  padding: 10px 16px;
-  min-height: 40px;
-  border: 1px solid var(--brand-primary);
+  padding: var(--space-3) var(--space-4);
+  min-height: var(--space-10);
+  border: var(--border-hairline) solid var(--brand-primary);
   background: var(--brand-primary);
   color: var(--text-on-brand);
   cursor: pointer;
@@ -101,15 +101,15 @@
 .optionButton:focus-visible,
 .page input:focus-visible,
 .page select:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+  outline: var(--border-emphasis) solid var(--focus-ring);
+  outline-offset: var(--border-emphasis);
 }
 
 .banner {
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4);
   font-size: 0.9rem;
-  border: 1px solid transparent;
+  border: var(--border-hairline) solid transparent;
 }
 
 .bannerError {
@@ -141,7 +141,7 @@
 }
 
 .card {
-  border: 1px solid var(--border-subtle);
+  border: var(--border-hairline) solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: var(--space-6);
   display: flex;
@@ -159,19 +159,24 @@
 
 .options {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
+/* Default border is --border-hairline (1px); the selected/correct/selected-incorrect states
+   below step up to --border-emphasis (2px). Padding on both is derived from --space-4 minus the
+   border tokens so the option's total box size never shifts when its border grows on selection
+   or marking — a fixed padding value here would either duplicate that arithmetic as a magic
+   number or reintroduce the 1px layout jump a naive token swap would cause. */
 .optionButton {
   display: grid;
   grid-template-columns: auto 1fr auto;
-  gap: 12px;
+  gap: var(--space-3);
   align-items: start;
   text-align: left;
   width: 100%;
-  padding: 14px 16px;
+  padding: calc(var(--space-4) - var(--border-emphasis)) var(--space-4);
   border-radius: var(--radius-md);
-  border: 1px solid var(--border-default);
+  border: var(--border-hairline) solid var(--border-default);
   background: var(--surface-raised);
   cursor: pointer;
   font: 400 15px/1.5 var(--font-sans);
@@ -184,10 +189,10 @@
 }
 
 .optionKey {
-  width: 26px;
-  height: 26px;
+  width: var(--space-6);
+  height: var(--space-6);
   border-radius: 50%;
-  border: 1px solid var(--border-strong);
+  border: var(--border-hairline) solid var(--border-strong);
   display: grid;
   place-items: center;
   font: 650 13px/1 var(--font-mono);
@@ -198,20 +203,20 @@
 .optionTag {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   font: 650 12px/1.4 var(--font-sans);
   white-space: nowrap;
-  padding: 2px 8px;
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-pill);
-  border: 1px solid transparent;
+  border: var(--border-hairline) solid transparent;
 }
 
 /* MCQ option states — border weight + key glyph fill + text tag together carry the meaning;
    colour is never the only signal. */
 .optionButton[data-option-state="selected"] {
   border-color: var(--brand-primary);
-  border-width: 2px;
-  padding: 13px 15px;
+  border-width: var(--border-emphasis);
+  padding: calc(var(--space-4) - var(--border-emphasis) - var(--border-hairline)) calc(var(--space-4) - var(--border-hairline));
   background: var(--brand-tint);
 }
 
@@ -229,8 +234,8 @@
 
 .optionButton[data-option-state="correct"] {
   border-color: var(--success-fg);
-  border-width: 2px;
-  padding: 13px 15px;
+  border-width: var(--border-emphasis);
+  padding: calc(var(--space-4) - var(--border-emphasis) - var(--border-hairline)) calc(var(--space-4) - var(--border-hairline));
   background: var(--success-bg);
   cursor: default;
 }
@@ -261,8 +266,8 @@
 
 .optionButton[data-option-state="selected-incorrect"] {
   border-color: var(--danger-fg);
-  border-width: 2px;
-  padding: 13px 15px;
+  border-width: var(--border-emphasis);
+  padding: calc(var(--space-4) - var(--border-emphasis) - var(--border-hairline)) calc(var(--space-4) - var(--border-hairline));
   background: var(--danger-bg);
   cursor: default;
 }
@@ -292,10 +297,10 @@
 }
 
 .feedback {
-  border-top: 1px solid var(--border-subtle);
+  border-top: var(--border-hairline) solid var(--border-subtle);
   padding-top: var(--space-4);
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .feedback h2,
@@ -318,7 +323,7 @@
 }
 
 .accessDenied {
-  border: 1px solid var(--border-subtle);
+  border: var(--border-hairline) solid var(--border-subtle);
   border-radius: var(--radius-md);
   padding: var(--space-5);
   max-width: 32rem;
@@ -333,6 +338,6 @@
   }
 
   .optionButton {
-    min-height: 48px;
+    min-height: var(--space-12);
   }
 }

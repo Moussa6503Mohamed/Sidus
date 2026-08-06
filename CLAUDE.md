@@ -172,4 +172,15 @@ cd services/ai && python -m pytest
   no Core/AI/BFF/database/route/dependency change. See `docs/sidus-observatory-design-system.md`,
   D-0019, and `docs/handoffs/T-0017.md`. T-0017 is at status `review` (implementation complete,
   not released, not pushed) — not yet moved to `docs/tasks/history.md`.
+- Three Gemini-audit findings on T-0017 fixed on top of `26a4a8a`: Practice Mode's MCQ options
+  are now a full roving-tabindex ARIA radiogroup with arrow/Home/End/Space/Enter keyboard support
+  (`apps/web/app/dashboard/practice/question-list.tsx` + new `question-list.test.tsx`); the mobile
+  (`≤40rem`) top nav scrolls its link strip in a single row instead of wrapping into a tall header
+  (`apps/web/components/nav/nav.module.css`); and hard-coded spacing/sizing values across
+  `nav.module.css`, Practice Mode's `styles.module.css`, and `Logo.module.css` now resolve to
+  design tokens, with two documented exceptions (border-compensated MCQ option padding kept exact
+  via `calc()`, and typography, which has no token scale yet). No Core/AI/BFF/database/route/
+  business-rule/dependency change. See D-0019's update in `docs/decisions.md` and
+  `docs/handoffs/T-0017.md` "Update (T-0017 review fix)". T-0017 remains at status `review` — not
+  released, not pushed.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.

@@ -60,3 +60,13 @@ Implementation complete; full validation results, changed-file list, and known g
 `docs/handoffs/T-0017.md`. See `docs/sidus-observatory-design-system.md` for the system itself
 and D-0019 in `docs/decisions.md` for the decision record. Left at `review` — not released, not
 pushed, per instruction.
+
+**Update (review fix, 2026-08-06):** Fixed three Gemini-audit findings on top of `26a4a8a` — MCQ
+options are now a full roving-tabindex ARIA radiogroup (`question-list.tsx` +
+`question-list.test.tsx`, 11 new tests), mobile top nav scrolls as a single row instead of
+wrapping (`nav.module.css`), and hard-coded spacing/sizing in `nav.module.css`,
+`styles.module.css`, and `Logo.module.css` now resolve to design tokens (documented exceptions:
+border-compensated MCQ padding via `calc()`, and typography, which has no token scale yet). Full
+validation re-passed (287/287 web tests, typecheck, build, Core Go, Python, compose, diff-check,
+secret audit). See `docs/handoffs/T-0017.md` "Update (T-0017 review fix)" and D-0019's update.
+Still `review` — not released, not pushed.

@@ -1,17 +1,20 @@
 .logo {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
   color: var(--brand-navy);
 }
 
 .logo__mark {
   display: block;
-  height: 32px;
+  height: var(--space-8);
   width: auto;
   color: inherit;
 }
 
+/* Wordmark size/tracking is typography, not the spacing/sizing scale — no font-size token
+   exists yet in tokens.css, so these three values (and the sm/lg variants below) stay literal
+   pixels by design rather than snapping to an unrelated space token. */
 .logo__word {
   font-family: var(--font-display);
   font-weight: 600;
@@ -22,7 +25,7 @@
 }
 
 .logo--sm .logo__mark {
-  height: 22px;
+  height: var(--space-6);
 }
 
 .logo--sm .logo__word {
@@ -30,17 +33,21 @@
 }
 
 .logo--sm.logo {
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .logo--lg .logo__mark {
-  height: 52px;
+  height: var(--space-12);
 }
 
 .logo--lg .logo__word {
   font-size: 44px;
 }
 
+/* Documented exception: the inverse lockup always sits on a fixed navy/brand background, never
+   the page canvas, so it must stay pure white in both light and dark theme rather than tracking
+   --text-on-brand or any other themed token. This is the only literal color value outside
+   tokens.css — see D-0019. */
 .logo--inverse {
   color: #ffffff;
 }

@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { getOptionState } from "@/lib/design/option-state";
 import { ApiError, createPracticeAttempt, submitPracticeAttempt } from "./api-client";
 import styles from "./styles.module.css";
-import type { LearnerAttemptResult, LearnerQuestion } from "./types";
+import type { LearnerAttemptResult, LearnerQuestion, LearnerQuestionOption } from "./types";
 
 interface QuestionListProps { questions: LearnerQuestion[] }
 
@@ -18,6 +18,104 @@ interface QuestionAttemptState {
 
 function messageFor(error: unknown): string {
   return error instanceof ApiError ? error.message : "Answer could not be submitted. Try again.";
+}
+
+const NEXT_KEYS = new Set(["ArrowRight", "ArrowDown"]);
+const PREV_KEYS = new Set(["ArrowLeft", "ArrowUp"]);
+const SELECT_KEYS = new Set([" ", "Spacebar", "Enter"]);
+
+interface OptionGroupProps {
+  questionId: string;
+  options: LearnerQuestionOption[];
+  state: QuestionAttemptState;
+  onSelect: (optionId: string) => void;
+}
+
+/**
+ * ARIA APG radiogroup: one roving tab stop (selected option, else the first option), arrow keys
+ * move focus AND selection together, Space/Enter select the already-focused option. After
+ * marking the group becomes a plain read-only list — see D-0019 "Update (T-0017 P1 review fix)".
+ */
+function OptionGroup({ questionId, options, state, onSelect }: OptionGroupProps) {
+  const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const result = state.result;
+  const isInteractive = !result && !state.submitting;
+  const rovingTargetId = state.selectedOptionId ?? options[0]?.id;
+
+  function focusOption(optionId: string) {
+    buttonRefs.current.get(optionId)?.focus();
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (!isInteractive) return;
+    const count = options.length;
+    if (NEXT_KEYS.has(event.key)) {
+      event.preventDefault();
+      const next = options[(index + 1) % count];
+      onSelect(next.id);
+      focusOption(next.id);
+    } else if (PREV_KEYS.has(event.key)) {
+      event.preventDefault();
+      const prev = options[(index - 1 + count) % count];
+      onSelect(prev.id);
+      focusOption(prev.id);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      onSelect(options[0].id);
+      focusOption(options[0].id);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      const last = options[count - 1];
+      onSelect(last.id);
+      focusOption(last.id);
+    } else if (SELECT_KEYS.has(event.key)) {
+      event.preventDefault();
+      onSelect(options[index].id);
+    }
+  }
+
+  return (
+    <div
+      className={styles.options}
+      role={result ? "list" : "radiogroup"}
+      aria-labelledby={result ? undefined : `question-prompt-${questionId}`}
+      aria-label={result ? "Options, marked" : undefined}
+    >
+      {options.map((option, index) => {
+        const optionState = getOptionState({
+          optionId: option.id,
+          selectedOptionId: state.selectedOptionId,
+          correctOptionId: result?.correctOptionId,
+          isMarked: Boolean(result),
+          disabled: Boolean(state.submitting),
+        });
+        return (
+          <button
+            key={option.id}
+            ref={(node) => {
+              if (node) buttonRefs.current.set(option.id, node);
+              else buttonRefs.current.delete(option.id);
+            }}
+            type="button"
+            className={styles.optionButton}
+            data-option-state={optionState.state}
+            role={result ? "listitem" : "radio"}
+            aria-checked={result ? undefined : state.selectedOptionId === option.id}
+            tabIndex={result ? undefined : option.id === rovingTargetId ? 0 : -1}
+            disabled={Boolean(state.submitting || result)}
+            onClick={() => onSelect(option.id)}
+            onKeyDown={(event) => handleKeyDown(event, index)}
+          >
+            <span className={styles.optionKey} aria-hidden="true">
+              {option.label.charAt(0)}
+            </span>
+            <span>{option.label}</span>
+            {optionState.tag && <strong className={styles.optionTag}>{optionState.tag}</strong>}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 export function QuestionList({ questions }: QuestionListProps) {
@@ -50,42 +148,15 @@ export function QuestionList({ questions }: QuestionListProps) {
         const optionLabels = new Map(options.map((option) => [option.id, option.label]));
         return (
           <li key={question.id} className={styles.card}>
-            <p className={styles.prompt}>{question.prompt}</p>
+            <p className={styles.prompt} id={`question-prompt-${question.id}`}>{question.prompt}</p>
             {question.responseType === "multiple_choice" && question.options ? (
               <>
-                <div
-                  className={styles.options}
-                  role={result ? "list" : "radiogroup"}
-                  aria-label={result ? "Options, marked" : "Answer options"}
-                >
-                  {options.map((option) => {
-                    const optionState = getOptionState({
-                      optionId: option.id,
-                      selectedOptionId: state.selectedOptionId,
-                      correctOptionId: result?.correctOptionId,
-                      isMarked: Boolean(result),
-                      disabled: Boolean(state.submitting),
-                    });
-                    return (
-                      <button
-                        key={option.id}
-                        type="button"
-                        className={styles.optionButton}
-                        data-option-state={optionState.state}
-                        role={result ? "listitem" : "radio"}
-                        aria-checked={result ? undefined : state.selectedOptionId === option.id}
-                        disabled={Boolean(state.submitting || result)}
-                        onClick={() => update(question.id, { selectedOptionId: option.id, error: undefined })}
-                      >
-                        <span className={styles.optionKey} aria-hidden="true">
-                          {option.label.charAt(0)}
-                        </span>
-                        <span>{option.label}</span>
-                        {optionState.tag && <strong className={styles.optionTag}>{optionState.tag}</strong>}
-                      </button>
-                    );
-                  })}
-                </div>
+                <OptionGroup
+                  questionId={question.id}
+                  options={options}
+                  state={state}
+                  onSelect={(optionId) => update(question.id, { selectedOptionId: optionId, error: undefined })}
+                />
                 {!result && (
                   <button
                     type="button"
