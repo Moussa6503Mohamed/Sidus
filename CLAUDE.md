@@ -137,7 +137,7 @@ cd services/ai && python -m pytest
   key. Full release validation passed on 2026-08-06; see `docs/canonical-rubric-selection.md`,
   D-0016, and `docs/handoffs/T-0014.md`. T-0014 moved to `docs/tasks/history.md` as
   `done / released`.
-- Learner-safe verified-question delivery foundation built in T-0015: new Core
+- Learner-safe verified-question delivery foundation released in T-0015: new Core
   `services/core/internal/learner` package (own types, no import of `question`), `GET
   /learner/questions` and `GET /learner/questions/{id}`, and a new `learner_question:read`
   permission held by every recognized role. A question is returned only while verified, its
@@ -153,5 +153,6 @@ cd services/ai && python -m pytest
   eligibility join now also requires `rv.question_id = q.id`; new `GET /learner/syllabuses`
   route, reusing `learner_question:read`, backs an accessible syllabus `<select>` on
   `/dashboard/practice` in place of a raw-UUID text field) — see D-0017 "Update (T-0015 review)".
-  Status: in review, not yet released to history.
+  Full release validation passed on 2026-08-06. T-0015 moved to `docs/tasks/history.md` as
+  `done / released`; implementation commits remain unchanged.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.

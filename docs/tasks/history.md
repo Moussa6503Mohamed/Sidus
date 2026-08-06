@@ -1,5 +1,68 @@
 # Task history
 
+## T-0015 — Learner-safe verified-question delivery foundation
+
+**Status:** done / released
+**Owner:** Claude Code agent
+**Priority:** P1
+**Start commit:** `80e130abac01b999dbb87433b96d26a92cd86e54`
+**Implementation commits:** `d60f6e8`, `9ee5561`
+**Depends on:** T-0007 (done), T-0013 (done), T-0014 (done)
+
+### Goal
+
+Let every signed-in recognized role discover and read only eligible learner-safe questions, with
+no editorial, answer, audit, source, or lifecycle data exposed.
+
+### Delivered
+
+- Dedicated Core learner package and `GET /learner/questions`, `GET
+  /learner/questions/{id}`, and `GET /learner/syllabuses` routes protected by
+  `learner_question:read`; unknown roles remain denied.
+- Explicit learner question and active-syllabus projections. Question responses contain only
+  `id`, `syllabusId`, `curriculumMapNodeId`, `responseType`, `language`, `prompt`, `options`, and
+  `contentRevision`.
+- Read-time eligibility requires verified question, owned verified current canonical rubric,
+  verified curriculum node, and approved catalogue-linked source. No latest-rubric fallback.
+- Foreign canonical-rubric ownership regression covered and blocked by
+  `rv.question_id = q.id`.
+- Separate fixed-operation GET-only learner BFF validates identifiers before auth/fetch, refuses
+  redirects, and sanitizes upstream 5xx responses.
+- `/dashboard/practice` discovers active syllabuses through an accessible select. Unknown role
+  makes zero learner BFF calls. MCQ selection remains local-only; no submit, marking, answer
+  reveal, attempt/session, timer, Exam Mode, AI, or learner write route exists.
+
+### Release validation (final pass, 2026-08-06)
+
+| Check | Result |
+| --- | --- |
+| Protected working-tree audit | Pass — tracked tree/index clean; only `.claude/`, `.claude-flow/`, `DB.jpeg`, `arch.jpeg`, and `Sidus*.xlsx` untracked |
+| Dev/test Compose config | Pass / Pass |
+| Web Vitest | Pass — 27 files, 238 tests |
+| Web typecheck / production build | Pass / Pass — learner question, syllabus, and practice routes present |
+| Strict shared-contract TypeScript | Pass |
+| Go build / vet / changed-file gofmt | Pass / Pass / Pass (Docker `golang:1.22-alpine`) |
+| Full Go unit tests | Pass — all packages green |
+| Fresh disposable migrate / rerun | Pass — 18 applied through 0018 / 0 applied |
+| Full integration suite | Pass — all packages green, including learner ownership and syllabus-discovery regressions |
+| Disposable `sidus-test` teardown | Pass — `down -v`; container/network removed |
+| Python pytest | Pass — 18 tests; dependency/cache warnings only |
+| Learner release invariants | Pass — explicit projections, complete live eligibility gate, closed BFF, role/UI exclusions |
+| `git diff --check` | Pass |
+| Staged content and secret audit | Pass — docs-only release files; protected/content/secret/runtime artifacts excluded |
+
+### Constraints and remaining manual gates
+
+- Release commit contains documentation only. No question/rubric prose, source extract, PDF,
+  ZIP, secret, design artifact, runtime data, or `.env.local` is staged or committed.
+- Protected untracked user files remain untouched.
+- Runtime Clerk/Core configuration and human-authored eligible content remain operator/editorial
+  gates; release changes no runtime data or product behavior.
+
+### Handoff
+
+`docs/handoffs/T-0015.md`. See D-0017 in `docs/decisions.md`.
+
 ## T-0014 — Explicit canonical rubric selection
 
 **Status:** done / released
