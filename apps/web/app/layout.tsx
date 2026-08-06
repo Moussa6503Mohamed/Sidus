@@ -9,6 +9,12 @@ import {
 import Link from "next/link";
 import { getOptionalEditorialRole } from "@/lib/editorial/role";
 import { isEditorialRole } from "@/lib/editorial/permissions";
+import { Logo } from "@/components/brand/Logo";
+import { RoleChip } from "@/components/nav/RoleChip";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { THEME_BOOTSTRAP_SCRIPT } from "@/components/theme/theme-script";
+import navStyles from "@/components/nav/nav.module.css";
+import "@/styles/tokens.css";
 
 export const metadata: Metadata = {
   title: "Sidus Observatory",
@@ -24,37 +30,57 @@ export default async function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en">
+        {/* Constant script, no interpolated values — applies the persisted theme before first
+            paint so there is no light/dark flash. See components/theme/theme-script.ts. */}
+        <head>
+          <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
+        </head>
         <body>
-          <header
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "0.75rem 1rem",
-              borderBottom: "1px solid #e5e7eb",
-            }}
-          >
-            <Link href="/" style={{ fontWeight: 600 }}>
-              Sidus Observatory
+          <a href="#main" className="sidus-skip-link">
+            Skip to main content
+          </a>
+          <header className={navStyles.topnav} role="banner">
+            <Link href="/" className={navStyles.brandLink} aria-label="Sidus home">
+              <Logo variant="lockup" size="sm" />
             </Link>
-            <nav style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-              <Show when="signed-out">
-                <SignInButton />
-                <SignUpButton />
-              </Show>
+            <nav aria-label="Primary" className={navStyles.navlinks}>
               <Show when="signed-in">
-                <Link href="/dashboard">Dashboard</Link>
-                {role !== "unknown" && <Link href="/dashboard/practice">Practice</Link>}
+                <Link href="/dashboard" className={navStyles.navlink}>
+                  Dashboard
+                </Link>
+                {role !== "unknown" && (
+                  <Link href="/dashboard/practice" className={navStyles.navlink}>
+                    Practice
+                  </Link>
+                )}
                 {showEditorialNav && (
                   <>
-                    <Link href="/dashboard/editorial/sources">Editorial sources</Link>
-                    <Link href="/dashboard/editorial/curriculum">Curriculum map</Link>
-                    <Link href="/dashboard/editorial/questions">Questions</Link>
+                    <span className={navStyles.navGroupLabel} aria-hidden="true">
+                      Editorial
+                    </span>
+                    <Link href="/dashboard/editorial/sources" className={navStyles.navlink}>
+                      Sources
+                    </Link>
+                    <Link href="/dashboard/editorial/curriculum" className={navStyles.navlink}>
+                      Curriculum map
+                    </Link>
+                    <Link href="/dashboard/editorial/questions" className={navStyles.navlink}>
+                      Questions
+                    </Link>
                   </>
                 )}
-                <UserButton />
               </Show>
             </nav>
+            <div className={navStyles.spacer} />
+            <ThemeToggle />
+            <Show when="signed-out">
+              <SignInButton />
+              <SignUpButton />
+            </Show>
+            <Show when="signed-in">
+              {role !== "unknown" && <RoleChip role={role} />}
+              <UserButton />
+            </Show>
           </header>
           {children}
         </body>

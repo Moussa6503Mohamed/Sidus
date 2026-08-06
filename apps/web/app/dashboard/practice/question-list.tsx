@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { getOptionState } from "@/lib/design/option-state";
 import { ApiError, createPracticeAttempt, submitPracticeAttempt } from "./api-client";
 import styles from "./styles.module.css";
 import type { LearnerAttemptResult, LearnerQuestion } from "./types";
@@ -52,22 +53,35 @@ export function QuestionList({ questions }: QuestionListProps) {
             <p className={styles.prompt}>{question.prompt}</p>
             {question.responseType === "multiple_choice" && question.options ? (
               <>
-                <div className={styles.options} role="group" aria-label="Answer options">
+                <div
+                  className={styles.options}
+                  role={result ? "list" : "radiogroup"}
+                  aria-label={result ? "Options, marked" : "Answer options"}
+                >
                   {options.map((option) => {
-                    const selected = state.selectedOptionId === option.id;
-                    const correct = result?.correctOptionId === option.id;
+                    const optionState = getOptionState({
+                      optionId: option.id,
+                      selectedOptionId: state.selectedOptionId,
+                      correctOptionId: result?.correctOptionId,
+                      isMarked: Boolean(result),
+                      disabled: Boolean(state.submitting),
+                    });
                     return (
                       <button
                         key={option.id}
                         type="button"
-                        className={`${styles.optionButton} ${result && selected ? styles.selectedResult : ""} ${result && correct ? styles.correctResult : ""}`}
-                        aria-pressed={selected}
+                        className={styles.optionButton}
+                        data-option-state={optionState.state}
+                        role={result ? "listitem" : "radio"}
+                        aria-checked={result ? undefined : state.selectedOptionId === option.id}
                         disabled={Boolean(state.submitting || result)}
                         onClick={() => update(question.id, { selectedOptionId: option.id, error: undefined })}
                       >
+                        <span className={styles.optionKey} aria-hidden="true">
+                          {option.label.charAt(0)}
+                        </span>
                         <span>{option.label}</span>
-                        {result && selected && <strong className={styles.optionTag}>Selected</strong>}
-                        {result && correct && <strong className={styles.optionTag}>Correct</strong>}
+                        {optionState.tag && <strong className={styles.optionTag}>{optionState.tag}</strong>}
                       </button>
                     );
                   })}
@@ -92,6 +106,11 @@ export function QuestionList({ questions }: QuestionListProps) {
                 )}
                 {result && (
                   <section className={styles.feedback} aria-label="Answer feedback" aria-live="polite">
+                    <p className="sidus-visually-hidden">
+                      You answered {optionLabels.get(result.selectedOptionId) ?? result.selectedOptionId}. The
+                      correct answer is {optionLabels.get(result.correctOptionId) ?? result.correctOptionId}.{" "}
+                      {result.awardedMarks} of {result.maxMarks} mark{result.maxMarks === 1 ? "" : "s"}.
+                    </p>
                     <h2>{result.isCorrect ? "Correct" : "Incorrect"}</h2>
                     <p><strong>Score:</strong> {result.awardedMarks} / {result.maxMarks}</p>
                     <h3>Correct answer explanation</h3>

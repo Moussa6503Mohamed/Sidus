@@ -165,4 +165,11 @@ cd services/ai && python -m pytest
   `docs/practice-mcq-marking.md`, D-0018, and `docs/handoffs/T-0016.md`. Full release validation
   passed on 2026-08-06. T-0016 moved to `docs/tasks/history.md` as `done / released`;
   implementation commits remain unchanged.
+- Sidus Observatory visual design system (light-first white + blue-ink, dark-mode navy, original
+  `A*` logo, IBM Plex fallback-stack typography, central `lib/design/status.ts` and
+  `lib/design/option-state.ts` helpers) built in T-0017 and applied to the landing page, signed-in
+  shell/nav, Practice Mode, and all three editorial workspaces in `apps/web`. Presentation only —
+  no Core/AI/BFF/database/route/dependency change. See `docs/sidus-observatory-design-system.md`,
+  D-0019, and `docs/handoffs/T-0017.md`. T-0017 is at status `review` (implementation complete,
+  not released, not pushed) — not yet moved to `docs/tasks/history.md`.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.

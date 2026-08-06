@@ -3,5 +3,9 @@ import { EditorialQuestionsScreen } from "./editorial-questions-screen";
 
 export default async function EditorialQuestionsPage() {
   const role = await requireEditorialRole();
-  return <main style={{ padding: "1.5rem" }}><EditorialQuestionsScreen role={role} /></main>;
+  return (
+    <main id="main" style={{ padding: "var(--space-6)" }}>
+      <EditorialQuestionsScreen role={role} />
+    </main>
+  );
 }

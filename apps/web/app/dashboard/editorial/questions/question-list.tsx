@@ -1,5 +1,5 @@
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import sourceStyles from "../sources/styles.module.css";
-import styles from "./styles.module.css";
 import type { CurriculumMapNode, Question } from "./types";
 
 interface QuestionListProps {
@@ -19,7 +19,7 @@ export function QuestionList({ questions, nodes, selectedId, onSelect }: Questio
           {questions.map((question, index) => (
             <tr key={question.id} className={selectedId === question.id ? sourceStyles.rowSelected : undefined}>
               <td><button type="button" className={sourceStyles.rowButton} onClick={() => onSelect(question.id)}>Question {index + 1}</button></td>
-              <td><span className={styles.badge} data-status={question.status}>{question.status}</span></td>
+              <td><StatusBadge status={question.status} /></td>
               <td>{question.responseType.replaceAll("_", " ")}</td>
               <td>{question.language}</td>
               <td>{nodeNames.get(question.curriculumMapNodeId) ?? question.curriculumMapNodeId}</td>

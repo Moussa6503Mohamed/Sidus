@@ -1,31 +1,7 @@
-.badge {
-  composes: badge from "../sources/styles.module.css";
-}
-
-.badge[data-status="draft"],
-.badge[data-status="stale"] {
-  background: #fef3c7;
-  color: #92400e;
-  border-color: #fde68a;
-}
-
-.badge[data-status="verified"],
-.badge[data-status="current"] {
-  background: #d1fae5;
-  color: #065f46;
-  border-color: #a7f3d0;
-}
-
-.badge[data-status="retired"] {
-  background: #e5e7eb;
-  color: #374151;
-  border-color: #d1d5db;
-}
-
 .pickerRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
+  gap: var(--space-4);
 }
 
 .pickerRow > div {
@@ -35,38 +11,66 @@
 .workspace {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--space-4);
 }
 
 .workspace h2 {
   margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.01em;
 }
 
 .criteriaHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .criterion {
-  border: 1px solid #e5e7eb;
-  border-radius: 0.375rem;
-  padding: 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--space-3);
+  background: var(--surface-raised);
+}
+
+/* Rubric-version currency and canonical marker are separate concepts from lifecycle status
+   (lib/design/status.ts) — a rubric row can be verified AND stale at the same time — so they get
+   their own small, token-based, non-color-only treatment instead of reusing StatusBadge. */
+.freshness {
+  font: 650 12px/1.5 var(--font-sans);
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-default);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.freshness[data-fresh="false"] {
+  border-style: dashed;
+  border-color: var(--warning-border);
+  color: var(--warning-fg);
+  background: var(--warning-bg);
+}
+
+.canonicalBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  font: 650 12px/1.6 var(--font-sans);
+  border: 1px solid var(--info-border);
+  background: var(--brand-tint);
+  color: var(--brand-primary);
 }
 
 @media (max-width: 40rem) {
   .pickerRow {
     flex-direction: column;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
-  .criterion {
-    border-color: #374151;
   }
 }

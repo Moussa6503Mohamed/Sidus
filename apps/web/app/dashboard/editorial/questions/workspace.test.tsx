@@ -170,8 +170,10 @@ describe("QuestionsWorkspace editing and review", () => {
     vi.mocked(api.listRubricVersions).mockResolvedValue({ items: [version(1, "verified", 1), version(2, "draft", 2)] });
     render(<QuestionsWorkspace role="reviewer" />);
     fireEvent.click(await screen.findByRole("button", { name: "Question 1" }));
-    expect(await screen.findByText("stale")).toBeInTheDocument();
-    expect(screen.getByText("current")).toBeInTheDocument();
+    // Freshness is a separate concept from lifecycle status (a rubric can be verified AND stale
+    // relative to the question's current content revision) — see styles.module.css .freshness.
+    expect(await screen.findByText(/stale — content changed since review/i)).toBeInTheDocument();
+    expect(screen.getByText("Current revision")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /verify rubric/i })).toBeInTheDocument();
   });
 
@@ -279,7 +281,8 @@ describe("QuestionsWorkspace editing and review", () => {
     expect(api.setCanonicalRubric).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Confirm canonical selection" }));
     await waitFor(() => expect(api.setCanonicalRubric).toHaveBeenCalledWith(historical.id, 3));
-    expect(await screen.findByText("canonical")).toBeInTheDocument();
+    // Scoped to the badge (not the "Canonical" table header) via its distinct span selector.
+    expect(await screen.findByText("Canonical", { selector: "span" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Set canonical rubric" })).not.toBeInTheDocument();
   });
 

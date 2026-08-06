@@ -715,6 +715,60 @@ current incorrect option IDs. Malformed persisted rubric/options therefore fail 
 data became corrupt. These are defense-in-depth changes; learner contracts, schema, content, and
 normal valid MCQ behavior are unchanged.
 
+## D-0019 — Sidus Observatory visual design system
+
+**Status:** Approved
+**Decision:** `apps/web` adopts a single presentation-only design system ("Sidus Observatory"),
+built from a user-supplied Claude artifact (`f3b99de0-8ba5-42d9-a9b4-080d86b9cc31`, fetched and
+read in full — no guessed values): light-first white + blue-ink (`#14508C` light accent, `#0A1626`
+dark base, `#6FA8E8` dark accent), IBM Plex Serif/Sans/Mono (fallback stacks only — no font files
+exist in the repo and none were fetched; `next/font/local` is deferred until self-hosted assets
+exist), 4px spacing grid, 12px maximum radius. `apps/web/styles/tokens.css` is the single source
+of CSS custom properties for color/typography/spacing/radius/elevation/focus, imported once by
+`app/layout.tsx`, with light values default and dark applied identically via
+`prefers-color-scheme` and an explicit `data-theme` override. `components/theme/ThemeToggle.tsx`
+cycles System/Light/Dark, persists the explicit choice to `localStorage`, and a constant
+(no-interpolation) bootstrap script in `<head>` applies it before first paint. `components/brand/
+Logo.tsx` is an original inline-SVG `A*` delta-A + six-bar-asterisk mark — no external logo asset.
+`lib/design/status.ts` (seven lifecycle statuses: draft/pending/approved/verified/rejected/
+retired/expired, each with label + icon + tone + border style) and `lib/design/option-state.ts`
+(pure six-state MCQ derivation: default/selected/correct/incorrect/selected-incorrect/disabled,
+each with an explicit text tag) are the sole places this logic lives; every status badge and every
+Practice Mode option row is a client of one of these two files, never a page-local reimplementation.
+`components/ui/StatusBadge.tsx` is the only status renderer; the three previously-duplicated
+per-page `status-badge.tsx` files (sources, curriculum) now thinly wrap it, and questions'
+inline status `<span>` was replaced with it. The landing page, signed-in top nav (+ skip link,
+role chip, theme toggle), dashboard shell, Practice Mode, and all three editorial workspaces were
+restyled to consume tokens exclusively — no hex value remains outside `tokens.css` except one
+documented, spec-justified exception (`Logo.module.css`'s fixed-white inverse lockup, which must
+not flip with theme since it only ever sits on a fixed navy/brand ground). Two accessibility
+upgrades required a semantic (not visual) change to Practice Mode's MCQ markup: options are
+`role="radiogroup"`/`role="radio"` before marking and `role="list"`/`role="listitem"` after, and
+every marked option carries an explicit text tag (e.g. "Correct answer", "Your answer ·
+incorrect") so correctness is never colour-only — both changes required updating existing
+`workspace.test.tsx` assertions (documented in D-0019 as changed test semantics, not a product
+behavior change: a learner still selects once, submits once, and reads the same feedback). No
+Core/AI/BFF/database/business-rule/route/dependency change accompanies this task; Clerk auth flow
+and every existing loading/error/empty/access-denied state are unchanged in behavior, only in
+visual treatment.
+**Reason:** The product needed one enforced visual language instead of four pages independently
+hand-rolling hex colors and ad hoc status/MCQ styling (previously duplicated across
+`sources/status-badge.tsx`, `curriculum/status-badge.tsx`, and an inline span in
+`questions/question-list.tsx`, and a colour-only correct/incorrect treatment in Practice Mode);
+centralizing status and option-state logic in two files makes "add a state" a one-place change
+and makes correctness/lifecycle rendering unit-testable without mounting a full page.
+**Alternatives:** Adopt a component library / Tailwind (rejected: the existing codebase has zero
+CSS framework dependency and this task explicitly forbids adding new dependencies); fetch and
+commit the specified IBM Plex font files (rejected: instruction explicitly forbids fetching/
+committing external font assets; fallback stacks satisfy the same visual family — serif/sans/mono
+— without a supply-chain addition); keep MCQ options as `<button>`/`aria-pressed` throughout,
+skipping the radiogroup/list ARIA split (rejected: the source artifact's accessibility section
+explicitly specifies this pattern, and a marked, read-only option remaining `aria-pressed`-toggleable
+is misleading for assistive tech); implement full roving-tabindex arrow-key navigation across
+options (deferred: flagged as a known gap in `docs/sidus-observatory-design-system.md` rather than
+risking a larger change to existing keyboard-interaction wiring within this pass).
+**Owner/date:** Claude Code agent, 2026-08-06 (T-0017).
+
 ## Decision template
 
 ```md

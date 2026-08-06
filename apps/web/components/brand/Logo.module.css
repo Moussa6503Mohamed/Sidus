@@ -1,0 +1,46 @@
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--brand-navy);
+}
+
+.logo__mark {
+  display: block;
+  height: 32px;
+  width: auto;
+  color: inherit;
+}
+
+.logo__word {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 27px;
+  letter-spacing: -0.015em;
+  color: inherit;
+  line-height: 1;
+}
+
+.logo--sm .logo__mark {
+  height: 22px;
+}
+
+.logo--sm .logo__word {
+  font-size: 19px;
+}
+
+.logo--sm.logo {
+  gap: 8px;
+}
+
+.logo--lg .logo__mark {
+  height: 52px;
+}
+
+.logo--lg .logo__word {
+  font-size: 44px;
+}
+
+.logo--inverse {
+  color: #ffffff;
+}

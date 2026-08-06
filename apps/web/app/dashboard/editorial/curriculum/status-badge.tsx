@@ -1,16 +1,8 @@
-import styles from "./styles.module.css";
+import { StatusBadge as SharedStatusBadge } from "@/components/ui/StatusBadge";
 import type { CurriculumMapNodeStatus } from "./types";
 
-const LABELS: Record<CurriculumMapNodeStatus, string> = {
-  draft: "Draft",
-  verified: "Verified",
-  retired: "Retired",
-};
-
+/** Thin, page-scoped wrapper so node-list.tsx/node-form.tsx keep importing from "./status-badge" —
+ * the actual label/icon/tone/border logic lives once in lib/design/status.ts. */
 export function StatusBadge({ status }: { status: CurriculumMapNodeStatus }) {
-  return (
-    <span className={styles.badge} data-status={status}>
-      {LABELS[status]}
-    </span>
-  );
+  return <SharedStatusBadge status={status} />;
 }

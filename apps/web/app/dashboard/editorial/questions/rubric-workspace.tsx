@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { canReview } from "@/lib/editorial/permissions";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import sourceStyles from "../sources/styles.module.css";
 import { validateRubricDraft, type RubricCriterionValues } from "./rubric-validation";
 import styles from "./styles.module.css";
@@ -63,11 +64,15 @@ export function RubricWorkspace(props: Props) {
             const current = version.questionRevision === question.contentRevision;
             return <tr key={version.id}>
               <td>{version.version}</td>
-              <td><span className={styles.badge} data-status={version.status}>{version.status}</span></td>
+              <td><StatusBadge status={version.status} /></td>
               <td>{version.questionRevision}</td>
               <td>{version.maxMarks}</td>
-              <td><span className={styles.badge} data-status={current ? "current" : "stale"}>{current ? "current" : "stale"}</span></td>
-              <td>{question.canonicalRubricVersionId === version.id ? <span className={styles.badge} data-status="current">canonical</span> : "—"}</td>
+              <td>
+                <span className={styles.freshness} data-fresh={current}>
+                  {current ? "Current revision" : "Stale — content changed since review"}
+                </span>
+              </td>
+              <td>{question.canonicalRubricVersionId === version.id ? <span className={styles.canonicalBadge}>Canonical</span> : "—"}</td>
               <td>{canReview(role) && version.status === "draft" ? <button type="button" className={sourceStyles.buttonSecondary} onClick={() => setPendingVersion(version.version)} disabled={submitting}>Verify rubric</button> : "—"}</td>
             </tr>;
           })}</tbody>

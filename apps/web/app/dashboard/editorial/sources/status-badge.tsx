@@ -1,17 +1,8 @@
-import styles from "./styles.module.css";
+import { StatusBadge as SharedStatusBadge } from "@/components/ui/StatusBadge";
 import type { ContentSourceStatus } from "./types";
 
-const LABELS: Record<ContentSourceStatus, string> = {
-  pending: "Pending",
-  approved: "Approved",
-  rejected: "Rejected",
-  expired: "Expired",
-};
-
+/** Thin, page-scoped wrapper so source-list.tsx/source-form.tsx keep importing from "./status-badge" —
+ * the actual label/icon/tone/border logic lives once in lib/design/status.ts. */
 export function StatusBadge({ status }: { status: ContentSourceStatus }) {
-  return (
-    <span className={styles.badge} data-status={status}>
-      {LABELS[status]}
-    </span>
-  );
+  return <SharedStatusBadge status={status} />;
 }

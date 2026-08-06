@@ -5,7 +5,7 @@ export default async function EditorialSourcesPage() {
   const role = await requireEditorialRole();
 
   return (
-    <main style={{ padding: "1.5rem" }}>
+    <main id="main" style={{ padding: "var(--space-6)" }}>
       <EditorialSourcesScreen role={role} />
     </main>
   );

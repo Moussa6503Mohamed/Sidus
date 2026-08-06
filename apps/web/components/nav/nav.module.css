@@ -1,0 +1,76 @@
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: 12px var(--space-5);
+  background: var(--surface-canvas);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+}
+
+.brandLink {
+  display: inline-flex;
+  text-decoration: none;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.navlinks {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.navlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font: 600 14px/1 var(--font-sans);
+  color: var(--text-secondary);
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+
+.navlink:hover {
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+}
+
+.navGroupLabel {
+  font: 650 11px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 0 4px;
+  align-self: center;
+}
+
+.rolechip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font: 650 11px/1.5 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+@media (max-width: 40rem) {
+  .topnav {
+    gap: var(--space-3);
+  }
+
+  .navGroupLabel {
+    display: none;
+  }
+}

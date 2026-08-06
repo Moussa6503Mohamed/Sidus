@@ -116,7 +116,9 @@ describe("list rendering", () => {
     render(<EditorialSourcesWorkspace role="editor" />);
 
     expect(await screen.findByText(/cambridge igcse biology coursebook/i)).toBeInTheDocument();
-    expect(screen.getByText("Pending")).toBeInTheDocument();
+    // Status label comes from the shared lib/design/status.ts map (StatusBadge), not a
+    // page-local copy — "Pending review" matches the Sidus Observatory status vocabulary.
+    expect(screen.getByText("Pending review")).toBeInTheDocument();
     expect(screen.getByText("0610")).toBeInTheDocument();
   });
 });

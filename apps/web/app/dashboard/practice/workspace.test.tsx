@@ -128,7 +128,7 @@ describe("PracticeWorkspace — question loading", () => {
     await user.click(screen.getByRole("button", { name: /load questions/i }));
 
     expect(await screen.findByText("opaque-prompt-1")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "opaque-a" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "opaque-a" })).toBeInTheDocument();
     expect(mockedListQuestions).toHaveBeenCalledWith("syl-1", "node-1");
   });
 
@@ -177,12 +177,12 @@ describe("PracticeWorkspace — question loading", () => {
     await submit(user);
     await screen.findByText("opaque-prompt-1");
 
-    const optionButton = screen.getByRole("button", { name: "opaque-b" });
-    expect(optionButton).toHaveAttribute("aria-pressed", "false");
+    const optionButton = screen.getByRole("radio", { name: "opaque-b" });
+    expect(optionButton).toHaveAttribute("aria-checked", "false");
 
     await user.click(optionButton);
 
-    expect(optionButton).toHaveAttribute("aria-pressed", "true");
+    expect(optionButton).toHaveAttribute("aria-checked", "true");
     expect(mockedCreateAttempt).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: /submit answer/i }));
     await screen.findByRole("region", { name: /answer feedback/i });
@@ -191,8 +191,10 @@ describe("PracticeWorkspace — question loading", () => {
     expect(screen.getByText(/0 \/ 2/)).toBeInTheDocument();
     expect(screen.getByText("opaque-correct")).toBeInTheDocument();
     expect(screen.getByText("opaque-wrong")).toBeInTheDocument();
-    expect(screen.getAllByText("Selected")).toHaveLength(1);
-    expect(screen.getAllByText("Correct")).toHaveLength(1);
+    // Non-color-only MCQ result states: each marked option carries an explicit text tag in
+    // addition to its border/colour treatment (lib/design/option-state.ts).
+    expect(screen.getByText("Correct answer")).toBeInTheDocument();
+    expect(screen.getByText("Your answer · incorrect")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /submit answer/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /start/i })).not.toBeInTheDocument();
   });
@@ -206,7 +208,7 @@ describe("PracticeWorkspace — question loading", () => {
     const user = userEvent.setup();
     render(<PracticeWorkspace />);
     await submit(user);
-    await user.click(await screen.findByRole("button", { name: "opaque-a" }));
+    await user.click(await screen.findByRole("radio", { name: "opaque-a" }));
     await user.click(screen.getByRole("button", { name: /submit answer/i }));
     await screen.findByRole("alert");
     await user.click(screen.getByRole("button", { name: /retry/i }));
