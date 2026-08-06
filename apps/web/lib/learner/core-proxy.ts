@@ -32,7 +32,8 @@ type Method = "GET";
 
 export type LearnerOperation =
   | { kind: "listLearnerQuestions"; syllabusId: string; curriculumMapNodeId?: string }
-  | { kind: "getLearnerQuestion"; id: string };
+  | { kind: "getLearnerQuestion"; id: string }
+  | { kind: "listLearnerSyllabuses" };
 
 export interface LearnerProxySuccess {
   status: number;
@@ -57,6 +58,8 @@ function resolveRoute(op: LearnerOperation): { method: Method; path: string } {
     }
     case "getLearnerQuestion":
       return { method: "GET", path: `/learner/questions/${requireValidId(op.id)}` };
+    case "listLearnerSyllabuses":
+      return { method: "GET", path: "/learner/syllabuses" };
   }
 }
 

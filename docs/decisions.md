@@ -662,6 +662,25 @@ picker (rejected: out of the requested scope, and would require deciding a new
 `curriculum_map:read`-equivalent permission for `learner` without a concrete need yet).
 **Owner/date:** Claude Code agent, 2026-08-06 (T-0015).
 
+**Update (T-0015 review):** Two review findings fixed, task status unchanged (`review`, not
+released). (1) The eligibility query's join to `question_rubric_versions` matched only
+`rv.id = q.canonical_rubric_version_id`; it now also requires `rv.question_id = q.id`, closing a
+gap where nothing in the read-time gate itself enforced that a question's canonical rubric
+actually belongs to that question. Covered by a new integration regression that seeds two
+eligible questions, cross-points one's canonical rubric at the other's, and asserts the mismatched
+question is excluded while the legitimate owner is unaffected. (2) Added `GET
+/learner/syllabuses` (same `learner_question:read` permission, no new permission) returning a
+hand-written `Syllabus` projection (`id`, `board`, `syllabusCode`, `qualification`, `track`,
+`displayName`) for `active` catalogue syllabuses only, read directly from the `syllabuses` table
+(this package still never imports `catalogue`). The web BFF gained a matching closed
+`listLearnerSyllabuses` operation in the same `LearnerOperation` union, and `/dashboard/practice`
+now discovers syllabuses into an accessible `<select>` instead of asking the learner to type a
+raw UUID; the optional curriculum-map node filter stays a plain, explicitly-labelled
+temporary/developer-only text field — no learner-facing curriculum-map browse endpoint was added,
+so the "known exclusions" scope from the original decision is unchanged. See
+`docs/learner-question-delivery.md` "Update (T-0015 review)" for the full detail. Owner/date:
+Claude Code agent, 2026-08-06.
+
 ## Decision template
 
 ```md

@@ -1,4 +1,4 @@
-import type { LearnerQuestion } from "./types";
+import type { LearnerQuestion, LearnerSyllabus } from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -38,4 +38,8 @@ export function listPracticeQuestions(
   const query = new URLSearchParams({ syllabusId });
   if (curriculumMapNodeId) query.set("curriculumMapNodeId", curriculumMapNodeId);
   return request(`/api/learner/questions?${query.toString()}`);
+}
+
+export function listPracticeSyllabuses(): Promise<ListResponse<LearnerSyllabus>> {
+  return request(`/api/learner/syllabuses`);
 }

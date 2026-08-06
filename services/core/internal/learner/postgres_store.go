@@ -29,6 +29,12 @@ const projectionColumns = `q.id, q.syllabus_id, q.curriculum_map_node_id, q.resp
 //   - the question itself is verified;
 //   - it has a canonical rubric version (the join drops the row entirely when
 //     canonical_rubric_version_id is NULL, since NULL never equals an id);
+//   - that canonical rubric version actually belongs to this question (rv.question_id = q.id).
+//     canonical_rubric_version_id is a plain FK to question_rubric_versions.id with no
+//     database-level constraint tying it to the owning question, so this ownership check is the
+//     only thing standing between a learner and a rubric row that happens to share an id
+//     coincidence path with a different question — it must be explicit, never implied by the id
+//     join alone;
 //   - that canonical version is itself verified and stamped at the question's CURRENT content
 //     revision (never a stale or "latest" version — D-0016's explicit-selection rule flows
 //     straight through to what a learner may read);
@@ -41,7 +47,7 @@ const eligibleQuestionsQuery = `
 	FROM questions q
 	JOIN curriculum_map_nodes n ON n.id = q.curriculum_map_node_id
 	JOIN content_sources s ON s.id = n.content_source_id
-	JOIN question_rubric_versions rv ON rv.id = q.canonical_rubric_version_id
+	JOIN question_rubric_versions rv ON rv.id = q.canonical_rubric_version_id AND rv.question_id = q.id
 	WHERE q.status = 'verified'
 	  AND rv.status = 'verified'
 	  AND rv.question_revision = q.content_revision
@@ -146,6 +152,43 @@ func (p *PostgresStore) ListQuestions(ctx context.Context, syllabusID string, no
 			return nil, fmt.Errorf("scan learner question: %w", err)
 		}
 		items = append(items, proj)
+	}
+	return items, rows.Err()
+}
+
+const syllabusProjectionColumns = `id, board, syllabus_code, qualification, track, display_name`
+
+func scanSyllabus(row scanner) (Syllabus, error) {
+	var s Syllabus
+	err := row.Scan(&s.ID, &s.Board, &s.SyllabusCode, &s.Qualification, &s.Track, &s.DisplayName)
+	return s, err
+}
+
+// ListActiveSyllabuses returns the learner-safe discovery projection for every catalogue
+// syllabus currently `active`. It reads the same `syllabuses` table as the editorial catalogue
+// package (services/core/internal/catalogue) directly by SQL rather than importing that package,
+// for the same reason the question-eligibility gate above never imports `question`: a future
+// widening of catalogue.Syllabus can never leak into this projection by accident, because this
+// type is hand-written and only reads the six columns it needs.
+func (p *PostgresStore) ListActiveSyllabuses(ctx context.Context) ([]Syllabus, error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT `+syllabusProjectionColumns+`
+		FROM syllabuses
+		WHERE status = 'active'
+		ORDER BY board ASC, syllabus_code ASC, COALESCE(track, '') ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list active syllabuses: %w", err)
+	}
+	defer rows.Close()
+
+	items := []Syllabus{}
+	for rows.Next() {
+		s, err := scanSyllabus(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan syllabus: %w", err)
+		}
+		items = append(items, s)
 	}
 	return items, rows.Err()
 }

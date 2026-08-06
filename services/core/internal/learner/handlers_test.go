@@ -48,12 +48,23 @@ type memoryStore struct {
 	activeSyllabuses map[string]bool
 	nodeSyllabus     map[string]string
 	questions        map[string]Projection
+	syllabuses       []Syllabus
 }
 
 func newMemoryStore() *memoryStore {
 	return &memoryStore{
 		activeSyllabuses: map[string]bool{"syl-active": true},
 		nodeSyllabus:     map[string]string{"node-1": "syl-active", "node-other": "syl-other-active"},
+		syllabuses: []Syllabus{
+			{
+				ID:            "syl-active",
+				Board:         "opaque-board",
+				SyllabusCode:  "opaque-code",
+				Qualification: "opaque-qualification",
+				Track:         nil,
+				DisplayName:   "opaque-display-name",
+			},
+		},
 		questions: map[string]Projection{
 			"q-1": {
 				ID:                  "q-1",
@@ -101,6 +112,10 @@ func (m *memoryStore) GetQuestion(_ context.Context, id string) (Projection, err
 		return Projection{}, ErrNotFound
 	}
 	return q, nil
+}
+
+func (m *memoryStore) ListActiveSyllabuses(_ context.Context) ([]Syllabus, error) {
+	return m.syllabuses, nil
 }
 
 func newTestMux() http.Handler {
@@ -158,6 +173,74 @@ func TestGetQuestion_UnknownRole_Forbidden(t *testing.T) {
 	rec := doRequest(t, http.MethodGet, "/learner/questions/q-1", noRoleToken)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
+// --- Syllabus discovery (T-0015 review fix) ---
+
+func TestListSyllabuses_RoleMatrix(t *testing.T) {
+	for _, tok := range []string{adminToken, editorToken, reviewerToken, learnerToken} {
+		rec := doRequest(t, http.MethodGet, "/learner/syllabuses", tok)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("token %q: status = %d, want 200; body=%s", tok, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestListSyllabuses_UnknownRole_Forbidden(t *testing.T) {
+	rec := doRequest(t, http.MethodGet, "/learner/syllabuses", noRoleToken)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
+func TestListSyllabuses_MissingToken_Unauthorized(t *testing.T) {
+	rec := doRequest(t, http.MethodGet, "/learner/syllabuses", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+// allowedSyllabusKeys is the exhaustive set of keys the learner syllabus-discovery projection
+// may ever carry. Any other key — sourceId, rights/licence metadata, createdAt/updatedAt,
+// actorId, subjectId, curriculumYear, status, or anything else — is a leak of catalogue-internal
+// data to a learner-role-reachable route.
+var allowedSyllabusKeys = []string{"id", "board", "syllabusCode", "qualification", "track", "displayName"}
+
+func TestListSyllabuses_NoLeakage(t *testing.T) {
+	rec := doRequest(t, http.MethodGet, "/learner/syllabuses", learnerToken)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Items) == 0 {
+		t.Fatal("expected at least one item")
+	}
+	for _, item := range body.Items {
+		var decoded map[string]json.RawMessage
+		if err := json.Unmarshal(item, &decoded); err != nil {
+			t.Fatalf("decode syllabus: %v", err)
+		}
+		got := make([]string, 0, len(decoded))
+		for k := range decoded {
+			got = append(got, k)
+		}
+		sort.Strings(got)
+		want := append([]string(nil), allowedSyllabusKeys...)
+		sort.Strings(want)
+		if len(got) != len(want) {
+			t.Fatalf("syllabus keys = %v, want exactly %v", got, want)
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("syllabus keys = %v, want exactly %v", got, want)
+			}
+		}
 	}
 }
 

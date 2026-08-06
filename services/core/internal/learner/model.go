@@ -43,3 +43,18 @@ type Projection struct {
 	Options         []Option `json:"options"`
 	ContentRevision int      `json:"contentRevision"`
 }
+
+// Syllabus is the learner-safe active-syllabus discovery projection (review fix on T-0015): the
+// minimal identity fields a practice screen needs to populate a syllabus picker. It deliberately
+// does not reuse or extend catalogue.Syllabus — this package never imports catalogue, for the
+// same reason it never imports question — so a future field added to the editorial catalogue
+// type (e.g. rights/source metadata) can never widen this response by accident. It carries no
+// source metadata, rights data, timestamps, actor ids, events, or curriculum objective content.
+type Syllabus struct {
+	ID            string  `json:"id"`
+	Board         string  `json:"board"`
+	SyllabusCode  string  `json:"syllabusCode"`
+	Qualification string  `json:"qualification"`
+	Track         *string `json:"track"`
+	DisplayName   string  `json:"displayName"`
+}

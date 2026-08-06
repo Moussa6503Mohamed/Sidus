@@ -1,1 +1,1 @@
-export type { LearnerQuestion, LearnerQuestionOption } from "@sidus/shared";
+export type { LearnerQuestion, LearnerQuestionOption, LearnerSyllabus } from "@sidus/shared";

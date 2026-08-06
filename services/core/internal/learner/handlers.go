@@ -17,6 +17,7 @@ func Register(mux *http.ServeMux, store Store, v auth.Verifier) {
 	h := &handler{store: store}
 	mux.HandleFunc("GET /learner/questions", auth.Protect(v, auth.PermReadLearnerQuestion, h.listQuestions))
 	mux.HandleFunc("GET /learner/questions/{id}", auth.Protect(v, auth.PermReadLearnerQuestion, h.getQuestion))
+	mux.HandleFunc("GET /learner/syllabuses", auth.Protect(v, auth.PermReadLearnerQuestion, h.listSyllabuses))
 }
 
 type handler struct {
@@ -61,6 +62,15 @@ func (h *handler) getQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, q)
+}
+
+func (h *handler) listSyllabuses(w http.ResponseWriter, r *http.Request) {
+	items, err := h.store.ListActiveSyllabuses(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 // --- Error mapping ---

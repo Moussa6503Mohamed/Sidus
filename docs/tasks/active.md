@@ -7,6 +7,13 @@
 **Type:** code+tests (Core Go, web BFF, web UI, shared contracts, docs)
 **Start commit:** `80e130abac01b999dbb87433b96d26a92cd86e54` (clean `main`)
 
+**Review-fix update:** Two review findings fixed on top of `d60f6e8`: (1) the learner eligibility
+query's canonical-rubric join was missing an `rv.question_id = q.id` ownership check; (2) added
+`GET /learner/syllabuses` (reuses `learner_question:read`, no new permission) plus a matching BFF
+operation and web `<select>` so `/dashboard/practice` no longer asks a learner to type a raw
+syllabus UUID. See `docs/handoffs/T-0015.md` "Update (T-0015 review fix)" and D-0017's "Update
+(T-0015 review)" for full detail. Status stays `review` — not released, not pushed.
+
 ### Context
 
 T-0007/T-0013/T-0014 built private editorial infrastructure for original questions and

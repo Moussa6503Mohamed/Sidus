@@ -14,30 +14,85 @@ vi.mock("./api-client", () => ({
     }
   },
   listPracticeQuestions: vi.fn(),
+  listPracticeSyllabuses: vi.fn(),
 }));
 
-import { ApiError, listPracticeQuestions } from "./api-client";
+import { ApiError, listPracticeQuestions, listPracticeSyllabuses } from "./api-client";
 
-const mockedList = vi.mocked(listPracticeQuestions);
+const mockedListQuestions = vi.mocked(listPracticeQuestions);
+const mockedListSyllabuses = vi.mocked(listPracticeSyllabuses);
+
+const oneActiveSyllabus = {
+  items: [
+    { id: "syl-1", board: "Cambridge", syllabusCode: "0610", qualification: "IGCSE", track: "Extended", displayName: "Biology 0610" },
+  ],
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockedListSyllabuses.mockResolvedValue(oneActiveSyllabus);
 });
 
 async function submit(user: ReturnType<typeof userEvent.setup>, syllabusId = "syl-1") {
-  await user.type(screen.getByLabelText(/syllabus id/i), syllabusId);
+  await screen.findByRole("combobox", { name: /syllabus/i });
+  await user.selectOptions(screen.getByRole("combobox", { name: /syllabus/i }), syllabusId);
   await user.click(screen.getByRole("button", { name: /load questions/i }));
 }
 
-describe("PracticeWorkspace", () => {
-  it("shows nothing until the syllabus id is submitted", () => {
+describe("PracticeWorkspace — syllabus discovery", () => {
+  it("fetches active syllabuses on mount and shows a loading state first", () => {
+    mockedListSyllabuses.mockReturnValue(new Promise(() => {})); // never resolves
     render(<PracticeWorkspace />);
-    expect(mockedList).not.toHaveBeenCalled();
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    expect(mockedListSyllabuses).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/loading syllabuses/i)).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /syllabus/i })).not.toBeInTheDocument();
   });
 
-  it("loads and renders eligible questions, forwarding an optional node filter", async () => {
-    mockedList.mockResolvedValue({
+  it("never asks the learner to type a raw syllabus id — the syllabus field is a select, not a text box", async () => {
+    render(<PracticeWorkspace />);
+
+    const select = await screen.findByRole("combobox", { name: /syllabus/i });
+    expect(select.tagName).toBe("SELECT");
+    expect(screen.getByRole("option", { name: /biology 0610 \(extended\)/i })).toBeInTheDocument();
+  });
+
+  it("shows an empty state when no active syllabuses exist, and renders no picker", async () => {
+    mockedListSyllabuses.mockResolvedValue({ items: [] });
+    render(<PracticeWorkspace />);
+
+    expect(await screen.findByText(/no active syllabuses are available/i)).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /syllabus/i })).not.toBeInTheDocument();
+    expect(mockedListQuestions).not.toHaveBeenCalled();
+  });
+
+  it("shows an error with retry when syllabus discovery fails, and retry calls it again", async () => {
+    mockedListSyllabuses.mockRejectedValueOnce(new ApiError(502, "upstream_error", "practice service unavailable"));
+    mockedListSyllabuses.mockResolvedValueOnce(oneActiveSyllabus);
+    const user = userEvent.setup();
+    render(<PracticeWorkspace />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/practice service unavailable/i);
+    expect(screen.queryByRole("combobox", { name: /syllabus/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+
+    await screen.findByRole("combobox", { name: /syllabus/i });
+    expect(mockedListSyllabuses).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not fetch questions until the learner selects a syllabus and submits", async () => {
+    render(<PracticeWorkspace />);
+    await screen.findByRole("combobox", { name: /syllabus/i });
+
+    expect(mockedListQuestions).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /load questions/i })).toBeDisabled();
+  });
+});
+
+describe("PracticeWorkspace — question loading", () => {
+  it("loads and renders eligible questions for the selected syllabus, forwarding an optional node filter", async () => {
+    mockedListQuestions.mockResolvedValue({
       items: [
         {
           id: "q-1",
@@ -57,17 +112,18 @@ describe("PracticeWorkspace", () => {
     const user = userEvent.setup();
     render(<PracticeWorkspace />);
 
-    await user.type(screen.getByLabelText(/syllabus id/i), "syl-1");
+    await screen.findByRole("combobox", { name: /syllabus/i });
+    await user.selectOptions(screen.getByRole("combobox", { name: /syllabus/i }), "syl-1");
     await user.type(screen.getByLabelText(/curriculum node id/i), "node-1");
     await user.click(screen.getByRole("button", { name: /load questions/i }));
 
     expect(await screen.findByText("opaque-prompt-1")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "opaque-a" })).toBeInTheDocument();
-    expect(mockedList).toHaveBeenCalledWith("syl-1", "node-1");
+    expect(mockedListQuestions).toHaveBeenCalledWith("syl-1", "node-1");
   });
 
   it("shows an empty state when no questions are eligible", async () => {
-    mockedList.mockResolvedValue({ items: [] });
+    mockedListQuestions.mockResolvedValue({ items: [] });
     const user = userEvent.setup();
     render(<PracticeWorkspace />);
 
@@ -77,8 +133,8 @@ describe("PracticeWorkspace", () => {
   });
 
   it("shows an error with retry, and retry calls the API again", async () => {
-    mockedList.mockRejectedValueOnce(new ApiError(400, "unknown_syllabus", "syllabus is unknown or not active"));
-    mockedList.mockResolvedValueOnce({ items: [] });
+    mockedListQuestions.mockRejectedValueOnce(new ApiError(400, "unknown_syllabus", "syllabus is unknown or not active"));
+    mockedListQuestions.mockResolvedValueOnce({ items: [] });
     const user = userEvent.setup();
     render(<PracticeWorkspace />);
 
@@ -88,11 +144,11 @@ describe("PracticeWorkspace", () => {
 
     await user.click(screen.getByRole("button", { name: /retry/i }));
 
-    await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mockedListQuestions).toHaveBeenCalledTimes(2));
   });
 
   it("lets a learner select an MCQ option without calling any API and never renders a submit/mark/reveal control", async () => {
-    mockedList.mockResolvedValue({
+    mockedListQuestions.mockResolvedValue({
       items: [
         {
           id: "q-1",
@@ -117,7 +173,7 @@ describe("PracticeWorkspace", () => {
     await user.click(optionButton);
 
     expect(optionButton).toHaveAttribute("aria-pressed", "true");
-    expect(mockedList).toHaveBeenCalledTimes(1); // selecting an option never triggers a fetch
+    expect(mockedListQuestions).toHaveBeenCalledTimes(1); // selecting an option never triggers a fetch
     expect(screen.queryByRole("button", { name: /submit/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /mark/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();

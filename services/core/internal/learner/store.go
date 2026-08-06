@@ -38,4 +38,9 @@ type Store interface {
 	// draft, retired, has no current verified canonical rubric, or whose grounding node/source
 	// has regressed is reported identically to a question that does not exist: ErrNotFound.
 	GetQuestion(ctx context.Context, id string) (Projection, error)
+
+	// ListActiveSyllabuses returns the learner-safe discovery projection for every catalogue
+	// syllabus currently active. There is no filter and no error case beyond infrastructure
+	// failure — an empty result is a valid, non-error response (no active syllabuses yet).
+	ListActiveSyllabuses(ctx context.Context) ([]Syllabus, error)
 }

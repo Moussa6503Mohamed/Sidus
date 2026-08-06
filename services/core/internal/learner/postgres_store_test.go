@@ -353,6 +353,88 @@ func TestPostgresStore_Integration_GetQuestion_UnknownID_NotFound(t *testing.T) 
 	}
 }
 
+// --- Canonical rubric ownership gate (T-0015 review fix) ---
+
+// TestPostgresStore_Integration_CanonicalRubric_OwnershipGate proves the eligibility query
+// requires rv.question_id = q.id, not merely rv.id = q.canonical_rubric_version_id. Before this
+// fix, pointing question A's canonical_rubric_version_id at a rubric row that actually belongs to
+// a different, unrelated question B (same content revision, verified) made A eligible purely
+// because a row existed at that id — a learner could read a question whose canonical rubric was
+// never verified/selected for it. The gate must reject that: A stays not-found, and B (the real
+// owner) is unaffected.
+func TestPostgresStore_Integration_CanonicalRubric_OwnershipGate(t *testing.T) {
+	f := newFixture(t)
+	qA := seedQuestion(t, f.db, f.syllabusID, f.nodeID, "verified", 1, "short_answer", nil)
+	qB := seedEligibleQuestion(t, f.db, f.syllabusID, f.nodeID)
+
+	var rubricBID string
+	if err := f.db.QueryRow(
+		`SELECT canonical_rubric_version_id FROM questions WHERE id = $1`, qB,
+	).Scan(&rubricBID); err != nil {
+		t.Fatalf("read qB canonical rubric id: %v", err)
+	}
+	// Disposable-test direct setup: point A's canonical rubric at B's verified, current-revision
+	// rubric row. A real editorial workflow can never produce this state (canonical selection is
+	// scoped to the question's own rubric versions) — this simulates it directly to prove the
+	// read-time gate, not the write-time workflow, is what protects a learner here.
+	setCanonicalRubric(t, f.db, qA, rubricBID)
+
+	if _, err := f.store.GetQuestion(f.ctx, qA); err != ErrNotFound {
+		t.Fatalf("GetQuestion(qA) err = %v, want ErrNotFound (canonical rubric belongs to a different question)", err)
+	}
+
+	items, err := f.store.ListQuestions(f.ctx, f.syllabusID, nil)
+	if err != nil {
+		t.Fatalf("ListQuestions: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, item := range items {
+		ids[item.ID] = true
+	}
+	if ids[qA] {
+		t.Fatalf("qA leaked into learner list despite rubric-ownership mismatch: %v", ids)
+	}
+	if !ids[qB] {
+		t.Fatalf("qB (legitimate rubric owner) missing from learner list: %v", ids)
+	}
+
+	if got, err := f.store.GetQuestion(f.ctx, qB); err != nil || got.ID != qB {
+		t.Fatalf("GetQuestion(qB) = %+v, %v; want qB eligible and unaffected", got, err)
+	}
+}
+
+// --- ListActiveSyllabuses ---
+
+func TestPostgresStore_Integration_ListActiveSyllabuses_OnlyActiveReturnedWithSafeProjection(t *testing.T) {
+	f := newFixture(t)
+	active := seedSyllabus(t, f.db, "active")
+	draft := seedSyllabus(t, f.db, "draft")
+	retired := seedSyllabus(t, f.db, "retired")
+
+	items, err := f.store.ListActiveSyllabuses(f.ctx)
+	if err != nil {
+		t.Fatalf("ListActiveSyllabuses: %v", err)
+	}
+	byID := map[string]Syllabus{}
+	for _, s := range items {
+		byID[s.ID] = s
+	}
+	if _, ok := byID[active]; !ok {
+		t.Fatalf("active syllabus %s missing from result: %v", active, byID)
+	}
+	if _, ok := byID[draft]; ok {
+		t.Fatalf("draft syllabus %s leaked into active-only result", draft)
+	}
+	if _, ok := byID[retired]; ok {
+		t.Fatalf("retired syllabus %s leaked into active-only result", retired)
+	}
+
+	got := byID[active]
+	if got.Board == "" || got.SyllabusCode == "" || got.Qualification == "" || got.DisplayName == "" {
+		t.Fatalf("active syllabus projection missing expected fields: %+v", got)
+	}
+}
+
 // --- ListQuestions ---
 
 func TestPostgresStore_Integration_ListQuestions_UnknownSyllabus_Error(t *testing.T) {

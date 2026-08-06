@@ -518,10 +518,12 @@ export interface QuestionEvent {
 // question package) so the projection cannot gain an editorial field by accident. `GET
 // /learner/questions*` requires `learner_question:read`, held by every recognized role
 // (learner/editor/reviewer/admin); unknown roles are denied. Core re-validates on every read that
-// the question is verified, its canonical rubric exists/is verified/matches the question's
-// current content revision, its curriculum-map node is verified, and that node's content source
-// is approved and still catalogue-linked to the question's syllabus — never cached, never a
-// "latest rubric" fallback. See docs/learner-question-delivery.md and D-0017.
+// the question is verified, its canonical rubric exists/is verified/belongs to the question/
+// matches the question's current content revision, its curriculum-map node is verified, and that
+// node's content source is approved and still catalogue-linked to the question's syllabus — never
+// cached, never a "latest rubric" fallback. `GET /learner/syllabuses` (review fix) is the same
+// permission-gated surface for safe active-syllabus discovery, so the practice screen never asks
+// a learner to type an opaque syllabus id. See docs/learner-question-delivery.md and D-0017.
 
 /** Learner-visible MCQ option. Deliberately distinct from `MultipleChoiceOption` above — this
  * type can never gain a correctness flag; the answer key lives only in rubric data this
@@ -546,4 +548,21 @@ export interface LearnerQuestion {
   /** Present only for multiple_choice questions; null otherwise. */
   options: LearnerQuestionOption[] | null;
   contentRevision: number;
+}
+
+/**
+ * The learner-safe active-syllabus discovery projection returned by `GET /learner/syllabuses`.
+ * Deliberately distinct from the editorial `Syllabus` type above — written by hand, not derived
+ * from it — so a future field added to the editorial catalogue record (rights data, timestamps,
+ * internal status) can never widen what a learner-role caller receives. Only `active` catalogue
+ * syllabuses are ever returned.
+ */
+export interface LearnerSyllabus {
+  id: string;
+  board: string;
+  syllabusCode: SyllabusCode;
+  qualification: string;
+  /** Tier/route within a syllabus (e.g. "Extended"); null when not applicable. */
+  track: string | null;
+  displayName: string;
 }

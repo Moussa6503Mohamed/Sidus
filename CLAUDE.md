@@ -149,5 +149,9 @@ cd services/ai && python -m pytest
   read eligible questions; MCQ options are selectable but nothing submits, marks, reveals an
   answer, times, or calls AI. No schema change, no learner-facing catalogue/curriculum-map
   browse endpoint, no Exam Mode. See `docs/learner-question-delivery.md`, D-0017, and
-  `docs/handoffs/T-0015.md`. Status: in review, not yet released to history.
+  `docs/handoffs/T-0015.md`. Two review findings were fixed on top of `d60f6e8` (canonical-rubric
+  eligibility join now also requires `rv.question_id = q.id`; new `GET /learner/syllabuses`
+  route, reusing `learner_question:read`, backs an accessible syllabus `<select>` on
+  `/dashboard/practice` in place of a raw-UUID text field) — see D-0017 "Update (T-0015 review)".
+  Status: in review, not yet released to history.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.

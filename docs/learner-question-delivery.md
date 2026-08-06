@@ -80,6 +80,39 @@ Unknown/missing role is denied by `auth.Protect`, same as every other Core route
   sets local highlight state only — there is no submit, mark, answer reveal, timer, attempt/
   session creation, or AI call anywhere in the workspace or its data path.
 
+## Update (T-0015 review)
+
+Two review findings were fixed on top of the original implementation (still task-status
+`review`, not released):
+
+1. **Canonical-rubric ownership gate.** The eligibility query joined
+   `question_rubric_versions rv ON rv.id = q.canonical_rubric_version_id` without also requiring
+   `rv.question_id = q.id`. `canonical_rubric_version_id` is a plain foreign key with no
+   database-level constraint tying it to the owning question, so — while no editorial write path
+   can currently produce this state — the read-time gate itself did not enforce ownership. Fixed
+   by adding `AND rv.question_id = q.id` to the join. Covered by a new integration regression
+   (`TestPostgresStore_Integration_CanonicalRubric_OwnershipGate`): two otherwise-eligible
+   questions are seeded, question A's `canonical_rubric_version_id` is pointed at question B's
+   verified, current-revision rubric via direct disposable-test setup, and the test asserts A is
+   excluded from both `GetQuestion` and `ListQuestions` while B remains eligible and unaffected.
+   No canonical-rubric fallback exists anywhere in this package (confirmed by inspection — the
+   query has exactly one JOIN to `question_rubric_versions`, no `OR`/`COALESCE`/latest-version
+   path).
+2. **Learner-safe active-syllabus discovery.** The practice screen previously asked a learner to
+   type an opaque syllabus UUID into a text field labelled "syllabus picker." Added `GET
+   /learner/syllabuses` (same `learner_question:read` permission, same package, no new
+   permission) returning the explicit `Syllabus` projection — `id`, `board`, `syllabusCode`,
+   `qualification`, `track`, `displayName` — for every catalogue syllabus currently `active`,
+   read directly from the `syllabuses` table (this package still does not import `catalogue`, for
+   the same reason it does not import `question`). The web BFF gained a matching closed
+   `listLearnerSyllabuses` operation (GET, no params) in the same `LearnerOperation` union, and
+   `/dashboard/practice` now fetches this list on mount and renders an accessible `<select>`
+   (loading/empty/error-with-retry states) instead of a text input. Eligible-question fetching is
+   still fully separate: it never runs until the learner explicitly selects a syllabus from the
+   dropdown and submits. The optional curriculum-map node filter remains a plain text field,
+   explicitly labelled "temporary, developer-only" — no learner-facing curriculum-map browse
+   endpoint was added, matching D-0017's original scope decision.
+
 ## Known exclusions (deliberately out of scope)
 
 - No learner-facing curriculum-catalogue or curriculum-map browse endpoint. The practice
