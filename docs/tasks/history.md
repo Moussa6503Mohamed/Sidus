@@ -1,5 +1,57 @@
 # Task history
 
+## T-0017 — Sidus Observatory visual system and responsive frontend polish
+
+**Status:** done / released
+**Owner:** Claude Code agent / Codex release
+**Implementation commits:** `26a4a8a`, `0b67953`, `e2acb48`, `d35eebc`
+**Depends on:** T-0016 (done / released)
+
+### Goal
+
+Apply Sidus Observatory design system across `apps/web` presentation without changing product,
+Core, AI, BFF, database, route, dependency, or business-rule behavior.
+
+### Delivered
+
+- Light-first white + blue-ink and dark-mode navy tokens, fallback-stack typography, original
+  inline `A*` logo, persisted theme control, and shared presentation primitives.
+- Central lifecycle-status and MCQ option-state helpers used across landing, shell/navigation,
+  Practice Mode, and all editorial workspaces.
+- Accessible non-color-only states, visible focus, reduced motion, responsive 390px behavior,
+  roving-tabindex MCQ radiogroup, and single-row scrolling mobile navigation.
+- Release fixes add root hydration-warning suppression and replace Skeleton gradient animation
+  with token-based opacity pulse respecting reduced motion. No CSS `gradient(` remains.
+
+### Release validation (final pass, 2026-08-06)
+
+| Check | Result |
+| --- | --- |
+| Protected working-tree audit | Pass — tracked tree/index clean before release docs; only `.claude/`, `.claude-flow/`, `DB.jpeg`, `arch.jpeg`, and `Sidus*.xlsx` untracked; ignored `.env.local` untouched |
+| Gradient/Skeleton/root HTML invariants | Pass — zero `gradient(` matches; Skeleton tokenized with reduced-motion override; root HTML suppresses expected theme hydration difference |
+| Dev/test Compose config | Pass / Pass |
+| Web Vitest | Pass — 32 files, 287 tests |
+| Web typecheck / production build | Pass / Pass — 15 pages generated; routes intact |
+| Strict shared-contract TypeScript | Pass |
+| Go build / vet / unit | Pass / Pass / Pass |
+| Fresh disposable migrate / rerun | Pass — 19 applied through 0019 / 0 applied |
+| Full Go integration suite | Pass — all catalogue, content-source, curriculum-map, learner, and question integration packages green |
+| Disposable `sidus-test` teardown | Pass — scoped `down -v`; container/network removed |
+| Python pytest | Pass — 18 tests; dependency/cache warnings only |
+| `git diff --check` | Pass |
+| Staged-content and secret audit | Pass — protected/content/secret/runtime artifacts excluded |
+
+### Constraints
+
+- Release commit contains documentation only. Protected user files remain untouched and unstaged.
+- No product behavior, runtime data, educational content, dependency, migration, or implementation
+  commit changed during release.
+
+### Handoff
+
+`docs/handoffs/T-0017.md`. See D-0019 in `docs/decisions.md` and
+`docs/sidus-observatory-design-system.md`.
+
 ## T-0016 — Practice Mode MCQ attempts, deterministic marking, and verified feedback foundation
 
 **Status:** done / released

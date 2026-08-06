@@ -167,11 +167,10 @@ cd services/ai && python -m pytest
   implementation commits remain unchanged.
 - Sidus Observatory visual design system (light-first white + blue-ink, dark-mode navy, original
   `A*` logo, IBM Plex fallback-stack typography, central `lib/design/status.ts` and
-  `lib/design/option-state.ts` helpers) built in T-0017 and applied to the landing page, signed-in
-  shell/nav, Practice Mode, and all three editorial workspaces in `apps/web`. Presentation only —
-  no Core/AI/BFF/database/route/dependency change. See `docs/sidus-observatory-design-system.md`,
-  D-0019, and `docs/handoffs/T-0017.md`. T-0017 is at status `review` (implementation complete,
-  not released, not pushed) — not yet moved to `docs/tasks/history.md`.
+  `lib/design/option-state.ts` helpers) released in T-0017 and applied to the landing page,
+  signed-in shell/nav, Practice Mode, and all three editorial workspaces in `apps/web`.
+  Presentation only — no Core/AI/BFF/database/route/dependency change. See
+  `docs/sidus-observatory-design-system.md`, D-0019, and `docs/handoffs/T-0017.md`.
 - Three Gemini-audit findings on T-0017 fixed on top of `26a4a8a`: Practice Mode's MCQ options
   are now a full roving-tabindex ARIA radiogroup with arrow/Home/End/Space/Enter keyboard support
   (`apps/web/app/dashboard/practice/question-list.tsx` + new `question-list.test.tsx`); the mobile
@@ -181,6 +180,9 @@ cd services/ai && python -m pytest
   design tokens, with two documented exceptions (border-compensated MCQ option padding kept exact
   via `calc()`, and typography, which has no token scale yet). No Core/AI/BFF/database/route/
   business-rule/dependency change. See D-0019's update in `docs/decisions.md` and
-  `docs/handoffs/T-0017.md` "Update (T-0017 review fix)". T-0017 remains at status `review` — not
-  released, not pushed.
+  `docs/handoffs/T-0017.md` "Update (T-0017 review fix)". Follow-up fixes also suppress expected
+  theme hydration differences at root HTML and remove all CSS gradients through a tokenized,
+  reduced-motion-safe Skeleton opacity pulse. Full release validation passed on 2026-08-06;
+  T-0017 moved to `docs/tasks/history.md` as `done / released`; implementation commits remain
+  unchanged.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.
