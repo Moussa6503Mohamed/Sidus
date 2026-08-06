@@ -134,5 +134,7 @@ cd services/ai && python -m pytest
   verified null rows have one reviewer/admin-only repair endpoint; selection replacement and
   automatic latest-version choice are forbidden. Editorial BFF/UI expose selection and marker.
   No learner route exists; future learner projection must omit canonical id, rubric, and answer
-  key. See `docs/canonical-rubric-selection.md` and D-0016. Status remains `review` in T-0014.
+  key. Full release validation passed on 2026-08-06; see `docs/canonical-rubric-selection.md`,
+  D-0016, and `docs/handoffs/T-0014.md`. T-0014 moved to `docs/tasks/history.md` as
+  `done / released`.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.

@@ -1,5 +1,64 @@
 # Task history
 
+## T-0014 — Explicit canonical rubric selection
+
+**Status:** done / released
+**Owner:** Codex
+**Priority:** P1
+**Depends on:** T-0007 (done), T-0012 (done), T-0013 (done)
+
+### Goal
+
+Require reviewer/admin selection of one current verified rubric when verifying a question, persist
+that rubric as the question's canonical version, and allow explicit repair of historical verified
+questions whose canonical reference is null.
+
+### Delivered
+
+- Additive, rerunnable migration 0018 adds nullable question-owned canonical rubric FK and performs
+  no backfill.
+- Verification requires explicit positive `rubricVersion`; selected rubric must belong to question,
+  be verified, and match current question content revision.
+- Core atomically writes verified status, canonical rubric ID, and names-only audit event after
+  grounding/source-gate recheck. Existing canonical selection cannot be replaced.
+- Reviewer/admin-only repair sets historical verified/null canonical selection once; invalid
+  lifecycle, foreign, draft, stale, and replacement attempts fail safely.
+- Shared contracts, fixed-operation editorial BFF, and role-gated UI expose explicit selection and
+  canonical marker without adding learner delivery.
+
+### Release validation (final pass, 2026-08-06)
+
+| Check | Result |
+| --- | --- |
+| Protected working-tree audit | Pass — tracked clean; only `.claude/`, `.claude-flow/`, `DB.jpeg`, `arch.jpeg`, and `Sidus*.xlsx` untracked |
+| Staging/content audit before release | Pass — no staged files before docs update; protected/content/secret/runtime artifacts excluded |
+| Dev/test Compose config | Pass / Pass |
+| Web Vitest | Pass — 21 files, 197 tests |
+| Web typecheck / production build | Pass / Pass — canonical editorial route present; no learner route |
+| Strict shared-contract TypeScript | Pass |
+| Go build / vet / changed-file gofmt | Pass / Pass / Pass (Docker `golang:1.22-alpine`) |
+| Full Go unit tests | Pass — all packages green |
+| Fresh disposable migrate / runner rerun | Pass — 18 applied / 0 applied |
+| Canonical selection invariants | Pass — strict body, owned/verified/current rubric, atomic persistence, no replacement, one-time repair |
+| Full integration tests | Pass — catalogue, contentsource, curriculummap, question green |
+| Disposable `sidus-test` teardown | Pass — `down -v`; container/network removed |
+| Python pytest | Pass — 18 tests; dependency/cache warnings only |
+| `git diff --check` | Pass |
+
+### Constraints and remaining manual gates
+
+- Release commit contains documentation only. No question/rubric prose, source extracts, PDF,
+  secret, design artifact, runtime data, or `.env.local` file is staged or committed.
+- Protected untracked user files remain untouched: `.claude/`, `.claude-flow/`, `DB.jpeg`,
+  `arch.jpeg`, and `Sidus*.xlsx`.
+- Runtime Clerk/Core environment configuration remains operator gate. Human editorial reviewers
+  must make every canonical selection. Future learner projection must omit canonical ID, rubric,
+  and answer key.
+
+### Handoff
+
+`docs/handoffs/T-0014.md`. See D-0016 in `docs/decisions.md`.
+
 ## T-0013 — Deterministic MCQ delivery schema
 
 **Status:** done / released
