@@ -44,6 +44,7 @@ export default async function RootLayout({
               </Show>
               <Show when="signed-in">
                 <Link href="/dashboard">Dashboard</Link>
+                {role !== "unknown" && <Link href="/dashboard/practice">Practice</Link>}
                 {showEditorialNav && (
                   <>
                     <Link href="/dashboard/editorial/sources">Editorial sources</Link>

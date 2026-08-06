@@ -137,4 +137,17 @@ cd services/ai && python -m pytest
   key. Full release validation passed on 2026-08-06; see `docs/canonical-rubric-selection.md`,
   D-0016, and `docs/handoffs/T-0014.md`. T-0014 moved to `docs/tasks/history.md` as
   `done / released`.
+- Learner-safe verified-question delivery foundation built in T-0015: new Core
+  `services/core/internal/learner` package (own types, no import of `question`), `GET
+  /learner/questions` and `GET /learner/questions/{id}`, and a new `learner_question:read`
+  permission held by every recognized role. A question is returned only while verified, its
+  canonical rubric is verified and current, its node is verified, and its source is approved
+  and catalogue-linked — re-checked on every read. Response is the explicit `LearnerQuestion`
+  projection only: no status, canonical rubric id, rubric, answer key, marks, audit data, actor
+  identity, timestamps, or source metadata. New web BFF (`apps/web/lib/learner/*`, separate
+  `LearnerOperation` union) and `/dashboard/practice` screen let any signed-in recognized role
+  read eligible questions; MCQ options are selectable but nothing submits, marks, reveals an
+  answer, times, or calls AI. No schema change, no learner-facing catalogue/curriculum-map
+  browse endpoint, no Exam Mode. See `docs/learner-question-delivery.md`, D-0017, and
+  `docs/handoffs/T-0015.md`. Status: in review, not yet released to history.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.

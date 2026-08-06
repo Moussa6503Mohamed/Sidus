@@ -14,6 +14,7 @@ import (
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/catalogue"
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/contentsource"
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/curriculummap"
+	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/learner"
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/question"
 )
 
@@ -118,6 +119,7 @@ func main() {
 		contentsource.Register(mux, contentsource.NewPostgresStore(db), catalogueStore, verifier)
 		curriculummap.Register(mux, curriculummap.NewPostgresStore(db), verifier)
 		question.Register(mux, question.NewPostgresStore(db), verifier)
+		learner.Register(mux, learner.NewPostgresStore(db), verifier)
 	}
 
 	_ = http.ListenAndServe(":8080", mux)

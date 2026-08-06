@@ -66,12 +66,20 @@ const (
 	// PermReadQuestionRubric covers listing a question's rubric versions. It is separate from
 	// PermReadQuestion because rubric structure is a distinct sensitive surface.
 	PermReadQuestionRubric Permission = "question_rubric:read"
+	// PermReadLearnerQuestion covers a learner reading the safe, verified, grounded question
+	// projection (T-0015) via GET /learner/questions*. It is held by every recognized role,
+	// including RoleLearner — the first Core permission a learner-role caller may use — and is
+	// intentionally distinct from PermReadQuestion, which exposes the full internal Question
+	// shape (status, canonical rubric id) to editorial roles only.
+	PermReadLearnerQuestion Permission = "learner_question:read"
 )
 
 // rolePermissions is the least-privilege matrix. A role absent from this map, or the
 // RoleUnknown value, has no permissions and is denied by default.
 var rolePermissions = map[Role]map[Permission]bool{
-	RoleLearner: {},
+	RoleLearner: {
+		PermReadLearnerQuestion: true,
+	},
 	RoleEditor: {
 		PermReadSource:          true,
 		PermCreateSource:        true,
@@ -82,6 +90,7 @@ var rolePermissions = map[Role]map[Permission]bool{
 		PermReadQuestion:        true,
 		PermCreateQuestion:      true,
 		PermReadQuestionRubric:  true,
+		PermReadLearnerQuestion: true,
 	},
 	RoleReviewer: {
 		PermReadSource:          true,
@@ -96,6 +105,7 @@ var rolePermissions = map[Role]map[Permission]bool{
 		PermCreateQuestion:      true,
 		PermVerifyQuestion:      true,
 		PermReadQuestionRubric:  true,
+		PermReadLearnerQuestion: true,
 	},
 	RoleAdmin: {
 		PermReadSource:          true,
@@ -111,6 +121,7 @@ var rolePermissions = map[Role]map[Permission]bool{
 		PermCreateQuestion:      true,
 		PermVerifyQuestion:      true,
 		PermReadQuestionRubric:  true,
+		PermReadLearnerQuestion: true,
 	},
 }
 

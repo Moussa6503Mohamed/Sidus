@@ -601,6 +601,67 @@ learner delivery now (rejected: separate projection/auth/session scope).
 
 **Owner/date:** Codex, 2026-08-06 (T-0014).
 
+## D-0017 — Learner-safe verified-question delivery
+
+**Status:** Approved
+**Decision:** Add the first learner-facing surface over the T-0007/T-0013/T-0014 question/
+rubric model: a new `services/core/internal/learner` Core package (its own types — no import
+of `question` — so it cannot gain an editorial field by accident), `GET /learner/questions` and
+`GET /learner/questions/{id}`, and a new `learner_question:read` permission held by every
+recognized role (`learner`, `editor`, `reviewer`, `admin`); unknown/missing role is denied. The
+existing editorial `question:read` permission and `/questions*` routes are untouched. A question
+is returned only while, re-checked on every read via a single joining SQL query — never cached:
+its status is `verified`; it has a canonical rubric version (D-0016) that is itself `verified`
+and stamped at the question's current `content_revision` (never a stale or "latest" version);
+its grounding curriculum-map node is `verified`; and that node's content source is `approved`
+and still `catalogue_syllabus_id`-linked to the question's own syllabus (the T-0006 source
+gate). The response is the explicit `LearnerQuestion` projection (`id`, `syllabusId`,
+`curriculumMapNodeId`, `responseType`, `language`, `prompt`, `options`, `contentRevision`) —
+structurally incapable of carrying `status`, `canonicalRubricVersionId`, rubric structure,
+`answerKey`, marks, event data, actor identity, timestamps, or source metadata. A question that
+exists but fails any gate returns the identical `404`/absence as one that does not exist, so
+existence of a draft/retired/ungrounded question is never leaked.
+
+`apps/web` gains a separate, non-editorial BFF boundary: `lib/learner/core-proxy.ts` defines its
+own closed `LearnerOperation` union and `callCoreLearner` (GET-only; no body path exists),
+deliberately independent of `EditorialOperation`/`callCore` so neither union can be widened by
+editing the other. It reuses the same fail-closed contract as the T-0009 BFF (missing Core URL →
+`503` before auth; id/query validation before any Clerk lookup; missing/invalid token → `401`
+before any network call; redirects refused; Core `5xx` bodies discarded and replaced with a
+generic `502`; no token/body/URL/response logging). A new `/dashboard/practice` page, gated by a
+UI-visibility-only check (`canAccessPractice`: any recognized role) mirroring the T-0009
+pattern, lets a signed-in user enter a syllabus id (and optional node id) and read eligible
+questions; selecting an MCQ option only sets local highlight state — no submit, mark, answer
+reveal, timer, attempt/session, or AI call exists anywhere in this task.
+
+No learner-facing curriculum-catalogue or curriculum-map browse endpoint is added: the practice
+screen's syllabus/node inputs are plain validated id fields rather than a picker, so this task
+does not widen `content_catalogue:read`/`curriculum_map:read` to the learner role. No schema
+change was needed — the projection reads existing columns only.
+**Reason:** A learner needs to discover and read only safe content; every existing question read
+route requires an editorial permission and returns the full internal shape (including the
+answer key's home, `canonicalRubricVersionId`, and rubric data), so no existing route could be
+reused or parameterized without either widening editorial permissions to learners or risking a
+future editorial-field addition silently reaching a learner response. A dedicated package with
+its own hand-written projection type makes "cannot leak a new editorial field" a structural
+property rather than a runtime filter that could be forgotten. Keeping the BFF operation union
+and the practice screen's data inputs minimal (no catalogue/curriculum-map browse) keeps this
+task's authorization surface exactly as large as requested, deferring picker UX to whichever
+future task actually needs learner-readable catalogue data.
+**Alternatives:** Add a `role` or `status` query filter to the existing `GET /questions*` routes
+and grant `learner` a restricted view of `question:read` (rejected: the response type would
+still be the full internal `Question`, one missed field check away from a leak, and it would
+couple editorial and learner authorization in one permission); reuse `QuestionRubricVersion`'s
+shape for a "safe" rubric response (rejected: T-0013's own decision log already flags this as
+the boundary a future learner projection must not cross); cache eligibility at write time (e.g.
+an `is_learner_visible` column) instead of re-querying at read time (rejected: would let a
+question stay "visible" after its node/source regresses until some future write recomputes the
+flag — the existing grounding-gate precedent (D-0008/D-0009) always re-checks live state);
+add a learner-facing curriculum-map read endpoint now so the practice screen could offer a real
+picker (rejected: out of the requested scope, and would require deciding a new
+`curriculum_map:read`-equivalent permission for `learner` without a concrete need yet).
+**Owner/date:** Claude Code agent, 2026-08-06 (T-0015).
+
 ## Decision template
 
 ```md

@@ -508,3 +508,42 @@ export interface QuestionEvent {
   changedFields: string[];
   createdAt: string;
 }
+
+// --- Learner-safe verified-question delivery (T-0015) ---
+// The first surface any `learner`-role session may call. A strictly read-only, structurally
+// reduced projection over the private editorial `Question`/`QuestionRubricVersion` types above:
+// it can never carry `status`, `canonicalRubricVersionId`, a rubric, an answer key, marks, event
+// data, actor identity, timestamps, or internal source metadata (source id/URL/hash). Mirrors
+// services/core/internal/learner, which independently defines its own Go types (no import of the
+// question package) so the projection cannot gain an editorial field by accident. `GET
+// /learner/questions*` requires `learner_question:read`, held by every recognized role
+// (learner/editor/reviewer/admin); unknown roles are denied. Core re-validates on every read that
+// the question is verified, its canonical rubric exists/is verified/matches the question's
+// current content revision, its curriculum-map node is verified, and that node's content source
+// is approved and still catalogue-linked to the question's syllabus — never cached, never a
+// "latest rubric" fallback. See docs/learner-question-delivery.md and D-0017.
+
+/** Learner-visible MCQ option. Deliberately distinct from `MultipleChoiceOption` above — this
+ * type can never gain a correctness flag; the answer key lives only in rubric data this
+ * surface never reads. */
+export interface LearnerQuestionOption {
+  id: string;
+  label: string;
+}
+
+/**
+ * The explicit, exhaustive learner-safe question contract. This interface intentionally does
+ * NOT extend `Question`: every field is listed here by hand so a future edit to the editorial
+ * `Question` type (e.g. adding a sensitive field) can never widen what a learner receives.
+ */
+export interface LearnerQuestion {
+  id: string;
+  syllabusId: string;
+  curriculumMapNodeId: string;
+  responseType: QuestionResponseType;
+  language: string;
+  prompt: string;
+  /** Present only for multiple_choice questions; null otherwise. */
+  options: LearnerQuestionOption[] | null;
+  contentRevision: number;
+}

@@ -90,6 +90,20 @@ func TestQuestionPermissionMatrix(t *testing.T) {
 	}
 }
 
+// TestLearnerQuestionPermissionMatrix pins T-0015's least-privilege rule: every recognized role
+// — learner included — may read the learner-safe question projection; only an unrecognized role
+// is denied.
+func TestLearnerQuestionPermissionMatrix(t *testing.T) {
+	for _, r := range []Role{RoleLearner, RoleEditor, RoleReviewer, RoleAdmin} {
+		if !r.Can(PermReadLearnerQuestion) {
+			t.Fatalf("%q must have %q", r, PermReadLearnerQuestion)
+		}
+	}
+	if RoleUnknown.Can(PermReadLearnerQuestion) {
+		t.Fatal("unknown role must not have learner_question:read")
+	}
+}
+
 // stubVerifier maps a fixed token to fixed claims for middleware tests.
 type stubVerifier struct {
 	token  string
@@ -182,13 +196,13 @@ func TestBearerToken(t *testing.T) {
 		wantToken string
 		wantOK    bool
 	}{
-		"valid":         {"Bearer abc.def.ghi", "abc.def.ghi", true},
-		"case-insens":   {"bearer abc", "abc", true},
-		"missing":       {"", "", false},
-		"no-prefix":     {"abc", "", false},
-		"empty-token":   {"Bearer ", "", false},
-		"spaces-only":   {"Bearer    ", "", false},
-		"wrong-scheme":  {"Basic abc", "", false},
+		"valid":        {"Bearer abc.def.ghi", "abc.def.ghi", true},
+		"case-insens":  {"bearer abc", "abc", true},
+		"missing":      {"", "", false},
+		"no-prefix":    {"abc", "", false},
+		"empty-token":  {"Bearer ", "", false},
+		"spaces-only":  {"Bearer    ", "", false},
+		"wrong-scheme": {"Basic abc", "", false},
 	}
 	for name, c := range cases {
 		req := httptest.NewRequest(http.MethodGet, "/x", nil)
