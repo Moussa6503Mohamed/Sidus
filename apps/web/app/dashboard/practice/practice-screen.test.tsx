@@ -6,6 +6,8 @@ vi.mock("./api-client", () => ({
   ApiError: class ApiError extends Error {},
   listPracticeQuestions: vi.fn(),
   listPracticeSyllabuses: vi.fn(),
+  createPracticeAttempt: vi.fn(),
+  submitPracticeAttempt: vi.fn(),
 }));
 
 import * as api from "./api-client";

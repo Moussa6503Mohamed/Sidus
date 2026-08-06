@@ -8,6 +8,7 @@ export type {
   QuestionRubricVersion,
   RubricCriterion,
   RubricAnswerKey,
+  RubricMCQFeedback,
   SelectCanonicalRubricRequest,
   Syllabus,
   UpdateQuestionRequest,

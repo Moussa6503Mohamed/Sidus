@@ -11,6 +11,8 @@ export function validateRubricDraft(
   maxMarksRaw: string,
   question: Pick<Question, "responseType" | "options">,
   correctOptionId: string,
+  correctExplanation = "",
+  incorrectExplanations: Record<string, string> = {},
 ): { input: CreateQuestionRubricVersionRequest } | { error: string } {
   if (criteria.length === 0 || criteria.length > 200) {
     return { error: "Add between 1 and 200 criteria." };
@@ -46,7 +48,22 @@ export function validateRubricDraft(
     if (!question.options?.some((option) => option.id === correctOptionId)) {
       return { error: "Select a correct option from current question options." };
     }
-    return { input: { rubric: { criteria: normalized, answerKey: { correctOptionId } }, maxMarks } };
+    if (!correctExplanation.trim()) return { error: "Add a correct-answer explanation." };
+    const wrongOptions = (question.options ?? []).filter((option) => option.id !== correctOptionId);
+    if (wrongOptions.some((option) => !incorrectExplanations[option.id]?.trim())) {
+      return { error: "Explain why every incorrect option is wrong." };
+    }
+    return { input: { rubric: {
+      criteria: normalized,
+      answerKey: { correctOptionId },
+      feedback: {
+        correctExplanation: correctExplanation.trim(),
+        incorrectExplanations: wrongOptions.map((option) => ({
+          optionId: option.id,
+          explanation: incorrectExplanations[option.id].trim(),
+        })),
+      },
+    }, maxMarks } };
   }
   return { input: { rubric: { criteria: normalized }, maxMarks } };
 }

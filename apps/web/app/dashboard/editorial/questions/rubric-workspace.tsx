@@ -29,6 +29,8 @@ export function RubricWorkspace(props: Props) {
   const [criteria, setCriteria] = useState<RubricCriterionValues[]>([]);
   const [maxMarks, setMaxMarks] = useState("");
   const [correctOptionId, setCorrectOptionId] = useState("");
+  const [correctExplanation, setCorrectExplanation] = useState("");
+  const [incorrectExplanations, setIncorrectExplanations] = useState<Record<string, string>>({});
   const [validationError, setValidationError] = useState<string | null>(null);
   const [pendingVersion, setPendingVersion] = useState<number | null>(null);
 
@@ -43,7 +45,7 @@ export function RubricWorkspace(props: Props) {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setValidationError(null);
-    const result = validateRubricDraft(criteria, maxMarks, question, correctOptionId);
+    const result = validateRubricDraft(criteria, maxMarks, question, correctOptionId, correctExplanation, incorrectExplanations);
     if ("error" in result) return setValidationError(result.error);
     onCreate(result.input);
   }
@@ -94,6 +96,16 @@ export function RubricWorkspace(props: Props) {
               {(question.options ?? []).map((option) => <option key={option.id} value={option.id}>{option.id} — {option.label}</option>)}
             </select>
           </div>}
+          {question.responseType === "multiple_choice" && <>
+            <div className={sourceStyles.field}>
+              <label htmlFor="rubric-correct-explanation">Correct-answer explanation (required)</label>
+              <textarea id="rubric-correct-explanation" value={correctExplanation} onChange={(event) => setCorrectExplanation(event.target.value)} />
+            </div>
+            {(question.options ?? []).filter((option) => option.id !== correctOptionId).map((option) => <div className={sourceStyles.field} key={option.id}>
+              <label htmlFor={`rubric-incorrect-${option.id}`}>Why option {option.id} is wrong (required)</label>
+              <textarea id={`rubric-incorrect-${option.id}`} value={incorrectExplanations[option.id] ?? ""} onChange={(event) => setIncorrectExplanations((current) => ({ ...current, [option.id]: event.target.value }))} />
+            </div>)}
+          </>}
           <div className={styles.criteriaHeader}>
             <strong>Structured criteria</strong>
             <button type="button" className={sourceStyles.buttonSecondary} onClick={addCriterion}>Add criterion</button>

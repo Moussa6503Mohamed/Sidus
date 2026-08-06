@@ -1,8 +1,10 @@
 package learner
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -18,6 +20,111 @@ func Register(mux *http.ServeMux, store Store, v auth.Verifier) {
 	mux.HandleFunc("GET /learner/questions", auth.Protect(v, auth.PermReadLearnerQuestion, h.listQuestions))
 	mux.HandleFunc("GET /learner/questions/{id}", auth.Protect(v, auth.PermReadLearnerQuestion, h.getQuestion))
 	mux.HandleFunc("GET /learner/syllabuses", auth.Protect(v, auth.PermReadLearnerQuestion, h.listSyllabuses))
+	mux.HandleFunc("POST /learner/questions/{id}/attempts", auth.Protect(v, auth.PermUseLearnerAttempt, h.createAttempt))
+	mux.HandleFunc("POST /learner/attempts/{id}/submit", auth.Protect(v, auth.PermUseLearnerAttempt, h.submitAttempt))
+}
+
+func learnerSubject(r *http.Request) (string, bool) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	return claims.Subject, ok && strings.TrimSpace(claims.Subject) != ""
+}
+
+func (h *handler) createAttempt(w http.ResponseWriter, r *http.Request) {
+	data, err := io.ReadAll(io.LimitReader(r.Body, 4097))
+	if err != nil || len(data) > 4096 || len(bytes.TrimSpace(data)) != 0 {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body must be empty")
+		return
+	}
+	subject, ok := learnerSubject(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
+		return
+	}
+	attempt, err := h.store.CreateAttempt(r.Context(), subject, r.PathValue("id"))
+	if errors.Is(err, ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "question not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
+		return
+	}
+	writeJSON(w, http.StatusCreated, attempt)
+}
+
+var submitFields = map[string]struct{}{"selectedOptionId": {}}
+
+func decodeSubmit(r *http.Request) (string, bool) {
+	dec := json.NewDecoder(io.LimitReader(r.Body, 4097))
+	fields, ok := exactObjectFromDecoder(dec, submitFields)
+	if !ok || len(fields) != 1 {
+		return "", false
+	}
+	var selected string
+	if json.Unmarshal(fields["selectedOptionId"], &selected) != nil {
+		return "", false
+	}
+	selected = strings.TrimSpace(selected)
+	return selected, selected != "" && len([]rune(selected)) <= 64
+}
+
+func exactObjectFromDecoder(dec *json.Decoder, allowed map[string]struct{}) (map[string]json.RawMessage, bool) {
+	token, err := dec.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil, false
+	}
+	fields := map[string]json.RawMessage{}
+	for dec.More() {
+		keyToken, err := dec.Token()
+		key, stringKey := keyToken.(string)
+		if err != nil || !stringKey {
+			return nil, false
+		}
+		if _, allowedKey := allowed[key]; !allowedKey {
+			return nil, false
+		}
+		if _, duplicate := fields[key]; duplicate {
+			return nil, false
+		}
+		var raw json.RawMessage
+		if dec.Decode(&raw) != nil {
+			return nil, false
+		}
+		fields[key] = raw
+	}
+	if _, err := dec.Token(); err != nil {
+		return nil, false
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, false
+	}
+	return fields, true
+}
+
+func (h *handler) submitAttempt(w http.ResponseWriter, r *http.Request) {
+	selected, ok := decodeSubmit(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body is invalid")
+		return
+	}
+	subject, ok := learnerSubject(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
+		return
+	}
+	result, err := h.store.SubmitAttempt(r.Context(), subject, r.PathValue("id"), selected)
+	switch {
+	case errors.Is(err, ErrAttemptNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "attempt not found")
+	case errors.Is(err, ErrAttemptSubmitted):
+		writeError(w, http.StatusConflict, "attempt_already_submitted", "attempt already submitted")
+	case errors.Is(err, ErrInvalidOption):
+		writeError(w, http.StatusBadRequest, "invalid_option", "selected option is invalid")
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
+	default:
+		writeJSON(w, http.StatusOK, result)
+	}
 }
 
 type handler struct {

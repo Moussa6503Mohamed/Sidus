@@ -127,7 +127,7 @@ func TestValidateRubric_BoundsCriteria(t *testing.T) {
 func TestValidateRubricForQuestion_AnswerKeyRules(t *testing.T) {
 	options := []MultipleChoiceOption{{ID: "one", Label: "runtime"}, {ID: "two", Label: "runtime 2"}}
 	criteriaOnly := json.RawMessage(`{"criteria":[{"id":"c1","marks":1}]}`)
-	withKey := json.RawMessage(`{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"}}`)
+	withKey := json.RawMessage(`{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"runtime-c","incorrectExplanations":[{"optionId":"one","explanation":"runtime-w"}]}}`)
 	unknownKey := json.RawMessage(`{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"missing"}}`)
 
 	if err := ValidateRubricForQuestion(withKey, 1, ResponseMultipleChoice, options); err != nil {
@@ -144,6 +144,43 @@ func TestValidateRubricForQuestion_AnswerKeyRules(t *testing.T) {
 	}
 	if err := ValidateRubricForQuestion(criteriaOnly, 1, ResponseStructuredResponse, nil); err != nil {
 		t.Fatalf("criteria-only non-MC rubric: %v", err)
+	}
+}
+
+func TestValidateRubricForQuestion_FeedbackMatrix(t *testing.T) {
+	options := []MultipleChoiceOption{{ID: "one", Label: "runtime-1"}, {ID: "two", Label: "runtime-2"}, {ID: "three", Label: "runtime-3"}}
+	valid := `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"runtime-c","incorrectExplanations":[{"optionId":"one","explanation":"runtime-w1"},{"optionId":"three","explanation":"runtime-w3"}]}}`
+	if err := ValidateRubricForQuestion(json.RawMessage(valid), 1, ResponseMultipleChoice, options); err != nil {
+		t.Fatalf("valid feedback = %v", err)
+	}
+	cases := map[string]string{
+		"missing feedback":        `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"}}`,
+		"blank correct":           `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":" ","incorrectExplanations":[{"optionId":"one","explanation":"x"},{"optionId":"three","explanation":"y"}]}}`,
+		"missing wrong":           `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"x","incorrectExplanations":[{"optionId":"one","explanation":"y"}]}}`,
+		"duplicate wrong":         `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"x","incorrectExplanations":[{"optionId":"one","explanation":"y"},{"optionId":"one","explanation":"z"}]}}`,
+		"foreign wrong":           `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"x","incorrectExplanations":[{"optionId":"one","explanation":"y"},{"optionId":"stale","explanation":"z"}]}}`,
+		"correct rationale":       `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"x","incorrectExplanations":[{"optionId":"one","explanation":"y"},{"optionId":"two","explanation":"z"}]}}`,
+		"blank wrong":             `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"x","incorrectExplanations":[{"optionId":"one","explanation":" "},{"optionId":"three","explanation":"z"}]}}`,
+		"unknown key":             `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"x","incorrectExplanations":[{"optionId":"one","explanation":"y"},{"optionId":"three","explanation":"z"}],"extra":1}}`,
+		"case variant":            `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"Feedback":{"correctExplanation":"x","incorrectExplanations":[]}}`,
+		"duplicate key":           `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"x","correctExplanation":"y","incorrectExplanations":[]}}`,
+		"wrong type":              `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":7,"incorrectExplanations":[]}}`,
+		"incorrect unknown key":   `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"x","incorrectExplanations":[{"optionId":"one","explanation":"y","extra":1},{"optionId":"three","explanation":"z"}]}}`,
+		"incorrect case variant":  `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"x","incorrectExplanations":[{"OptionId":"one","explanation":"y"},{"optionId":"three","explanation":"z"}]}}`,
+		"incorrect duplicate key": `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"x","incorrectExplanations":[{"optionId":"one","optionId":"three","explanation":"y"},{"optionId":"three","explanation":"z"}]}}`,
+		"incorrect id type":       `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"x","incorrectExplanations":[{"optionId":1,"explanation":"y"},{"optionId":"three","explanation":"z"}]}}`,
+		"incorrect text type":     `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"x","incorrectExplanations":[{"optionId":"one","explanation":false},{"optionId":"three","explanation":"z"}]}}`,
+		"trailing feedback json":  `{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"two"},"feedback":{"correctExplanation":"x","incorrectExplanations":[]}[]}`,
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateRubricForQuestion(json.RawMessage(raw), 1, ResponseMultipleChoice, options); !errors.Is(err, ErrInvalidRubric) {
+				t.Fatalf("error = %v, want ErrInvalidRubric", err)
+			}
+		})
+	}
+	if err := ValidateRubricForQuestion(json.RawMessage(valid), 1, ResponseShortAnswer, nil); !errors.Is(err, ErrInvalidRubric) {
+		t.Fatalf("non-MCQ feedback = %v, want ErrInvalidRubric", err)
 	}
 }
 

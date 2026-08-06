@@ -72,6 +72,9 @@ const (
 	// intentionally distinct from PermReadQuestion, which exposes the full internal Question
 	// shape (status, canonical rubric id) to editorial roles only.
 	PermReadLearnerQuestion Permission = "learner_question:read"
+	// PermUseLearnerAttempt covers creating and submitting only the verified subject's own
+	// Practice Mode attempts. Every recognized role receives identical owner-only access.
+	PermUseLearnerAttempt Permission = "learner_attempt:write"
 )
 
 // rolePermissions is the least-privilege matrix. A role absent from this map, or the
@@ -79,6 +82,7 @@ const (
 var rolePermissions = map[Role]map[Permission]bool{
 	RoleLearner: {
 		PermReadLearnerQuestion: true,
+		PermUseLearnerAttempt:   true,
 	},
 	RoleEditor: {
 		PermReadSource:          true,
@@ -91,6 +95,7 @@ var rolePermissions = map[Role]map[Permission]bool{
 		PermCreateQuestion:      true,
 		PermReadQuestionRubric:  true,
 		PermReadLearnerQuestion: true,
+		PermUseLearnerAttempt:   true,
 	},
 	RoleReviewer: {
 		PermReadSource:          true,
@@ -106,6 +111,7 @@ var rolePermissions = map[Role]map[Permission]bool{
 		PermVerifyQuestion:      true,
 		PermReadQuestionRubric:  true,
 		PermReadLearnerQuestion: true,
+		PermUseLearnerAttempt:   true,
 	},
 	RoleAdmin: {
 		PermReadSource:          true,
@@ -122,6 +128,7 @@ var rolePermissions = map[Role]map[Permission]bool{
 		PermVerifyQuestion:      true,
 		PermReadQuestionRubric:  true,
 		PermReadLearnerQuestion: true,
+		PermUseLearnerAttempt:   true,
 	},
 }
 

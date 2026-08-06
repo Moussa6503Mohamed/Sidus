@@ -41,6 +41,11 @@ Migration 0018 adds nullable canonical-rubric FK and partial index. It is additi
 does not backfill historical verified questions or select any rubric. Reviewer/admin performs
 selection explicitly through editorial question workflow.
 
+Migration 0019 adds owner-bound Practice Mode MCQ attempts plus append-only attempt events. It is
+additive/rerunnable, seeds and backfills nothing, and preserves existing question/rubric rows.
+Practice routes use existing Core/Clerk and `SIDUS_CORE_API_URL` configuration. See
+`docs/practice-mcq-marking.md`.
+
 ## Authentication (Clerk)
 
 Clerk owns authentication; Sidus Core owns authorization. Set up keys and the `sidus_role`

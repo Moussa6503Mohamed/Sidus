@@ -73,7 +73,7 @@ export function PracticeWorkspace() {
     <div className={styles.page}>
       <div className={styles.header}>
         <h1>Practice</h1>
-        <p>Read verified questions for a syllabus. Nothing here is submitted, marked, or timed.</p>
+        <p>Choose one answer, submit it, then review verified editorial feedback. No timer.</p>
       </div>
 
       {syllabusState.kind === "loading" && (

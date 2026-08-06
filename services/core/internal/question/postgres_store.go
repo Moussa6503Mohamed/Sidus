@@ -720,7 +720,7 @@ func (p *PostgresStore) VerifyRubricVersion(ctx context.Context, questionID stri
 	}
 	// Re-validate the stored rubric against its stored maximum marks: verification is the point
 	// at which a rubric becomes usable, so it must still be internally consistent.
-	if err := ValidateRubric(stored.Rubric, stored.MaxMarks); err != nil {
+	if err := ValidateRubricForQuestion(stored.Rubric, stored.MaxMarks, current.ResponseType, current.Options); err != nil {
 		return RubricVersion{}, err
 	}
 

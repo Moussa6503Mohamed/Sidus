@@ -407,13 +407,15 @@ export interface RubricCriterion {
 }
 
 /**
- * The validation-safe rubric structure Core accepts. `criteria` is the only permitted key, spelled
- * exactly that way; unknown keys, case variants, and duplicate keys are all rejected.
+ * Validation-safe rubric structure Core accepts. Keys are exact and response-aware; unknown keys,
+ * case variants, duplicate keys, incomplete MCQ feedback, and feedback on non-MCQ are rejected.
  */
 export interface RubricStructure {
   criteria: RubricCriterion[];
   /** Required for MCQ rubrics and prohibited for other response types. Editorial reads only. */
   answerKey?: RubricAnswerKey;
+  /** Required for MCQ rubrics and prohibited for other response types. Editorial data only. */
+  feedback?: RubricMCQFeedback;
 }
 
 export interface RubricAnswerKey {
@@ -565,4 +567,47 @@ export interface LearnerSyllabus {
   /** Tier/route within a syllabus (e.g. "Extended"); null when not applicable. */
   track: string | null;
   displayName: string;
+}
+
+export interface RubricIncorrectExplanation {
+  optionId: string;
+  explanation: string;
+}
+
+export interface RubricMCQFeedback {
+  correctExplanation: string;
+  incorrectExplanations: RubricIncorrectExplanation[];
+}
+
+// --- Learner-safe Practice Mode attempts (T-0016) ---
+// Written independently from editorial Question/Rubric contracts. Open acknowledgements reveal
+// no answer or rubric pin. Submitted results expose only deterministic canonical MCQ feedback.
+export type LearnerAttemptStatus = "open";
+
+export interface LearnerAttempt {
+  attemptId: string;
+  questionId: string;
+  status: LearnerAttemptStatus;
+  maxMarks: number;
+}
+
+export interface LearnerIncorrectExplanation {
+  optionId: string;
+  explanation: string;
+}
+
+export interface LearnerMCQFeedback {
+  correctExplanation: string;
+  incorrectExplanations: LearnerIncorrectExplanation[];
+}
+
+export interface LearnerAttemptResult {
+  attemptId: string;
+  questionId: string;
+  selectedOptionId: string;
+  correctOptionId: string;
+  isCorrect: boolean;
+  awardedMarks: number;
+  maxMarks: number;
+  feedback: LearnerMCQFeedback;
 }

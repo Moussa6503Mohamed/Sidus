@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/lib/pq"
 )
@@ -203,4 +204,167 @@ func (p *PostgresStore) GetQuestion(ctx context.Context, id string) (Projection,
 		return Projection{}, fmt.Errorf("get learner question: %w", err)
 	}
 	return proj, nil
+}
+
+func (p *PostgresStore) CreateAttempt(ctx context.Context, learnerSubjectID, questionID string) (Attempt, error) {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Attempt{}, fmt.Errorf("begin create learner attempt: %w", err)
+	}
+	defer tx.Rollback()
+
+	var revision, maxMarks int
+	var canonicalID string
+	var rubricRaw, optionsRaw []byte
+	err = tx.QueryRowContext(ctx, `
+		SELECT q.content_revision, q.canonical_rubric_version_id, rv.max_marks, rv.rubric, q.options
+		FROM questions q
+		JOIN curriculum_map_nodes n ON n.id = q.curriculum_map_node_id
+		JOIN content_sources s ON s.id = n.content_source_id
+		JOIN question_rubric_versions rv ON rv.id = q.canonical_rubric_version_id AND rv.question_id = q.id
+		WHERE q.id = $1 AND q.response_type = 'multiple_choice' AND q.status = 'verified'
+		  AND rv.status = 'verified' AND rv.question_revision = q.content_revision
+		  AND n.status = 'verified' AND s.status = 'approved'
+		  AND s.catalogue_syllabus_id = q.syllabus_id
+		FOR SHARE OF q, rv, n, s
+	`, questionID).Scan(&revision, &canonicalID, &maxMarks, &rubricRaw, &optionsRaw)
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
+		return Attempt{}, ErrNotFound
+	}
+	if err != nil {
+		return Attempt{}, fmt.Errorf("pin eligible learner question: %w", err)
+	}
+	marking, err := parseMarkingRubric(rubricRaw)
+	if err != nil {
+		return Attempt{}, ErrNotFound
+	}
+	var options []Option
+	if json.Unmarshal(optionsRaw, &options) != nil || !markingCoversOptions(marking, options) {
+		return Attempt{}, ErrNotFound
+	}
+
+	var attempt Attempt
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO learner_attempts
+			(learner_subject_id, question_id, question_content_revision, canonical_rubric_version_id, max_marks)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, question_id, status, max_marks
+	`, learnerSubjectID, questionID, revision, canonicalID, maxMarks).Scan(
+		&attempt.AttemptID, &attempt.QuestionID, &attempt.Status, &attempt.MaxMarks,
+	)
+	if err != nil {
+		return Attempt{}, fmt.Errorf("insert learner attempt: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO learner_attempt_events (attempt_id, event_type, actor_id, changed_fields)
+		VALUES ($1, 'attempt_created', $2, ARRAY['status'])
+	`, attempt.AttemptID, learnerSubjectID); err != nil {
+		return Attempt{}, fmt.Errorf("insert learner attempt event: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Attempt{}, fmt.Errorf("commit learner attempt: %w", err)
+	}
+	return attempt, nil
+}
+
+func markingCoversOptions(marking markingRubric, options []Option) bool {
+	if len(options) < 2 || len(marking.Feedback.IncorrectExplanations) != len(options)-1 {
+		return false
+	}
+	want := make(map[string]struct{}, len(options))
+	for _, option := range options {
+		if option.ID == "" {
+			return false
+		}
+		want[option.ID] = struct{}{}
+	}
+	if _, ok := want[marking.CorrectOptionID]; !ok {
+		return false
+	}
+	for _, item := range marking.Feedback.IncorrectExplanations {
+		if _, ok := want[item.OptionID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func optionBelongsToRubric(marking markingRubric, selected string) bool {
+	if selected == marking.CorrectOptionID {
+		return true
+	}
+	for _, item := range marking.Feedback.IncorrectExplanations {
+		if item.OptionID == selected {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *PostgresStore) SubmitAttempt(ctx context.Context, learnerSubjectID, attemptID, selectedOptionID string) (AttemptResult, error) {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AttemptResult{}, fmt.Errorf("begin submit learner attempt: %w", err)
+	}
+	defer tx.Rollback()
+
+	var result AttemptResult
+	var status AttemptStatus
+	var rubricRaw []byte
+	err = tx.QueryRowContext(ctx, `
+		SELECT a.id, a.question_id, a.status, a.max_marks, rv.rubric
+		FROM learner_attempts a
+		JOIN question_rubric_versions rv
+		  ON rv.id = a.canonical_rubric_version_id
+		 AND rv.question_id = a.question_id
+		 AND rv.question_revision = a.question_content_revision
+		WHERE a.id = $1 AND a.learner_subject_id = $2
+		FOR UPDATE OF a
+	`, attemptID, learnerSubjectID).Scan(
+		&result.AttemptID, &result.QuestionID, &status, &result.MaxMarks, &rubricRaw,
+	)
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
+		return AttemptResult{}, ErrAttemptNotFound
+	}
+	if err != nil {
+		return AttemptResult{}, fmt.Errorf("lock learner attempt: %w", err)
+	}
+	if status != AttemptOpen {
+		return AttemptResult{}, ErrAttemptSubmitted
+	}
+	marking, err := parseMarkingRubric(rubricRaw)
+	if err != nil {
+		return AttemptResult{}, fmt.Errorf("decode pinned learner rubric: %w", err)
+	}
+	selectedOptionID = strings.TrimSpace(selectedOptionID)
+	if !optionBelongsToRubric(marking, selectedOptionID) {
+		return AttemptResult{}, ErrInvalidOption
+	}
+
+	result.SelectedOptionID = selectedOptionID
+	result.CorrectOptionID = marking.CorrectOptionID
+	result.IsCorrect = selectedOptionID == marking.CorrectOptionID
+	if result.IsCorrect {
+		result.AwardedMarks = result.MaxMarks
+	}
+	result.Feedback = marking.Feedback
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE learner_attempts
+		SET selected_option_id = $1, status = 'submitted', is_correct = $2,
+		    awarded_marks = $3, submitted_at = now()
+		WHERE id = $4 AND status = 'open'
+	`, selectedOptionID, result.IsCorrect, result.AwardedMarks, attemptID); err != nil {
+		return AttemptResult{}, fmt.Errorf("submit learner attempt: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO learner_attempt_events (attempt_id, event_type, actor_id, changed_fields)
+		VALUES ($1, 'attempt_submitted', $2,
+		        ARRAY['selectedOptionId','status','isCorrect','awardedMarks','submittedAt'])
+	`, attemptID, learnerSubjectID); err != nil {
+		return AttemptResult{}, fmt.Errorf("insert learner submission event: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return AttemptResult{}, fmt.Errorf("commit learner submission: %w", err)
+	}
+	return result, nil
 }

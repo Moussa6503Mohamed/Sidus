@@ -200,6 +200,8 @@ describe("QuestionsWorkspace editing and review", () => {
 
   it("selects MCQ answer key only from current question options", async () => {
     const draft = question({ responseType: "multiple_choice", options: [{ id: "one", label: crypto.randomUUID() }, { id: "two", label: crypto.randomUUID() }] });
+    const correctExplanation = crypto.randomUUID();
+    const incorrectExplanation = crypto.randomUUID();
     vi.mocked(api.listQuestions).mockResolvedValue({ items: [draft] });
     vi.mocked(api.createRubricVersion).mockResolvedValue({ ...version(2, "draft", 1), rubric: { criteria: [{ id: "c1", marks: 1 }], answerKey: { correctOptionId: "two" } } });
     render(<QuestionsWorkspace role="editor" />);
@@ -212,9 +214,11 @@ describe("QuestionsWorkspace editing and review", () => {
     const selector = screen.getByLabelText(/correct option/i);
     expect(selector.querySelectorAll("option")).toHaveLength(3);
     fireEvent.change(selector, { target: { value: "two" } });
+    fireEvent.change(screen.getByLabelText(/correct-answer explanation/i), { target: { value: correctExplanation } });
+    fireEvent.change(screen.getByLabelText(/why option one is wrong/i), { target: { value: incorrectExplanation } });
     fireEvent.click(screen.getByRole("button", { name: /create rubric version/i }));
     await waitFor(() => expect(api.createRubricVersion).toHaveBeenCalledWith(draft.id, {
-      rubric: { criteria: [{ id: "c1", marks: 1 }], answerKey: { correctOptionId: "two" } },
+      rubric: { criteria: [{ id: "c1", marks: 1 }], answerKey: { correctOptionId: "two" }, feedback: { correctExplanation, incorrectExplanations: [{ optionId: "one", explanation: incorrectExplanation }] } },
       maxMarks: 1,
     }));
   });

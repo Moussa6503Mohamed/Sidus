@@ -28,12 +28,14 @@ export class LearnerProxyError extends Error {
   }
 }
 
-type Method = "GET";
+type Method = "GET" | "POST";
 
 export type LearnerOperation =
   | { kind: "listLearnerQuestions"; syllabusId: string; curriculumMapNodeId?: string }
   | { kind: "getLearnerQuestion"; id: string }
-  | { kind: "listLearnerSyllabuses" };
+  | { kind: "listLearnerSyllabuses" }
+  | { kind: "createLearnerAttempt"; questionId: string }
+  | { kind: "submitLearnerAttempt"; attemptId: string; selectedOptionId: string };
 
 export interface LearnerProxySuccess {
   status: number;
@@ -47,7 +49,15 @@ function requireValidId(id: string): string {
   return id;
 }
 
-function resolveRoute(op: LearnerOperation): { method: Method; path: string } {
+function requireValidOptionId(id: string): string {
+  const normalized = id.trim();
+  if (!normalized || Array.from(normalized).length > 64) {
+    throw new LearnerProxyError(400, "invalid_option", "selected option is invalid");
+  }
+  return normalized;
+}
+
+function resolveRoute(op: LearnerOperation): { method: Method; path: string; body?: string } {
   switch (op.kind) {
     case "listLearnerQuestions": {
       const query = new URLSearchParams({ syllabusId: requireValidId(op.syllabusId) });
@@ -60,6 +70,14 @@ function resolveRoute(op: LearnerOperation): { method: Method; path: string } {
       return { method: "GET", path: `/learner/questions/${requireValidId(op.id)}` };
     case "listLearnerSyllabuses":
       return { method: "GET", path: "/learner/syllabuses" };
+    case "createLearnerAttempt":
+      return { method: "POST", path: `/learner/questions/${requireValidId(op.questionId)}/attempts` };
+    case "submitLearnerAttempt":
+      return {
+        method: "POST",
+        path: `/learner/attempts/${requireValidId(op.attemptId)}/submit`,
+        body: JSON.stringify({ selectedOptionId: requireValidOptionId(op.selectedOptionId) }),
+      };
   }
 }
 
@@ -95,7 +113,9 @@ export async function callCoreLearner(op: LearnerOperation): Promise<LearnerProx
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
+        ...(route.body === undefined ? {} : { "Content-Type": "application/json" }),
       },
+      body: route.body,
       redirect: "error",
       signal: controller.signal,
     });

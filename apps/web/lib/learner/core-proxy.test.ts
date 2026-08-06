@@ -202,4 +202,37 @@ describe("callCoreLearner", () => {
 
     expect(result).toEqual({ status: 404, body: { error: "not_found", message: "question not found" } });
   });
+
+  it("calls fixed create-attempt POST with no body", async () => {
+    mockSignedIn("opaque-token");
+    fetchSpy.mockResolvedValue(jsonResponse(201, { attemptId: "attempt-1" }));
+    await callCoreLearner({ kind: "createLearnerAttempt", questionId: "q-1" });
+    const [target, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(target).toBe("http://core.internal:8080/learner/questions/q-1/attempts");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeUndefined();
+  });
+
+  it("calls fixed submit POST with validated exact body", async () => {
+    mockSignedIn("opaque-token");
+    fetchSpy.mockResolvedValue(jsonResponse(200, { attemptId: "attempt-1" }));
+    await callCoreLearner({ kind: "submitLearnerAttempt", attemptId: "attempt-1", selectedOptionId: "opt-a" });
+    const [target, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(target).toBe("http://core.internal:8080/learner/attempts/attempt-1/submit");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(`{"selectedOptionId":"opt-a"}`);
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+  });
+
+  it.each([
+    [{ kind: "createLearnerAttempt", questionId: "../q" } as const],
+    [{ kind: "submitLearnerAttempt", attemptId: "a/1", selectedOptionId: "opt-a" } as const],
+    [{ kind: "submitLearnerAttempt", attemptId: "a-1", selectedOptionId: " " } as const],
+  ])("rejects attempt operation ids before Clerk and fetch", async (operation) => {
+    mockSignedIn();
+    const err = await callCoreLearner(operation).catch((e) => e);
+    expect(err).toBeInstanceOf(LearnerProxyError);
+    expect(mockedAuth).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });

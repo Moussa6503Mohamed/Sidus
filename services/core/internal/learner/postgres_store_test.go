@@ -6,10 +6,27 @@ import (
 	"encoding/json"
 	"os"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func seedPracticeQuestion(t *testing.T, f fixture) (string, string) {
+	t.Helper()
+	options := []Option{{ID: "opt-a", Label: "opaque-a"}, {ID: "opt-b", Label: "opaque-b"}, {ID: "opt-c", Label: "opaque-c"}}
+	questionID := seedQuestion(t, f.db, f.syllabusID, f.nodeID, "verified", 7, "multiple_choice", options)
+	var rubricID string
+	raw := json.RawMessage(`{"criteria":[{"id":"c1","marks":2}],"answerKey":{"correctOptionId":"opt-b"},"feedback":{"correctExplanation":"opaque-correct","incorrectExplanations":[{"optionId":"opt-a","explanation":"opaque-wrong-a"},{"optionId":"opt-c","explanation":"opaque-wrong-c"}]}}`)
+	if err := f.db.QueryRow(`
+		INSERT INTO question_rubric_versions (question_id, version, question_revision, rubric, max_marks, status, created_by, reviewed_by)
+		VALUES ($1, 1, 7, $2, 2, 'verified', 'opaque-editor', 'opaque-reviewer') RETURNING id
+	`, questionID, raw).Scan(&rubricID); err != nil {
+		t.Fatalf("seed practice rubric: %v", err)
+	}
+	setCanonicalRubric(t, f.db, questionID, rubricID)
+	return questionID, rubricID
+}
 
 // These integration tests run against a real, disposable PostgreSQL instance that has had the
 // migrations applied. They write questions/rubric-version/curriculum-map/content-source rows
@@ -522,6 +539,102 @@ func TestPostgresStore_Integration_ListQuestions_OnlyEligibleQuestionsReturned(t
 	}
 	if ids[draft] || ids[retired] || ids[noRubric] {
 		t.Fatalf("ineligible questions leaked into results: %v", ids)
+	}
+}
+
+func TestPostgresStore_Integration_AttemptPinsOwnershipAndSubmit(t *testing.T) {
+	f := newFixture(t)
+	questionID, rubricID := seedPracticeQuestion(t, f)
+	attempt, err := f.store.CreateAttempt(f.ctx, "owner-a", questionID)
+	if err != nil {
+		t.Fatalf("CreateAttempt: %v", err)
+	}
+	if attempt.QuestionID != questionID || attempt.Status != AttemptOpen || attempt.MaxMarks != 2 {
+		t.Fatalf("attempt = %+v", attempt)
+	}
+	var owner, pinnedRubric, selected string
+	var revision int
+	var isCorrect *bool
+	if err := f.db.QueryRow(`SELECT learner_subject_id, question_content_revision, canonical_rubric_version_id,
+		COALESCE(selected_option_id,''), is_correct FROM learner_attempts WHERE id=$1`, attempt.AttemptID).
+		Scan(&owner, &revision, &pinnedRubric, &selected, &isCorrect); err != nil {
+		t.Fatal(err)
+	}
+	if owner != "owner-a" || revision != 7 || pinnedRubric != rubricID || selected != "" || isCorrect != nil {
+		t.Fatalf("pins/pre-submit = %s %d %s %q %v", owner, revision, pinnedRubric, selected, isCorrect)
+	}
+	if _, err := f.store.SubmitAttempt(f.ctx, "owner-b", attempt.AttemptID, "opt-b"); err != ErrAttemptNotFound {
+		t.Fatalf("foreign = %v", err)
+	}
+	if _, err := f.store.SubmitAttempt(f.ctx, "owner-a", attempt.AttemptID, "stale"); err != ErrInvalidOption {
+		t.Fatalf("stale = %v", err)
+	}
+	result, err := f.store.SubmitAttempt(f.ctx, "owner-a", attempt.AttemptID, "opt-b")
+	if err != nil {
+		t.Fatalf("SubmitAttempt: %v", err)
+	}
+	if !result.IsCorrect || result.AwardedMarks != 2 || result.CorrectOptionID != "opt-b" || len(result.Feedback.IncorrectExplanations) != 2 {
+		t.Fatalf("result = %+v", result)
+	}
+	if _, err := f.store.SubmitAttempt(f.ctx, "owner-a", attempt.AttemptID, "opt-a"); err != ErrAttemptSubmitted {
+		t.Fatalf("replay = %v", err)
+	}
+	var eventCount int
+	if err := f.db.QueryRow(`SELECT count(*) FROM learner_attempt_events WHERE attempt_id=$1`, attempt.AttemptID).Scan(&eventCount); err != nil || eventCount != 2 {
+		t.Fatalf("events=%d err=%v", eventCount, err)
+	}
+}
+
+func TestPostgresStore_Integration_AttemptEligibilityAndPinnedLifecycle(t *testing.T) {
+	f := newFixture(t)
+	questionID, _ := seedPracticeQuestion(t, f)
+	attempt, err := f.store.CreateAttempt(f.ctx, "owner-a", questionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(`UPDATE questions SET status='retired', content_revision=8 WHERE id=$1`, questionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(`UPDATE content_sources SET status='pending' WHERE id=$1`, f.sourceID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.store.SubmitAttempt(f.ctx, "owner-a", attempt.AttemptID, "opt-a")
+	if err != nil || result.IsCorrect || result.AwardedMarks != 0 {
+		t.Fatalf("pinned submit = %+v, %v", result, err)
+	}
+	if _, err := f.store.CreateAttempt(f.ctx, "owner-a", questionID); err != ErrNotFound {
+		t.Fatalf("ineligible create = %v", err)
+	}
+}
+
+func TestPostgresStore_Integration_ParallelSubmitExactlyOnce(t *testing.T) {
+	f := newFixture(t)
+	questionID, _ := seedPracticeQuestion(t, f)
+	attempt, err := f.store.CreateAttempt(f.ctx, "owner-a", questionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			_, errs[index] = f.store.SubmitAttempt(context.Background(), "owner-a", attempt.AttemptID, "opt-b")
+		}(i)
+	}
+	wg.Wait()
+	success, conflict := 0, 0
+	for _, submitErr := range errs {
+		if submitErr == nil {
+			success++
+		}
+		if submitErr == ErrAttemptSubmitted {
+			conflict++
+		}
+	}
+	if success != 1 || conflict != 1 {
+		t.Fatalf("parallel errors = %#v", errs)
 	}
 }
 

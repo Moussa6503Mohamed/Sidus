@@ -22,6 +22,10 @@ var ErrUnknownNode = errors.New("curriculum map node is unknown")
 // different syllabus than the one supplied.
 var ErrMismatchedNode = errors.New("curriculum map node belongs to a different syllabus")
 
+var ErrAttemptNotFound = errors.New("attempt not found")
+var ErrAttemptSubmitted = errors.New("attempt already submitted")
+var ErrInvalidOption = errors.New("selected option is invalid")
+
 // Store serves the learner-safe question projection. Every method re-validates the full
 // eligibility gate at read time: verified question status, an existing verified canonical
 // rubric version stamped at the question's current content revision, a verified curriculum-map
@@ -43,4 +47,7 @@ type Store interface {
 	// syllabus currently active. There is no filter and no error case beyond infrastructure
 	// failure — an empty result is a valid, non-error response (no active syllabuses yet).
 	ListActiveSyllabuses(ctx context.Context) ([]Syllabus, error)
+
+	CreateAttempt(ctx context.Context, learnerSubjectID, questionID string) (Attempt, error)
+	SubmitAttempt(ctx context.Context, learnerSubjectID, attemptID, selectedOptionID string) (AttemptResult, error)
 }

@@ -1,6 +1,7 @@
 package learner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -49,6 +50,10 @@ type memoryStore struct {
 	nodeSyllabus     map[string]string
 	questions        map[string]Projection
 	syllabuses       []Syllabus
+	attempts         map[string]struct {
+		owner, question string
+		status          AttemptStatus
+	}
 }
 
 func newMemoryStore() *memoryStore {
@@ -77,6 +82,10 @@ func newMemoryStore() *memoryStore {
 				ContentRevision:     1,
 			},
 		},
+		attempts: map[string]struct {
+			owner, question string
+			status          AttemptStatus
+		}{},
 	}
 }
 
@@ -118,6 +127,41 @@ func (m *memoryStore) ListActiveSyllabuses(_ context.Context) ([]Syllabus, error
 	return m.syllabuses, nil
 }
 
+func (m *memoryStore) CreateAttempt(_ context.Context, owner, questionID string) (Attempt, error) {
+	if _, ok := m.questions[questionID]; !ok {
+		return Attempt{}, ErrNotFound
+	}
+	id := "attempt-" + owner
+	m.attempts[id] = struct {
+		owner, question string
+		status          AttemptStatus
+	}{owner, questionID, AttemptOpen}
+	return Attempt{AttemptID: id, QuestionID: questionID, Status: AttemptOpen, MaxMarks: 2}, nil
+}
+
+func (m *memoryStore) SubmitAttempt(_ context.Context, owner, attemptID, selected string) (AttemptResult, error) {
+	a, ok := m.attempts[attemptID]
+	if !ok || a.owner != owner {
+		return AttemptResult{}, ErrAttemptNotFound
+	}
+	if a.status != AttemptOpen {
+		return AttemptResult{}, ErrAttemptSubmitted
+	}
+	if selected != "opt-a" && selected != "opt-b" {
+		return AttemptResult{}, ErrInvalidOption
+	}
+	a.status = AttemptSubmitted
+	m.attempts[attemptID] = a
+	correct := selected == "opt-a"
+	marks := 0
+	if correct {
+		marks = 2
+	}
+	return AttemptResult{AttemptID: attemptID, QuestionID: a.question, SelectedOptionID: selected,
+		CorrectOptionID: "opt-a", IsCorrect: correct, AwardedMarks: marks, MaxMarks: 2,
+		Feedback: Feedback{CorrectExplanation: "opaque-c", IncorrectExplanations: []IncorrectExplanation{{OptionID: "opt-b", Explanation: "opaque-w"}}}}, nil
+}
+
 func newTestMux() http.Handler {
 	mux := http.NewServeMux()
 	Register(mux, newMemoryStore(), fakeVerifier{})
@@ -133,6 +177,96 @@ func doRequest(t *testing.T, method, target, token string) *httptest.ResponseRec
 	rec := httptest.NewRecorder()
 	newTestMux().ServeHTTP(rec, req)
 	return rec
+}
+
+func doRequestBody(t *testing.T, h http.Handler, method, target, token, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, target, bytes.NewBufferString(body))
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestAttemptRoutes_RoleMatrixAndOwnership(t *testing.T) {
+	for _, token := range []string{learnerToken, editorToken, reviewerToken, adminToken} {
+		store := newMemoryStore()
+		mux := http.NewServeMux()
+		Register(mux, store, fakeVerifier{})
+		created := doRequestBody(t, mux, http.MethodPost, "/learner/questions/q-1/attempts", token, "")
+		if created.Code != http.StatusCreated {
+			t.Fatalf("token %s create = %d", token, created.Code)
+		}
+		attempt := decodeAttempt(t, created.Body.Bytes())
+		submitted := doRequestBody(t, mux, http.MethodPost, "/learner/attempts/"+attempt.AttemptID+"/submit", token, `{"selectedOptionId":"opt-b"}`)
+		if submitted.Code != http.StatusOK {
+			t.Fatalf("token %s submit = %d: %s", token, submitted.Code, submitted.Body.String())
+		}
+	}
+	if rec := doRequestBody(t, newTestMux(), http.MethodPost, "/learner/questions/q-1/attempts", noRoleToken, ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("unknown role create = %d", rec.Code)
+	}
+}
+
+func TestAttemptSubmit_StrictLifecycleOwnershipAndLeakage(t *testing.T) {
+	store := newMemoryStore()
+	mux := http.NewServeMux()
+	Register(mux, store, fakeVerifier{})
+	created := doRequestBody(t, mux, http.MethodPost, "/learner/questions/q-1/attempts", learnerToken, "")
+	var open map[string]json.RawMessage
+	if err := json.Unmarshal(created.Body.Bytes(), &open); err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 4 || open["attemptId"] == nil || open["questionId"] == nil || open["status"] == nil || open["maxMarks"] == nil {
+		t.Fatalf("open keys leaked or missing: %v", open)
+	}
+	attempt := decodeAttempt(t, created.Body.Bytes())
+	foreign := doRequestBody(t, mux, http.MethodPost, "/learner/attempts/"+attempt.AttemptID+"/submit", editorToken, `{"selectedOptionId":"opt-a"}`)
+	if foreign.Code != http.StatusNotFound {
+		t.Fatalf("foreign = %d", foreign.Code)
+	}
+	invalid := doRequestBody(t, mux, http.MethodPost, "/learner/attempts/"+attempt.AttemptID+"/submit", learnerToken, `{"selectedOptionId":"stale"}`)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid = %d", invalid.Code)
+	}
+	resultRec := doRequestBody(t, mux, http.MethodPost, "/learner/attempts/"+attempt.AttemptID+"/submit", learnerToken, `{"selectedOptionId":"opt-b"}`)
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(resultRec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"attemptId", "questionId", "selectedOptionId", "correctOptionId", "isCorrect", "awardedMarks", "maxMarks", "feedback"}
+	if len(result) != len(want) {
+		t.Fatalf("result keys = %v", result)
+	}
+	for _, key := range want {
+		if result[key] == nil {
+			t.Fatalf("missing %s", key)
+		}
+	}
+	replay := doRequestBody(t, mux, http.MethodPost, "/learner/attempts/"+attempt.AttemptID+"/submit", learnerToken, `{"selectedOptionId":"opt-a"}`)
+	if replay.Code != http.StatusConflict {
+		t.Fatalf("replay = %d", replay.Code)
+	}
+}
+
+func TestAttemptSubmit_RejectsMalformedBeforeStore(t *testing.T) {
+	for _, body := range []string{`{}`, `null`, `{"selectedOptionId":""}`, `{"SelectedOptionId":"opt-a"}`, `{"selectedOptionId":1}`, `{"selectedOptionId":"opt-a","extra":1}`, `{"selectedOptionId":"opt-a","selectedOptionId":"opt-b"}`, `{"selectedOptionId":"opt-a"}{}`} {
+		rec := doRequestBody(t, newTestMux(), http.MethodPost, "/learner/attempts/a/submit", learnerToken, body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %q = %d", body, rec.Code)
+		}
+	}
+}
+
+func decodeAttempt(t *testing.T, raw []byte) Attempt {
+	t.Helper()
+	var attempt Attempt
+	if err := json.Unmarshal(raw, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	return attempt
 }
 
 // --- Role matrix ---

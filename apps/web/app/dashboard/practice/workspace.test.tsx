@@ -15,12 +15,16 @@ vi.mock("./api-client", () => ({
   },
   listPracticeQuestions: vi.fn(),
   listPracticeSyllabuses: vi.fn(),
+  createPracticeAttempt: vi.fn(),
+  submitPracticeAttempt: vi.fn(),
 }));
 
-import { ApiError, listPracticeQuestions, listPracticeSyllabuses } from "./api-client";
+import { ApiError, createPracticeAttempt, listPracticeQuestions, listPracticeSyllabuses, submitPracticeAttempt } from "./api-client";
 
 const mockedListQuestions = vi.mocked(listPracticeQuestions);
 const mockedListSyllabuses = vi.mocked(listPracticeSyllabuses);
+const mockedCreateAttempt = vi.mocked(createPracticeAttempt);
+const mockedSubmitAttempt = vi.mocked(submitPracticeAttempt);
 
 const oneActiveSyllabus = {
   items: [
@@ -31,6 +35,12 @@ const oneActiveSyllabus = {
 beforeEach(() => {
   vi.clearAllMocks();
   mockedListSyllabuses.mockResolvedValue(oneActiveSyllabus);
+  mockedCreateAttempt.mockResolvedValue({ attemptId: "attempt-1", questionId: "q-1", status: "open", maxMarks: 2 });
+  mockedSubmitAttempt.mockResolvedValue({
+    attemptId: "attempt-1", questionId: "q-1", selectedOptionId: "opt-b", correctOptionId: "opt-a",
+    isCorrect: false, awardedMarks: 0, maxMarks: 2,
+    feedback: { correctExplanation: "opaque-correct", incorrectExplanations: [{ optionId: "opt-b", explanation: "opaque-wrong" }] },
+  });
 });
 
 async function submit(user: ReturnType<typeof userEvent.setup>, syllabusId = "syl-1") {
@@ -147,7 +157,7 @@ describe("PracticeWorkspace — question loading", () => {
     await waitFor(() => expect(mockedListQuestions).toHaveBeenCalledTimes(2));
   });
 
-  it("lets a learner select an MCQ option without calling any API and never renders a submit/mark/reveal control", async () => {
+  it("submits once and renders score, selected/correct labels, and complete verified feedback", async () => {
     mockedListQuestions.mockResolvedValue({
       items: [
         {
@@ -157,7 +167,7 @@ describe("PracticeWorkspace — question loading", () => {
           responseType: "multiple_choice",
           language: "en",
           prompt: "opaque-prompt-1",
-          options: [{ id: "opt-a", label: "opaque-a" }],
+          options: [{ id: "opt-a", label: "opaque-a" }, { id: "opt-b", label: "opaque-b" }],
           contentRevision: 1,
         },
       ],
@@ -167,16 +177,41 @@ describe("PracticeWorkspace — question loading", () => {
     await submit(user);
     await screen.findByText("opaque-prompt-1");
 
-    const optionButton = screen.getByRole("button", { name: "opaque-a" });
+    const optionButton = screen.getByRole("button", { name: "opaque-b" });
     expect(optionButton).toHaveAttribute("aria-pressed", "false");
 
     await user.click(optionButton);
 
     expect(optionButton).toHaveAttribute("aria-pressed", "true");
-    expect(mockedListQuestions).toHaveBeenCalledTimes(1); // selecting an option never triggers a fetch
-    expect(screen.queryByRole("button", { name: /submit/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /mark/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /reveal/i })).not.toBeInTheDocument();
+    expect(mockedCreateAttempt).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /submit answer/i }));
+    await screen.findByRole("region", { name: /answer feedback/i });
+    expect(mockedCreateAttempt).toHaveBeenCalledWith("q-1");
+    expect(mockedSubmitAttempt).toHaveBeenCalledWith("attempt-1", "opt-b");
+    expect(screen.getByText(/0 \/ 2/)).toBeInTheDocument();
+    expect(screen.getByText("opaque-correct")).toBeInTheDocument();
+    expect(screen.getByText("opaque-wrong")).toBeInTheDocument();
+    expect(screen.getAllByText("Selected")).toHaveLength(1);
+    expect(screen.getAllByText("Correct")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /submit answer/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /start/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps pinned attempt for retry after submit failure and prevents duplicate create", async () => {
+    mockedListQuestions.mockResolvedValue({ items: [{
+      id: "q-1", syllabusId: "syl-1", curriculumMapNodeId: "node-1", responseType: "multiple_choice",
+      language: "en", prompt: "opaque-prompt", options: [{ id: "opt-a", label: "opaque-a" }, { id: "opt-b", label: "opaque-b" }], contentRevision: 1,
+    }] });
+    mockedSubmitAttempt.mockRejectedValueOnce(new ApiError(502, "upstream", "opaque-failure"));
+    const user = userEvent.setup();
+    render(<PracticeWorkspace />);
+    await submit(user);
+    await user.click(await screen.findByRole("button", { name: "opaque-a" }));
+    await user.click(screen.getByRole("button", { name: /submit answer/i }));
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+    await screen.findByRole("region", { name: /answer feedback/i });
+    expect(mockedCreateAttempt).toHaveBeenCalledTimes(1);
+    expect(mockedSubmitAttempt).toHaveBeenCalledTimes(2);
   });
 });

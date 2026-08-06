@@ -35,8 +35,8 @@ describe("validateRubricDraft", () => {
     expect(validateRubricDraft(criteria, "1", multipleChoice, "missing")).toEqual({
       error: "Select a correct option from current question options.",
     });
-    expect(validateRubricDraft(criteria, "1", multipleChoice, "o2")).toEqual({
-      input: { rubric: { criteria: [{ id: "c1", marks: 1 }], answerKey: { correctOptionId: "o2" } }, maxMarks: 1 },
+    expect(validateRubricDraft(criteria, "1", multipleChoice, "o2", "opaque-c", { o1: "opaque-w" })).toEqual({
+      input: { rubric: { criteria: [{ id: "c1", marks: 1 }], answerKey: { correctOptionId: "o2" }, feedback: { correctExplanation: "opaque-c", incorrectExplanations: [{ optionId: "o1", explanation: "opaque-w" }] } }, maxMarks: 1 },
     });
   });
 });

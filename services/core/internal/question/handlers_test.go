@@ -433,7 +433,7 @@ func (m *memoryStore) VerifyRubricVersion(_ context.Context, questionID string, 
 		if v.Status != RubricDraft {
 			return RubricVersion{}, ErrInvalidTransition
 		}
-		if err := ValidateRubric(v.Rubric, v.MaxMarks); err != nil {
+		if err := ValidateRubricForQuestion(v.Rubric, v.MaxMarks, q.ResponseType, q.Options); err != nil {
 			return RubricVersion{}, err
 		}
 		v.Status = RubricVerified
@@ -1830,7 +1830,7 @@ func TestUpdateQuestion_OptionsRevisionAuditAndStaleness(t *testing.T) {
 	defer srv.Close()
 	create := doRaw(t, http.MethodPost, srv.URL+"/questions", `{"syllabusId":"syl-active","curriculumMapNodeId":"node-verified","responseType":"multiple_choice","language":"en","prompt":"runtime","options":[{"id":"one","label":"runtime one"},{"id":"two","label":"runtime two"}]}`)
 	q := decodeJSON[Question](t, create)
-	rubric := doRaw(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions", `{"rubric":{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"one"}},"maxMarks":1}`)
+	rubric := doRaw(t, http.MethodPost, srv.URL+"/questions/"+q.ID+"/rubric-versions", `{"rubric":{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"one"},"feedback":{"correctExplanation":"runtime-c","incorrectExplanations":[{"optionId":"two","explanation":"runtime-w"}]}},"maxMarks":1}`)
 	if rubric.StatusCode != http.StatusCreated {
 		t.Fatalf("rubric status = %d", rubric.StatusCode)
 	}

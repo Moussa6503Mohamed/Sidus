@@ -252,7 +252,7 @@ func TestPostgresStore_Integration_MCQOptionsRevisionAnswerKeyAndAudit(t *testin
 	if _, err := f.store.CreateRubricVersion(f.ctx, q.ID, CreateRubricVersionInput{ActorID: "test-editor", Rubric: wrong, MaxMarks: 1}); !errors.Is(err, ErrInvalidRubric) {
 		t.Fatalf("wrong key error = %v", err)
 	}
-	valid := json.RawMessage(`{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"one"}}`)
+	valid := json.RawMessage(`{"criteria":[{"id":"c1","marks":1}],"answerKey":{"correctOptionId":"one"},"feedback":{"correctExplanation":"runtime-c","incorrectExplanations":[{"optionId":"two","explanation":"runtime-w"}]}}`)
 	v, err := f.store.CreateRubricVersion(f.ctx, q.ID, CreateRubricVersionInput{ActorID: "test-editor", Rubric: valid, MaxMarks: 1})
 	if err != nil {
 		t.Fatalf("create rubric: %v", err)

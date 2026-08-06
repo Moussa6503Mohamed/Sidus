@@ -21,9 +21,11 @@ const maxRubricCriteria = 200
 // does not match the documented schema, and does not match what the TypeScript contract or a
 // future marking consumer expects, be stored as a verified rubric.
 var (
-	rubricDocumentFields  = map[string]struct{}{"criteria": {}, "answerKey": {}}
+	rubricDocumentFields  = map[string]struct{}{"criteria": {}, "answerKey": {}, "feedback": {}}
 	rubricCriterionFields = map[string]struct{}{"id": {}, "marks": {}, "descriptor": {}}
 	rubricAnswerKeyFields = map[string]struct{}{"correctOptionId": {}}
+	rubricFeedbackFields  = map[string]struct{}{"correctExplanation": {}, "incorrectExplanations": {}}
+	rubricIncorrectFields = map[string]struct{}{"optionId": {}, "explanation": {}}
 )
 
 // rubricDocument and rubricCriterion document the accepted shape and are used to construct
@@ -34,10 +36,21 @@ var (
 type rubricDocument struct {
 	Criteria  []rubricCriterion `json:"criteria"`
 	AnswerKey *rubricAnswerKey  `json:"answerKey,omitempty"`
+	Feedback  *rubricFeedback   `json:"feedback,omitempty"`
 }
 
 type rubricAnswerKey struct {
 	CorrectOptionID string `json:"correctOptionId"`
+}
+
+type rubricFeedback struct {
+	CorrectExplanation    string                       `json:"correctExplanation"`
+	IncorrectExplanations []rubricIncorrectExplanation `json:"incorrectExplanations"`
+}
+
+type rubricIncorrectExplanation struct {
+	OptionID    string `json:"optionId"`
+	Explanation string `json:"explanation"`
 }
 
 type rubricCriterion struct {
@@ -116,6 +129,11 @@ func ValidateRubric(raw json.RawMessage, maxMarks int) error {
 			return err
 		}
 	}
+	if feedbackRaw, ok := fields["feedback"]; ok {
+		if _, err := validateFeedback(feedbackRaw); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -131,25 +149,90 @@ func ValidateRubricForQuestion(raw json.RawMessage, maxMarks int, responseType R
 		return ErrInvalidRubric
 	}
 	answerKeyRaw, hasAnswerKey := fields["answerKey"]
+	feedbackRaw, hasFeedback := fields["feedback"]
 	if responseType != ResponseMultipleChoice {
-		if hasAnswerKey {
+		if hasAnswerKey || hasFeedback {
 			return ErrInvalidRubric
 		}
 		return nil
 	}
-	if !hasAnswerKey {
+	if !hasAnswerKey || !hasFeedback {
 		return ErrInvalidRubric
 	}
 	correctOptionID, err := validateAnswerKey(answerKeyRaw)
 	if err != nil {
 		return err
 	}
+	feedback, err := validateFeedback(feedbackRaw)
+	if err != nil {
+		return err
+	}
+	current := make(map[string]struct{}, len(options))
 	for _, option := range options {
-		if option.ID == correctOptionID {
-			return nil
+		current[option.ID] = struct{}{}
+	}
+	if _, ok := current[correctOptionID]; !ok {
+		return ErrInvalidRubric
+	}
+	seen := make(map[string]struct{}, len(feedback.IncorrectExplanations))
+	for _, item := range feedback.IncorrectExplanations {
+		if item.OptionID == correctOptionID {
+			return ErrInvalidRubric
+		}
+		if _, ok := current[item.OptionID]; !ok {
+			return ErrInvalidRubric
+		}
+		if _, duplicate := seen[item.OptionID]; duplicate {
+			return ErrInvalidRubric
+		}
+		seen[item.OptionID] = struct{}{}
+	}
+	if len(seen) != len(options)-1 {
+		return ErrInvalidRubric
+	}
+	for id := range current {
+		if id == correctOptionID {
+			continue
+		}
+		if _, ok := seen[id]; !ok {
+			return ErrInvalidRubric
 		}
 	}
-	return ErrInvalidRubric
+	return nil
+}
+
+func validateFeedback(raw json.RawMessage) (rubricFeedback, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	fields, err := decodeExactObject(dec, rubricFeedbackFields)
+	if err != nil || requireEOF(dec) != nil || len(fields) != 2 {
+		return rubricFeedback{}, ErrInvalidRubric
+	}
+	var correct string
+	if json.Unmarshal(fields["correctExplanation"], &correct) != nil || blank(correct) {
+		return rubricFeedback{}, ErrInvalidRubric
+	}
+	var raws []json.RawMessage
+	if json.Unmarshal(fields["incorrectExplanations"], &raws) != nil || len(raws) == 0 || len(raws) > maxMultipleChoiceOptions-1 {
+		return rubricFeedback{}, ErrInvalidRubric
+	}
+	result := rubricFeedback{CorrectExplanation: correct, IncorrectExplanations: make([]rubricIncorrectExplanation, 0, len(raws))}
+	for _, itemRaw := range raws {
+		itemDec := json.NewDecoder(bytes.NewReader(itemRaw))
+		itemFields, err := decodeExactObject(itemDec, rubricIncorrectFields)
+		if err != nil || requireEOF(itemDec) != nil || len(itemFields) != 2 {
+			return rubricFeedback{}, ErrInvalidRubric
+		}
+		var item rubricIncorrectExplanation
+		if json.Unmarshal(itemFields["optionId"], &item.OptionID) != nil || blank(item.OptionID) || len([]rune(strings.TrimSpace(item.OptionID))) > maxOptionIDLength {
+			return rubricFeedback{}, ErrInvalidRubric
+		}
+		item.OptionID = strings.TrimSpace(item.OptionID)
+		if json.Unmarshal(itemFields["explanation"], &item.Explanation) != nil || blank(item.Explanation) {
+			return rubricFeedback{}, ErrInvalidRubric
+		}
+		result.IncorrectExplanations = append(result.IncorrectExplanations, item)
+	}
+	return result, nil
 }
 
 func validateAnswerKey(raw json.RawMessage) (string, error) {

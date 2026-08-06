@@ -1,5 +1,5 @@
-// Package learner implements the learner-safe, verified-question delivery projection (T-0015).
-// It is a strictly read-only surface over the private editorial infrastructure built in
+// Package learner implements learner-safe verified-question delivery and owned Practice attempts.
+// Question reads remain a strictly reduced surface over private editorial infrastructure built in
 // T-0007/T-0013/T-0014 (services/core/internal/question): a structurally reduced view that can
 // never carry a question's lifecycle status, canonical rubric id, rubric structure, answer key,
 // marks, event data, actor identity, timestamps, or internal source metadata.
@@ -10,6 +10,8 @@
 // reachable through this package is re-validated on every read; nothing is cached or trusted
 // from a prior write.
 package learner
+
+import "time"
 
 // ResponseType mirrors question.ResponseType's wire values for the learner projection.
 type ResponseType string
@@ -57,4 +59,52 @@ type Syllabus struct {
 	Qualification string  `json:"qualification"`
 	Track         *string `json:"track"`
 	DisplayName   string  `json:"displayName"`
+}
+
+type AttemptStatus string
+
+const (
+	AttemptOpen      AttemptStatus = "open"
+	AttemptSubmitted AttemptStatus = "submitted"
+)
+
+// Attempt is learner-safe open-attempt acknowledgement. Pins remain internal.
+type Attempt struct {
+	AttemptID  string        `json:"attemptId"`
+	QuestionID string        `json:"questionId"`
+	Status     AttemptStatus `json:"status"`
+	MaxMarks   int           `json:"maxMarks"`
+}
+
+type IncorrectExplanation struct {
+	OptionID    string `json:"optionId"`
+	Explanation string `json:"explanation"`
+}
+
+type Feedback struct {
+	CorrectExplanation    string                 `json:"correctExplanation"`
+	IncorrectExplanations []IncorrectExplanation `json:"incorrectExplanations"`
+}
+
+// AttemptResult is exhaustive learner-safe post-submit projection.
+type AttemptResult struct {
+	AttemptID        string   `json:"attemptId"`
+	QuestionID       string   `json:"questionId"`
+	SelectedOptionID string   `json:"selectedOptionId"`
+	CorrectOptionID  string   `json:"correctOptionId"`
+	IsCorrect        bool     `json:"isCorrect"`
+	AwardedMarks     int      `json:"awardedMarks"`
+	MaxMarks         int      `json:"maxMarks"`
+	Feedback         Feedback `json:"feedback"`
+}
+
+type attemptRecord struct {
+	ID                       string
+	LearnerSubjectID         string
+	QuestionID               string
+	QuestionContentRevision  int
+	CanonicalRubricVersionID string
+	Status                   AttemptStatus
+	MaxMarks                 int
+	CreatedAt                time.Time
 }

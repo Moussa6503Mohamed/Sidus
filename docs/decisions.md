@@ -681,6 +681,29 @@ so the "known exclusions" scope from the original decision is unchanged. See
 `docs/learner-question-delivery.md` "Update (T-0015 review)" for the full detail. Owner/date:
 Claude Code agent, 2026-08-06.
 
+## D-0018 — Practice Mode MCQ attempts and verified feedback
+
+**Status:** Approved
+**Decision:** Immutable MCQ rubric JSON gains required `feedback`: one non-blank original
+editorial `correctExplanation` and exact one-to-one `incorrectExplanations` coverage for every
+current incorrect option ID. Non-MCQ rubrics reject feedback. Historical rows receive no
+backfill; old MCQ rubrics without feedback remain immutable records but are not Practice-eligible.
+Core adds owner-bound `open | submitted` single-question attempts. Creation rechecks T-0015 gates
+and atomically pins exact question content revision, explicit canonical verified rubric ID, and
+maximum marks. Submission locks own open attempt, validates option membership from pinned rubric,
+awards all-or-zero marks, writes once, and returns only explicit learner result/feedback fields.
+Every recognized role may use this learner surface under identical subject ownership; no
+editorial administration exists. Separate fixed-route learner BFF and Practice UI expose explicit
+submit plus verified feedback. No fallback/latest rubric, source derivation, AI, or Exam Mode.
+**Reason:** Deterministic marking needs immutable reviewed authority and stable replay behavior;
+pinning prevents editorial changes from silently changing an in-flight or historical result.
+Complete option coverage prevents partial or stale explanations from reaching learners.
+**Alternatives:** Resolve newest rubric at submit (rejected: result drift); copy question options
+or feedback into attempt row (rejected: pinned immutable rubric already contains exact option IDs
+and canonical prose); permit old rubric fallback (rejected: unverified feedback); share editorial
+BFF/types (rejected: learner leakage risk); add sessions/papers (rejected: Exam Mode scope).
+**Owner/date:** Codex, 2026-08-06 (T-0016).
+
 ## Decision template
 
 ```md

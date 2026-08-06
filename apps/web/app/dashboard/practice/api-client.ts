@@ -1,4 +1,4 @@
-import type { LearnerQuestion, LearnerSyllabus } from "./types";
+import type { LearnerAttempt, LearnerAttemptResult, LearnerQuestion, LearnerSyllabus } from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -15,8 +15,8 @@ interface ListResponse<T> {
   items: T[];
 }
 
-async function request<T>(path: string): Promise<T> {
-  const response = await fetch(path, { headers: { Accept: "application/json" } });
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, { ...init, headers: { Accept: "application/json", ...init?.headers } });
   const text = await response.text();
   const body: unknown = text ? JSON.parse(text) : null;
 
@@ -42,4 +42,16 @@ export function listPracticeQuestions(
 
 export function listPracticeSyllabuses(): Promise<ListResponse<LearnerSyllabus>> {
   return request(`/api/learner/syllabuses`);
+}
+
+export function createPracticeAttempt(questionId: string): Promise<LearnerAttempt> {
+  return request(`/api/learner/questions/${encodeURIComponent(questionId)}/attempts`, { method: "POST" });
+}
+
+export function submitPracticeAttempt(attemptId: string, selectedOptionId: string): Promise<LearnerAttemptResult> {
+  return request(`/api/learner/attempts/${encodeURIComponent(attemptId)}/submit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ selectedOptionId }),
+  });
 }
