@@ -138,6 +138,18 @@ through this registry and reviewers must human-verify rights/provenance before a
    requires a reason). Both require an explicit inline confirmation step before the request is
    sent.
 
+## Private licensed-source reference URI (T-0021, D-0021)
+
+`sourceUrl` accepts an absolute `http`/`https` URL as before, or exactly
+`sidus-private://licensed/cambridge-international/9700/{session}/{component}` (session
+`[msw]\d{2}`, component two digits) for a licensed 9700 source with no public URL. Core validates
+both forms with one shared strict validator on create and update; the source form shows help text
+for the private form but performs no client-side format check of its own — Core is the sole
+authority, exactly like every other field on this workflow. The URI is metadata identity only:
+nothing dereferences, fetches, or displays it as a link, and a source using it is still subject to
+the unchanged rights-approval gate above (still needs owner/hash/licence-reference/permitted-use/
+allowed-audience before approval). This task creates no source row and touches no private file.
+
 ## No-content policy
 
 This workflow only ever displays and edits **metadata** already defined by D-0005:

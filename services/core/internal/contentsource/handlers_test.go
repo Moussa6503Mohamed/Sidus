@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -1677,5 +1678,192 @@ func TestReject_RejectsNullBody(t *testing.T) {
 	}
 	if len(store.reviews) != 0 {
 		t.Fatalf("reviews = %d, want 0 (null body must not record a review)", len(store.reviews))
+	}
+}
+
+// --- Private licensed-source reference URI (T-0021, D-0021) ---
+//
+// sourceUrl accepts absolute http/https URLs (unchanged) or exactly
+// sidus-private://licensed/cambridge-international/9700/{session}/{component}, session
+// [msw]\d{2}, component exactly two digits. create and update share one validator
+// (isValidSourceURL), so this matrix exercises both handlers identically.
+
+var validSourceURLs = []string{
+	"https://example.org/bio-syllabus",
+	"http://example.org/bio-syllabus",
+	"sidus-private://licensed/cambridge-international/9700/m17/12",
+	"sidus-private://licensed/cambridge-international/9700/s08/02",
+	"sidus-private://licensed/cambridge-international/9700/w23/42",
+}
+
+var invalidSourceURLs = []string{
+	"not-a-url",
+	"ftp://example.org/x",
+	"//example.org/x",
+	"example.org/x",
+	// case variants of the private scheme/path are rejected, not normalized.
+	"SIDUS-PRIVATE://licensed/cambridge-international/9700/m17/12",
+	"sidus-private://Licensed/cambridge-international/9700/m17/12",
+	"sidus-private://licensed/Cambridge-International/9700/m17/12",
+	// credentials, port, alternate host.
+	"sidus-private://user:pass@licensed/cambridge-international/9700/m17/12",
+	"sidus-private://licensed:8080/cambridge-international/9700/m17/12",
+	"sidus-private://other-host/cambridge-international/9700/m17/12",
+	// query string, fragment.
+	"sidus-private://licensed/cambridge-international/9700/m17/12?x=1",
+	"sidus-private://licensed/cambridge-international/9700/m17/12#frag",
+	// filesystem path / drive letter / extra segment / trailing slash.
+	"sidus-private://licensed/cambridge-international/9700/m17/12/",
+	"sidus-private://licensed/cambridge-international/9700/m17/12/C:/x",
+	"sidus-private://licensed/cambridge-international/9700/m17/12/extra",
+	// percent-encoding tricks do not decode-and-match.
+	"sidus-private://licensed/cambridge-international/9700/m17/%31%32",
+	// wrong session/component shape.
+	"sidus-private://licensed/cambridge-international/9700/x17/12",  // bad session letter
+	"sidus-private://licensed/cambridge-international/9700/m1/12",   // session too short
+	"sidus-private://licensed/cambridge-international/9700/m123/12", // session too long
+	"sidus-private://licensed/cambridge-international/9700/m17/1",   // component too short
+	"sidus-private://licensed/cambridge-international/9700/m17/123", // component too long
+	"sidus-private://licensed/cambridge-international/9700/m17/1a",  // component not digits
+	// wrong subject/segment.
+	"sidus-private://licensed/cambridge-international/9701/m17/12",
+	"sidus-private://licensed/cambridge/9700/m17/12",
+	// arbitrary private scheme.
+	"other-private://licensed/cambridge-international/9700/m17/12",
+	"file:///C:/Sidus-private-content/licensed/9700_m17_qp_12.pdf",
+}
+
+func TestCreate_SourceURL_ValidMatrix(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	// validSourceURLs entries are already distinct from each other, so no per-case suffix is
+	// needed for uniqueness — and appending one would break the anchored private-URI pattern.
+	for _, u := range validSourceURLs {
+		resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources", createRequest{
+			Title:     "Valid source",
+			SourceURL: u,
+		})
+		if resp.StatusCode != http.StatusCreated {
+			body := decodeJSON[map[string]any](t, resp)
+			t.Fatalf("sourceUrl=%q: status = %d, want %d (body=%v)", u, resp.StatusCode, http.StatusCreated, body)
+		}
+	}
+}
+
+func TestCreate_SourceURL_InvalidMatrix(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	for _, u := range invalidSourceURLs {
+		resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources", createRequest{
+			Title:     "Invalid source",
+			SourceURL: u,
+		})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("sourceUrl=%q: status = %d, want %d", u, resp.StatusCode, http.StatusBadRequest)
+		}
+		body := decodeJSON[map[string]any](t, resp)
+		if body["error"] != "invalid_source_url" {
+			t.Fatalf("sourceUrl=%q: error = %v, want invalid_source_url", u, body["error"])
+		}
+	}
+	if len(store.sources) != 0 {
+		t.Fatalf("store has %d sources, want 0 (every case rejected before write)", len(store.sources))
+	}
+}
+
+// Exact valid private URIs are accepted and round-trip unchanged (never dereferenced/rewritten).
+func TestCreate_PrivateSourceURI_Accepted(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	const uri = "sidus-private://licensed/cambridge-international/9700/m17/12"
+	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources", createRequest{
+		Title:     "Licensed 9700 m17 12",
+		SourceURL: uri,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+	source := decodeJSON[Source](t, resp)
+	if source.SourceURL != uri {
+		t.Fatalf("sourceUrl = %q, want unchanged %q", source.SourceURL, uri)
+	}
+	if source.Status != StatusPending {
+		t.Fatalf("status = %q, want pending (private reference stays pending without licence fields)", source.Status)
+	}
+}
+
+func TestUpdate_SourceURL_ValidMatrix(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	for i, u := range validSourceURLs {
+		source, err := store.Create(ctx, CreateInput{
+			Title:     "Bio",
+			SourceURL: "https://example.org/upd-valid-seed-" + strconv.Itoa(i),
+		})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+			SourceURL: strPtr(u),
+		})
+		if resp.StatusCode != http.StatusOK {
+			body := decodeJSON[map[string]any](t, resp)
+			t.Fatalf("sourceUrl=%q: status = %d, want %d (body=%v)", u, resp.StatusCode, http.StatusOK, body)
+		}
+	}
+}
+
+func TestUpdate_SourceURL_InvalidMatrix(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-invalid-seed"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	for _, u := range invalidSourceURLs {
+		resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+			SourceURL: strPtr(u),
+		})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("sourceUrl=%q: status = %d, want %d", u, resp.StatusCode, http.StatusBadRequest)
+		}
+		body := decodeJSON[map[string]any](t, resp)
+		if body["error"] != "invalid_source_url" {
+			t.Fatalf("sourceUrl=%q: error = %v, want invalid_source_url", u, body["error"])
+		}
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("events = %d, want 0 (every rejected sourceUrl must not audit)", len(store.events))
+	}
+}
+
+func TestUpdate_PrivateSourceURI_Accepted(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-private"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	const uri = "sidus-private://licensed/cambridge-international/9700/s08/02"
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		SourceURL: strPtr(uri),
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	updated := decodeJSON[Source](t, resp)
+	if updated.SourceURL != uri {
+		t.Fatalf("sourceUrl = %q, want %q", updated.SourceURL, uri)
 	}
 }

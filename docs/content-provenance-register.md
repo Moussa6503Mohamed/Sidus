@@ -23,3 +23,9 @@ T-0011 retires 5090 from active catalogue scope without deleting this historical
 any database source/history record. No 9700 source metadata is present or created by T-0011. A
 future 9700 source must enter through the editorial source registry with human-verified
 rights/provenance; never derive registry metadata from a local PDF.
+
+T-0021 (D-0021) adds one narrow private `sourceUrl` form for a licensed 9700 source with no
+public URL: `sidus-private://licensed/cambridge-international/9700/{session}/{component}`. It is
+metadata identity only — never dereferenced, fetched, or exposed — and does not relax the rights
+gate above: a source using it still needs owner/hash/licence-reference/permitted-use/allowed-
+audience before approval. T-0021 creates no source row itself.

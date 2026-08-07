@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -178,6 +179,10 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		writeMissingFields(w, http.StatusBadRequest, missing)
 		return
 	}
+	if !isValidSourceURL(req.SourceURL) {
+		writeError(w, http.StatusBadRequest, "invalid_source_url", "sourceUrl must be an absolute http or https URL, or the approved private source-reference URI")
+		return
+	}
 	catalogueID, ok := h.resolveSyllabus(w, r, req.SyllabusCode)
 	if !ok {
 		return
@@ -282,8 +287,8 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.SourceURL != nil && !isValidHTTPURL(*req.SourceURL) {
-		writeError(w, http.StatusBadRequest, "invalid_source_url", "sourceUrl must be an absolute http or https URL")
+	if req.SourceURL != nil && !isValidSourceURL(*req.SourceURL) {
+		writeError(w, http.StatusBadRequest, "invalid_source_url", "sourceUrl must be an absolute http or https URL, or the approved private source-reference URI")
 		return
 	}
 	catalogueID, ok := h.resolveSyllabus(w, r, req.SyllabusCode)
@@ -458,6 +463,15 @@ func isValidStatus(s Status) bool {
 	}
 }
 
+// privateSourceURIPattern is the exact D-0021 private source-reference URI for a licensed
+// Cambridge International 9700 QP/MS pair bundle: sidus-private://licensed/cambridge-
+// international/9700/{session}/{component}, session exactly [msw]\d{2}, component exactly two
+// digits. Fully anchored (^...$) on the whole trimmed string so nothing else — a path, drive
+// letter, credential, query string, fragment, port, alternate host, percent-encoding, case
+// variant, or any other private scheme — can match. This URI is metadata identity only; Core
+// never dereferences, fetches, logs, or exposes it to learners.
+var privateSourceURIPattern = regexp.MustCompile(`^sidus-private://licensed/cambridge-international/9700/[msw]\d{2}/\d{2}$`)
+
 // isValidHTTPURL reports whether s is an absolute URL with an http/https scheme and a host.
 func isValidHTTPURL(s string) bool {
 	u, err := url.Parse(strings.TrimSpace(s))
@@ -468,6 +482,16 @@ func isValidHTTPURL(s string) bool {
 		return false
 	}
 	return u.Host != ""
+}
+
+// isValidSourceURL is the single strict sourceUrl validator shared by create and update: an
+// absolute http/https URL (unchanged behavior), or exactly the D-0021 private source-reference
+// URI. Used in place of separate/inconsistent per-handler checks.
+func isValidSourceURL(s string) bool {
+	if privateSourceURIPattern.MatchString(strings.TrimSpace(s)) {
+		return true
+	}
+	return isValidHTTPURL(s)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

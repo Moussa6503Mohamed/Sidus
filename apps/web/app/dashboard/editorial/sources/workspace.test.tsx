@@ -155,6 +155,31 @@ describe("create flow", () => {
     expect(await screen.findByText(/title and source url are required/i)).toBeInTheDocument();
     expect(mockedCreate).not.toHaveBeenCalled();
   });
+
+  // D-0021: the form shows help text for the private licensed-source reference URI and
+  // forwards it to Core verbatim — the web layer performs no format validation of its own,
+  // Core (D-0021) is the sole authority on the exact grammar.
+  it("shows help text for the private licensed-source reference URI and submits it verbatim", async () => {
+    const user = userEvent.setup();
+    mockedListContentSources.mockResolvedValue({ items: [] });
+    mockedCreate.mockResolvedValue(makeSource({ id: "new-2", title: "Licensed pair" }));
+
+    render(<EditorialSourcesWorkspace role="editor" />);
+    await screen.findByText(/no content sources yet/i);
+    await user.click(screen.getByRole("button", { name: /new source/i }));
+
+    expect(screen.getByText(/sidus-private:\/\/licensed\/cambridge-international\/9700/i)).toBeInTheDocument();
+
+    const privateUri = "sidus-private://licensed/cambridge-international/9700/m17/12";
+    await user.type(screen.getByLabelText(/title/i), "Licensed pair");
+    await user.type(screen.getByLabelText(/source url/i), privateUri);
+    await user.click(screen.getByRole("button", { name: /create source/i }));
+
+    await waitFor(() => expect(mockedCreate).toHaveBeenCalledWith({
+      title: "Licensed pair",
+      sourceUrl: privateUri,
+    }));
+  });
 });
 
 describe("edit flow", () => {

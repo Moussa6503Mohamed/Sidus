@@ -155,11 +155,20 @@ export function SourceForm({ mode, syllabuses, submitting, error, onCreate, onUp
             <label htmlFor="source-url">Source URL{mode.kind === "create" ? " (required)" : ""}</label>
             <input
               id="source-url"
-              type="url"
+              type="text"
+              inputMode="url"
               value={values.sourceUrl}
               onChange={(e) => setField("sourceUrl", e.target.value)}
               aria-required={mode.kind === "create"}
+              aria-describedby="source-url-hint"
             />
+            <p id="source-url-hint" className={styles.fieldHint}>
+              An external http:// or https:// URL, or — for a licensed source with no public
+              URL — the private reference
+              sidus-private://licensed/cambridge-international/9700/{"{session}"}/{"{component}"}
+              (session: m/s/w + two digits, e.g. m17; component: two digits, e.g. 12). This
+              reference is metadata identity only; no file is uploaded, read, or linked here.
+            </p>
           </div>
           <div className={styles.field}>
             <label htmlFor="source-owner">Owner</label>

@@ -23,6 +23,14 @@ export interface ContentSource {
   id: string;
   title: string;
   owner: string | null;
+  /**
+   * An external `http`/`https` URL, or the approved private source-reference URI for a
+   * licensed source bundle not publicly resolvable (D-0021):
+   * `sidus-private://licensed/cambridge-international/9700/{session}/{component}`, session
+   * exactly `[msw]\d{2}`, component exactly two digits. Core rejects any other private scheme
+   * or malformed variant before storage. The URI is metadata identity only — it is never
+   * dereferenced, fetched, or exposed to learners.
+   */
   sourceUrl: string;
   sourceHash: string | null;
   licenceReference: string | null;
@@ -63,6 +71,7 @@ export type RequiredApprovalField = (typeof REQUIRED_APPROVAL_FIELDS)[number];
 
 export interface CreateContentSourceRequest {
   title: string;
+  /** See {@link ContentSource.sourceUrl}: external URL or approved private reference URI. */
   sourceUrl: string;
   owner?: string;
   sourceHash?: string;
@@ -115,6 +124,7 @@ export type UpdatableContentSourceField =
 export interface UpdateContentSourceRequest {
   title?: string;
   owner?: string;
+  /** See {@link ContentSource.sourceUrl}: external URL or approved private reference URI. */
   sourceUrl?: string;
   sourceHash?: string;
   licenceReference?: string;

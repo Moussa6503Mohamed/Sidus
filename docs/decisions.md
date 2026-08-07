@@ -837,6 +837,43 @@ duplication, drift, and content exposure); resolve newest approved source during
 deliver feedback (rejected: feedback is learner delivery covered by licence gate).
 **Owner/date:** Codex, 2026-08-06 (T-0018).
 
+## D-0021 — Private licensed-source reference URI
+
+**Status:** Approved
+**Decision:** `content_sources.sourceUrl` accepts either an absolute `http`/`https` URL
+(unchanged) or exactly one new private form:
+`sidus-private://licensed/cambridge-international/9700/{session}/{component}`, with `{session}`
+matching `[msw]\d{2}` and `{component}` exactly two digits. `services/core/internal/contentsource`
+gains a single strict validator (`isValidSourceURL`, backed by a fully anchored regex for the
+private form) used identically by create and update — create previously had no `sourceUrl`
+format check at all, and update's separate `isValidHTTPURL` check is now the HTTP/HTTPS half of
+the same function. No filesystem path, drive letter, credential, query string, fragment, port,
+alternate host, percent-encoding, case variant, or other private scheme matches. The URI is
+metadata identity only: Core never dereferences, fetches, logs, or exposes it, and no learner
+surface ever returns `sourceUrl` (unchanged — confirmed by inspection of
+`services/core/internal/learner`). No schema/migration change (`source_url` has no format
+`CHECK` constraint). The existing rights-approval gate is unchanged: a source referenced this way
+still starts `pending` and still needs `owner`/`sourceHash`/`licenceReference`/`permittedUse`/
+`allowedAudience` before approval — the private form only unblocks a valid `sourceUrl` for
+licensed 9700 QP/MS pair bundles that have no public URL, it does not relax any other requirement.
+**Reason:** A subset of approved-scope Cambridge International 9700 question-paper/mark-scheme
+pairs exist only as private, rights-controlled material with no public URL, so the existing
+HTTP/HTTPS-only `sourceUrl` could never represent them without inventing a fake external link.
+An exact, narrow, non-dereferenceable URI grammar lets a source record exist and stay gated by
+the same approval workflow as every other source, while keeping the string itself inert (it
+resolves to nothing, is never fetched, and carries no filesystem path).
+**Alternatives:** Store a Windows/POSIX filesystem path directly (rejected: leaks local layout,
+is not portable, and its shape can't be constrained the way a URI grammar can); make `sourceUrl`
+nullable/optional for private sources (rejected: `source_url` is `NOT NULL UNIQUE` and every
+other rule assumes a real value; changing that widens scope into the approval/schema surface this
+task must not touch); accept any `sidus-private://` path shape (rejected: the whole point is a
+tightly validated, narrow, non-executable identity string — an open-ended private scheme would
+reintroduce path-injection-style risk without a corresponding removal of the file-path problem);
+loosen `isValidHTTPURL` instead of adding one shared validator (rejected: create had no format
+check at all — fixing only update would leave create's still-unvalidated `sourceUrl` accepting
+anything, which is the exact inconsistency this decision closes).
+**Owner/date:** Claude Code agent, 2026-08-07 (T-0021).
+
 ## Decision template
 
 ```md
