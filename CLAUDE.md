@@ -195,4 +195,15 @@ cd services/ai && python -m pytest
   handles source material. See `docs/licensed-adaptation-provenance.md`, D-0020, and
   `docs/handoffs/T-0018.md`. Full release validation passed on 2026-08-07; T-0018 moved to
   `docs/tasks/history.md` as `done / released`; implementation commit `50ea7b2` unamended.
+- Private licensed-source reference URI released in T-0021: `content_sources.sourceUrl` now
+  accepts either an unchanged `http`/`https` URL or exactly one new private form,
+  `sidus-private://licensed/cambridge-international/9700/{session}/{component}`, via one shared,
+  strictly anchored validator used by both create and update (create previously had no format
+  check at all). A review fix canonicalizes storage by trimming `sourceUrl` once after validation
+  succeeds. The URI is metadata identity only — never dereferenced, fetched, or logged — and the
+  existing rights-approval gate, error codes, and roles are unchanged; no schema/migration change
+  and no learner surface ever exposes `sourceUrl`. See `docs/decisions.md` D-0021 and
+  `docs/handoffs/T-0021.md`. Full release validation passed on 2026-08-07; T-0021 moved to
+  `docs/tasks/history.md` as `done / released`; implementation commits `cd6b496`/`ed67db9`
+  unamended.
 - See `docs/tasks/active.md` (currently empty) / `docs/tasks/history.md`.

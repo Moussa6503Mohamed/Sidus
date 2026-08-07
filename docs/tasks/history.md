@@ -1,5 +1,86 @@
 # Task history
 
+## T-0021 — Private licensed-source reference URI (D-0021)
+
+**Status:** done / released
+**Owner:** Claude Code agent
+**Implementation commits:** `cd6b4964d94c8ea6fd48eaf2e09a9668d3161052`,
+`ed67db9098c63ca3e2c02f45b8b43a0c421cf581`
+**Depends on:** T-0009 (done, editorial source workflow)
+
+### Goal
+
+Let a pending `content_sources.sourceUrl` accept a tightly validated private reference URI for
+licensed 9700 QP/MS pair bundles, without weakening existing HTTP/HTTPS validation, and without
+touching any private source file or seeding any runtime data.
+
+### Delivered
+
+- `services/core/internal/contentsource`: one shared strict `sourceUrl` validator
+  (`isValidSourceURL`) used identically by `create` and `update` — `create` previously had no
+  format check at all; `update`'s separate `isValidHTTPURL` check is now the HTTP/HTTPS half of
+  the same function. Both share the existing `invalid_source_url` error code (no new code).
+- New accepted form: `sidus-private://licensed/cambridge-international/9700/{session}/{component}`,
+  `{session}` exactly `[msw]\d{2}`, `{component}` exactly two digits. The anchored regex rejects
+  filesystem paths, drive letters, credentials, query strings, fragments, ports, alternate hosts,
+  percent-encoding, case variants, path traversal, backslash-injection, and any other private
+  scheme.
+- Review fix: `sourceUrl` is now trimmed once, only after validation succeeds, so create/update
+  store the canonical trimmed value instead of a whitespace-padded one (including real
+  U+00A0 no-break-space, not ASCII-only). All-whitespace values still reject before any store call
+  via the pre-existing blank-field gates.
+- `packages/shared/src/contracts.ts` documents `sourceUrl` as external URL or approved private
+  reference URI (comment only; field stays `string`). `source-form.tsx` adds help text and
+  switches the input from `type="url"` to `type="text" inputMode="url"` so no browser native
+  URL-input parsing can interfere with the private scheme — Core remains the sole format
+  authority.
+- D-0021 in `docs/decisions.md`; `docs/editorial-source-workflow.md` and
+  `docs/content-provenance-register.md` note the new form and restate the rights-approval gate is
+  unchanged.
+- Tests: full Go create/update matrix (valid HTTP(S), valid private URI, every rejected variant
+  including `localhost`/traversal/backslash), canonical-trim storage regression tests, and a
+  blank-after-trim regression test. Web test confirms the hint renders and the private URI is
+  submitted to Core verbatim.
+- Confirmed by inspection (no code change needed): `services/core/internal/learner` only uses
+  `source_url` in a gate predicate — it is never selected into any learner-facing type, so no
+  learner surface exposes `sourceUrl` before or after this change.
+- No schema/migration change (`content_sources.source_url` has no format `CHECK` constraint).
+
+### Release validation (2026-08-07)
+
+| Check | Result |
+| --- | --- |
+| Git status / staged-file audit | Pass — only the 11 T-0021 files in the commit range; untracked `.claude/`, `.claude-flow/`, `DB.jpeg`, `arch.jpeg`, `Sidus*.xlsx` remain unstaged |
+| Dev/test Compose config | Pass / Pass |
+| Web Vitest | Pass — 32 files, 289 tests |
+| Web typecheck / production build | Pass / Pass — all 29 routes intact |
+| Strict shared-contract TypeScript (`tsc --noEmit --strict packages/shared/src/contracts.ts`) | Pass |
+| Go `gofmt` / `build` / `vet` / unit (Docker `golang:1.22-alpine`) | Pass / Pass / Pass / Pass — all 7 packages |
+| Fresh disposable `sidus-test` migrate (0001–0020) / rerun | Pass — 20 applied / 0 applied (idempotent) |
+| Full Go integration suite, single run on freshly migrated DB | Pass — 83 tests, catalogue/contentsource/curriculummap/learner/question all green |
+| Disposable `sidus-test` teardown | Pass — scoped `down -v`; only `sidus-test` project resources removed |
+| Python pytest (`services/ai`) | Pass — 18 tests; pre-existing deprecation warnings only |
+| `git diff --check` | Pass — no whitespace errors |
+| Secret / protected-file / source-content / env-file audit | Pass — no secret pattern, no forbidden extension, no `D:\Sidus-private-content` access (one matching string is a rejected-URL test fixture), no `.env` file touched |
+
+Note: re-running the integration suite a second time against an already-mutated disposable
+database (immutable audit tables cannot be cleaned between runs) produces unrelated failures in
+whichever package runs next — this is the same documented cross-run contamination pattern as
+T-0018's handoff, not a regression. A single run against a freshly migrated database is the
+supported test mode and passed completely.
+
+### Constraints
+
+- Release commit is documentation-only (this history move, handoff status, `CLAUDE.md`). No
+  implementation commit amended; no product/Core/AI/BFF/database/route/business-rule change.
+- Protected files (`.claude/`, `.claude-flow/`, images, spreadsheets, `.env.local`) remain
+  untouched and unstaged. No `D:\Sidus-private-content` file was read, rendered, hashed, copied,
+  moved, or uploaded.
+
+### Handoff
+
+`docs/handoffs/T-0021.md`. See D-0021 in `docs/decisions.md`.
+
 ## T-0018 — Licensed-adaptation provenance for questions
 
 **Status:** done / released
