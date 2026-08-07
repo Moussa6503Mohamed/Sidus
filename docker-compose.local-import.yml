@@ -1,0 +1,88 @@
+# T-0023 local-only HTTPS Core test environment for T-0022 pending-source import testing.
+#
+# Isolated from both the dev stack (`name: sidus`, docker-compose.yml) and the disposable test
+# stack (`name: sidus-test`, docker-compose.test.yml): its own project name, its own Postgres,
+# its own network/volumes. Nothing here is reachable from outside the host loopback interface —
+# only `https-proxy` publishes a port, and only on `127.0.0.1`.
+#
+# Purpose: let the private T-0022 client (D:\Sidus-private-content\tools) be exercised against a
+# real running Core over real HTTPS/TLS and real Clerk-auth-gated routes, without creating any
+# pending source, approval, question, rubric, or other runtime content. See
+# docs/local-import-test-environment.md for the full setup guide.
+#
+# `postgres-local-import` and `core` publish no host port at all — only `https-proxy` does, and
+# only on `127.0.0.1:443` (loopback-only, chosen specifically so `SIDUS_CORE_API_URL=
+# https://127.0.0.1` keeps the T-0022 client's existing exact-HTTPS-origin validation
+# unchanged — see docs/decisions.md D-0022).
+#
+# Usage:
+#   docker compose -f docker-compose.local-import.yml --env-file .env.local-import up -d
+#   curl --cacert <path-to-ca.pem> https://127.0.0.1/healthz
+#   docker compose -f docker-compose.local-import.yml --env-file .env.local-import down -v
+name: sidus-local-import
+
+services:
+  postgres-local-import:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sidus_local_import
+      POSTGRES_PASSWORD: sidus_local_import_password
+      POSTGRES_DB: sidus_local_import
+    volumes:
+      - sidus_local_import_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sidus_local_import -d sidus_local_import"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    image: golang:1.22-alpine
+    working_dir: /app
+    volumes:
+      - ./services/core:/app
+      - sidus_local_import_go_mod_cache:/go/pkg/mod
+    environment:
+      DATABASE_URL: postgres://sidus_local_import:sidus_local_import_password@postgres-local-import:5432/sidus_local_import?sslmode=disable
+    command: ["go", "run", "./cmd/migrate"]
+    depends_on:
+      postgres-local-import:
+        condition: service_healthy
+    restart: "no"
+
+  core:
+    image: golang:1.22-alpine
+    working_dir: /app
+    volumes:
+      - ./services/core:/app
+      - sidus_local_import_go_mod_cache:/go/pkg/mod
+    environment:
+      DATABASE_URL: postgres://sidus_local_import:sidus_local_import_password@postgres-local-import:5432/sidus_local_import?sslmode=disable
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      CLERK_JWT_ISSUER: ${CLERK_JWT_ISSUER}
+      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-http://localhost:3000}
+    command: ["go", "run", "."]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  https-proxy:
+    image: caddy:2-alpine
+    volumes:
+      - ./infra/local-import/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${SIDUS_LOCAL_TLS_DIR:-D:/Sidus-private-content/local-dev}:/certs:ro
+    ports:
+      - "127.0.0.1:443:443"
+    depends_on:
+      core:
+        condition: service_healthy
+
+volumes:
+  sidus_local_import_postgres_data:
+  sidus_local_import_go_mod_cache:

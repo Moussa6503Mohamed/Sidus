@@ -206,4 +206,16 @@ cd services/ai && python -m pytest
   `docs/handoffs/T-0021.md`. Full release validation passed on 2026-08-07; T-0021 moved to
   `docs/tasks/history.md` as `done / released`; implementation commits `cd6b496`/`ed67db9`
   unamended.
-- See `docs/tasks/active.md` (currently empty) / `docs/tasks/history.md`.
+- Local-only HTTPS Core test environment released in T-0023: an isolated `docker-compose.
+  local-import.yml` stack (project `sidus-local-import`; own Postgres, migration run, Core, and
+  a Caddy HTTPS reverse proxy bound `127.0.0.1:443` only) lets the private T-0022 pending-source
+  import tool be exercised against a real running Core over real TLS with real Clerk-gated auth.
+  Private dev TLS CA/cert live only under `D:\Sidus-private-content\local-dev`, never this repo.
+  T-0022's `api_client.py` gained one optional, additive `SIDUS_CORE_CA_BUNDLE`-backed parameter;
+  unset behavior is byte-for-byte unchanged. No production Compose, auth policy, schema, learner,
+  or BFF behavior changed, and no source/approval/question/rubric/node/attempt row was created —
+  the documented one-record smoke test and the full 489-record `--apply` are separate, explicit,
+  later human actions. See `docs/decisions.md` D-0022, `docs/local-import-test-environment.md`,
+  and `docs/handoffs/T-0023.md`. T-0023 status `review` in `docs/tasks/active.md` (not yet
+  moved to history — awaiting independent review).
+- See `docs/tasks/active.md` / `docs/tasks/history.md`.

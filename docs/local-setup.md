@@ -91,3 +91,9 @@ docker run --rm --network sidus-test_default -v "$(pwd)/services/core:/app" -w /
   golang:1.22-alpine go test ./... -run Integration
 cd services/ai && python -m pytest
 ```
+
+## Local-only HTTPS Core test environment
+
+For exercising the private T-0022 pending-source import tool against a real running Core over
+real HTTPS with real Clerk auth — a separate, isolated Compose stack, not part of normal local
+dev — see `docs/local-import-test-environment.md`.

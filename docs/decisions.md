@@ -874,6 +874,39 @@ check at all — fixing only update would leave create's still-unvalidated `sour
 anything, which is the exact inconsistency this decision closes).
 **Owner/date:** Claude Code agent, 2026-08-07 (T-0021).
 
+## D-0022 — Local-only HTTPS Core test environment
+
+**Status:** Approved
+**Decision:** A new, explicitly isolated Docker Compose project (`sidus-local-import`,
+`docker-compose.local-import.yml`) provides a disposable Core stack — own Postgres, own
+migration run, Core, and a Caddy HTTPS reverse proxy — for exercising the private T-0022
+pending-source import tool against a real running Core over real TLS with real Clerk-gated
+auth, entirely on loopback. Only the proxy publishes a port, and only
+`127.0.0.1:443` — Postgres and Core publish nothing. TLS is terminated by Caddy using a
+manually-generated, openssl-based private dev CA + leaf cert kept only under
+`D:\Sidus-private-content\local-dev` (outside this repo, never committed/printed/staged) — not
+mkcert, not an install into the machine's system trust store. The T-0022 client
+(`D:\Sidus-private-content\tools\source_registration\api_client.py`) gains one optional,
+additive parameter, `ca_bundle_path` (wired from the new `SIDUS_CORE_CA_BUNDLE` env var): when
+set, requests validate against that CA file via `ssl.create_default_context(cafile=...)`
+(`check_hostname=True`/`CERT_REQUIRED`, never weakened); when unset, behavior is byte-for-byte
+unchanged (same shared module-level opener, normal system trust). No production Compose, auth
+policy, database schema, learner behavior, BFF behavior, or rights gate changed. No source,
+approval, question, rubric, node, or attempt row is created by this environment.
+**Reason:** T-0022's client had never been run against a real Core — only mocks. Proving the
+Docker stack, HTTPS termination, cert trust, and Clerk fail-closed auth actually work end-to-end
+(without creating real records) reduces risk before anyone runs the real 489-record `--apply`.
+**Alternatives:** Bind the proxy to a non-standard loopback port (e.g. `8443`) and relax
+`api_client.py`'s `_canonicalize_base_url` to accept it — rejected: that validator has an
+existing, explicitly tested contract (`test_rejected_base_url_shapes_raise_invalid_base_url_error`
+requires `"https://core.example:8443"` to be rejected); the task's client-extension scope was
+only the CA-bundle env var, and quietly widening accepted origins for local convenience would be
+a real, untested-by-the-task security-contract change. Binding loopback-only `443` instead keeps
+that contract completely untouched. mkcert / installing the dev cert into the system trust store
+— rejected: broader machine-level side effect (touches the OS trust store) than a throwaway,
+scoped-to-one-directory openssl CA needs to have.
+**Owner/date:** Claude Code agent, 2026-08-07 (T-0023).
+
 ## Decision template
 
 ```md

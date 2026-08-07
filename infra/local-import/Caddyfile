@@ -1,0 +1,8 @@
+# T-0023 local-only HTTPS reverse proxy for the isolated `sidus-local-import` Compose stack.
+# Manual cert only (no ACME, no internet call): the private dev leaf cert/key are bind-mounted
+# read-only from D:\Sidus-private-content\local-dev (never committed to this repo). See
+# docs/local-import-test-environment.md.
+:443 {
+	tls /certs/server-cert.pem /certs/server-key.pem
+	reverse_proxy core:8080
+}
