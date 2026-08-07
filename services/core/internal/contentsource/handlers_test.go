@@ -1731,6 +1731,21 @@ var invalidSourceURLs = []string{
 	// arbitrary private scheme.
 	"other-private://licensed/cambridge-international/9700/m17/12",
 	"file:///C:/Sidus-private-content/licensed/9700_m17_qp_12.pdf",
+	// bare malicious tokens with no scheme at all.
+	"localhost",
+	"..",
+	"\\",
+	// localhost attempted as an alternate host on the private scheme (SSRF-style bypass).
+	"sidus-private://localhost/cambridge-international/9700/m17/12",
+	"sidus-private://licensed@localhost/cambridge-international/9700/m17/12",
+	// path traversal injected into the private scheme.
+	"sidus-private://licensed/cambridge-international/9700/../m17/12",
+	"sidus-private://licensed/cambridge-international/../9700/m17/12",
+	"sidus-private://licensed/../licensed/cambridge-international/9700/m17/12",
+	// backslashes injected into the private scheme (Windows-path-style bypass attempt).
+	"sidus-private://licensed/cambridge-international/9700/m17\\12",
+	"sidus-private://licensed/cambridge-international/9700\\m17\\12",
+	"sidus-private://licensed\\cambridge-international/9700/m17/12",
 }
 
 func TestCreate_SourceURL_ValidMatrix(t *testing.T) {
@@ -1865,5 +1880,123 @@ func TestUpdate_PrivateSourceURI_Accepted(t *testing.T) {
 	updated := decodeJSON[Source](t, resp)
 	if updated.SourceURL != uri {
 		t.Fatalf("sourceUrl = %q, want %q", updated.SourceURL, uri)
+	}
+}
+
+// --- sourceUrl canonicalization (T-0021 review): outer whitespace only, trimmed once after
+// validation succeeds, on both create and update. The wrapped values below use a mix of ASCII
+// and Unicode whitespace (tab, newline, U+00A0 no-break space) so the assertion proves
+// strings.TrimSpace's full Unicode behavior, not just an ASCII-only trim. Validation matches on
+// the trimmed string already (see isValidSourceURL), so these are canonical-storage checks, not
+// acceptance checks.
+
+func TestCreate_SourceURL_TrimsSurroundingWhitespace(t *testing.T) {
+	srv, _ := newTestServer()
+	defer srv.Close()
+
+	cases := []struct {
+		name    string
+		padded  string
+		trimmed string
+	}{
+		{"http URL", "\t https://example.org/trim-http \n", "https://example.org/trim-http"},
+		{"NBSP-padded http URL", " https://example.org/trim-nbsp ", "https://example.org/trim-nbsp"},
+		{
+			"private URI",
+			"  sidus-private://licensed/cambridge-international/9700/m17/12  ",
+			"sidus-private://licensed/cambridge-international/9700/m17/12",
+		},
+	}
+	for _, c := range cases {
+		resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources", createRequest{
+			Title:     "Trim test " + c.name,
+			SourceURL: c.padded,
+		})
+		if resp.StatusCode != http.StatusCreated {
+			body := decodeJSON[map[string]any](t, resp)
+			t.Fatalf("%s: status = %d, want %d (body=%v)", c.name, resp.StatusCode, http.StatusCreated, body)
+		}
+		source := decodeJSON[Source](t, resp)
+		if source.SourceURL != c.trimmed {
+			t.Fatalf("%s: sourceUrl = %q, want canonical trimmed %q", c.name, source.SourceURL, c.trimmed)
+		}
+	}
+}
+
+func TestUpdate_SourceURL_TrimsSurroundingWhitespace(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	cases := []struct {
+		name    string
+		padded  string
+		trimmed string
+	}{
+		{"http URL", "\t https://example.org/trim-http-patch \n", "https://example.org/trim-http-patch"},
+		{
+			"private URI",
+			"  sidus-private://licensed/cambridge-international/9700/s08/02  ",
+			"sidus-private://licensed/cambridge-international/9700/s08/02",
+		},
+	}
+	for i, c := range cases {
+		source, err := store.Create(ctx, CreateInput{
+			Title:     "Trim patch seed",
+			SourceURL: "https://example.org/trim-patch-seed-" + strconv.Itoa(i),
+		})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+			SourceURL: strPtr(c.padded),
+		})
+		if resp.StatusCode != http.StatusOK {
+			body := decodeJSON[map[string]any](t, resp)
+			t.Fatalf("%s: status = %d, want %d (body=%v)", c.name, resp.StatusCode, http.StatusOK, body)
+		}
+		updated := decodeJSON[Source](t, resp)
+		if updated.SourceURL != c.trimmed {
+			t.Fatalf("%s: sourceUrl = %q, want canonical trimmed %q", c.name, updated.SourceURL, c.trimmed)
+		}
+	}
+}
+
+// Whitespace-only sourceUrl (blank after trim) must still be rejected before any store call —
+// canonicalization must never let an all-whitespace value slip through as "changed but empty".
+func TestCreate_SourceURL_BlankAfterTrim_Returns400(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	resp := doJSON(t, http.MethodPost, srv.URL+"/content-sources", createRequest{
+		Title:     "Blank after trim",
+		SourceURL: "   \t\n  ",
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if len(store.sources) != 0 {
+		t.Fatalf("store has %d sources, want 0", len(store.sources))
+	}
+}
+
+func TestUpdate_SourceURL_BlankAfterTrim_Returns400(t *testing.T) {
+	srv, store := newTestServer()
+	defer srv.Close()
+
+	ctx := context.Background()
+	source, err := store.Create(ctx, CreateInput{Title: "Bio", SourceURL: "https://example.org/upd-blank-trim"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	resp := doJSON(t, http.MethodPatch, srv.URL+"/content-sources/"+source.ID, updateRequest{
+		SourceURL: strPtr("   \t\n  "),
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("events = %d, want 0 (blank-after-trim update must not audit)", len(store.events))
 	}
 }

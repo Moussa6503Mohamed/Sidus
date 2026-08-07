@@ -183,6 +183,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_source_url", "sourceUrl must be an absolute http or https URL, or the approved private source-reference URI")
 		return
 	}
+	req.SourceURL = strings.TrimSpace(req.SourceURL)
 	catalogueID, ok := h.resolveSyllabus(w, r, req.SyllabusCode)
 	if !ok {
 		return
@@ -287,9 +288,13 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.SourceURL != nil && !isValidSourceURL(*req.SourceURL) {
-		writeError(w, http.StatusBadRequest, "invalid_source_url", "sourceUrl must be an absolute http or https URL, or the approved private source-reference URI")
-		return
+	if req.SourceURL != nil {
+		if !isValidSourceURL(*req.SourceURL) {
+			writeError(w, http.StatusBadRequest, "invalid_source_url", "sourceUrl must be an absolute http or https URL, or the approved private source-reference URI")
+			return
+		}
+		trimmed := strings.TrimSpace(*req.SourceURL)
+		req.SourceURL = &trimmed
 	}
 	catalogueID, ok := h.resolveSyllabus(w, r, req.SyllabusCode)
 	if !ok {
