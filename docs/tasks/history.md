@@ -1,5 +1,77 @@
 # Task history
 
+## T-0023 — Local-only HTTPS Core test environment for pending-source import (D-0022)
+
+**Status:** done / released
+**Owner:** Claude Code agent
+**Implementation commit:** `1b3cad6c3ee8ab956bad702aea09d0440c0b60a3`
+**Depends on:** T-0022 (private, not tracked in this repo)
+
+### Goal
+
+Let the private T-0022 pending-source import tool be exercised against a real running Core over
+real TLS with real Clerk-gated auth, before anyone runs the documented 489-record `--apply`,
+without creating any `content_sources`, approval, question, rubric, node, or attempt row, and
+without touching any licensed source material.
+
+### Delivered
+
+- `docker-compose.local-import.yml` (new): isolated Compose project `sidus-local-import` — own
+  Postgres (no host port), one-shot `migrate`, `core` (no host port), and a `caddy:2-alpine`
+  HTTPS reverse proxy published **only** on `127.0.0.1:443`.
+- `infra/local-import/Caddyfile` (new): static `tls <cert> <key>` reverse proxy to `core:8080`,
+  no ACME/auto-HTTPS.
+- `.env.local-import.example` (new, placeholders only) + `.gitignore` exception mirroring the
+  existing `.env.example` pattern; the real `.env.local-import` stays covered by `.env.*`.
+- `docs/local-import-test-environment.md` (new): full setup guide — env vars, private dev-CA/cert
+  generation under `D:\Sidus-private-content\local-dev` (never this repo), start/stop, health
+  check, Clerk sign-in/token retrieval, dry-run, and the documented (not executed) one-record
+  smoke-test procedure.
+- `docs/local-setup.md`: one pointer paragraph.
+- `docs/decisions.md` D-0022: stack design, why the proxy binds `127.0.0.1:443` (keeps T-0022's
+  existing exact-HTTPS-origin validator unchanged), why manual openssl CA over mkcert/system
+  trust (narrower blast radius).
+- Private, not committed (`D:\Sidus-private-content\tools`): `api_client.py` gains an optional,
+  additive `ca_bundle_path` parameter (default `None` → byte-for-byte unchanged behavior);
+  `register_pending_sources.py` reads it from `SIDUS_CORE_CA_BUNDLE`; new regression-locked tests.
+
+### Constraints
+
+- No production Compose, auth policy, schema, learner, or BFF behavior change.
+- No `content_sources`, approval, question, rubric, node, or attempt row created by this task.
+- No PDF, book, extracted text, diagram, screenshot, past paper, or mark scheme read or touched.
+- The one-record smoke test and the full 489-record `--apply` remain separate, explicit, later
+  human actions — not part of this task.
+
+### Open questions / blockers
+
+None.
+
+### Release validation (final pass, 2026-08-08)
+
+| Command | Result |
+| --- | --- |
+| Git/staged audit (`git status --short`, `git diff --stat`, secret grep) | Pass — only the 9 intended files changed; pre-existing untracked local files untouched; no secret/key material in diff |
+| `docker compose -f docker-compose.yml config` / `-f docker-compose.test.yml config` / `-f docker-compose.local-import.yml --env-file .env.local-import.example config` | Pass / Pass / Pass |
+| `npm --prefix apps/web run typecheck` | Pass |
+| `npm --prefix apps/web run test` (Vitest) | Pass — 289/289, 32 files |
+| `npm --prefix apps/web run build` | Pass — 29 routes intact |
+| `npx -p typescript tsc --noEmit --strict packages/shared/src/contracts.ts` | Pass |
+| `gofmt -l . && go build ./... && go vet ./... && go test ./...` (Docker `golang:1.22-alpine`, services/core) | Pass — core, auth, catalogue, contentsource, curriculummap, learner, question all green |
+| `docker compose -f docker-compose.test.yml up -d` + `pg_isready` wait | Pass |
+| `go run ./cmd/migrate` against a fresh disposable `sidus-test` | Pass — 20 migrations applied |
+| `go run ./cmd/migrate` rerun | Pass — idempotent, 0 migrations applied |
+| `go test ./... -run Integration` against `sidus-test` (single clean run) | Pass — catalogue, contentsource, curriculummap, learner, question all green |
+| `docker compose -f docker-compose.test.yml down -v` | Pass — `sidus-test` destroyed only; dev volumes/network untouched |
+| `python -m pytest -q` (services/ai) | Pass — 18 tests |
+| `python -m pytest -q` (`D:\Sidus-private-content\tools`, synthetic tests only, no apply/network) | Pass — 88 tests |
+| `git diff --check` | Pass — clean |
+| Secret/certificate/key/environment/private-content/protected-file audit | Pass — no `.pem`/`.key`/real `.env.local-import`, no leaked secret, no private-content path referenced beyond `local-dev`/`tools` |
+
+### Handoff
+
+`docs/handoffs/T-0023.md`
+
 ## T-0021 — Private licensed-source reference URI (D-0021)
 
 **Status:** done / released

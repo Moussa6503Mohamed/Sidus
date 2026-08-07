@@ -216,6 +216,6 @@ cd services/ai && python -m pytest
   or BFF behavior changed, and no source/approval/question/rubric/node/attempt row was created —
   the documented one-record smoke test and the full 489-record `--apply` are separate, explicit,
   later human actions. See `docs/decisions.md` D-0022, `docs/local-import-test-environment.md`,
-  and `docs/handoffs/T-0023.md`. T-0023 status `review` in `docs/tasks/active.md` (not yet
-  moved to history — awaiting independent review).
+  and `docs/handoffs/T-0023.md`. Full release validation passed on 2026-08-08; T-0023 moved to
+  `docs/tasks/history.md` as `done / released`; implementation commit `1b3cad6` unamended.
 - See `docs/tasks/active.md` / `docs/tasks/history.md`.
