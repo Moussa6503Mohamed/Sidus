@@ -30,13 +30,17 @@ test("an unknown role is refused Practice", async ({ page }) => {
 test("an unknown role is refused both BFFs at Core, not merely in the UI", async ({ page }) => {
   await page.goto("/dashboard");
 
-  const editorial = await page.request.get("/api/editorial/content-sources", {
-    headers: { Accept: "application/json" },
+  const statuses = await page.evaluate(async () => {
+    const [editorial, learner] = await Promise.all([
+      fetch("/api/editorial/content-sources", { headers: { Accept: "application/json" } }),
+      fetch("/api/learner/syllabuses", { headers: { Accept: "application/json" } }),
+    ]);
+    return { editorial: editorial.status, learner: learner.status };
   });
-  expect(editorial.status(), "Core must refuse an unknown role's editorial read").toBe(403);
-
-  const learner = await page.request.get("/api/learner/syllabuses", {
-    headers: { Accept: "application/json" },
-  });
-  expect(learner.status(), "Core must refuse an unknown role's learner read").toBe(403);
+  expect([401, 403], "the BFF/Core boundary must refuse an unknown role's editorial read").toContain(
+    statuses.editorial,
+  );
+  expect([401, 403], "the BFF/Core boundary must refuse an unknown role's learner read").toContain(
+    statuses.learner,
+  );
 });

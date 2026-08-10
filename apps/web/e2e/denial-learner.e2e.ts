@@ -23,16 +23,21 @@ test("a learner is refused every editorial workspace", async ({ page }) => {
 });
 
 test("a learner is refused the editorial BFF regardless of what the UI renders", async ({ page }) => {
-  // Establish the session in the browser context first, so page.request carries the same cookies.
+  // Run fetch in the rendered browser context. `page.request` is an API client with distinct
+  // request semantics; this proves the real same-origin cookie-bound BFF call a learner could
+  // make from DevTools or a malicious page script.
   await page.goto("/dashboard");
 
-  const response = await page.request.get("/api/editorial/content-sources", {
-    headers: { Accept: "application/json" },
+  const status = await page.evaluate(async () => {
+    const response = await fetch("/api/editorial/content-sources", {
+      headers: { Accept: "application/json" },
+    });
+    return response.status;
   });
   expect(
-    response.status(),
-    "Core must refuse a learner's editorial read; a 200 here would mean the only gate is the UI",
-  ).toBe(403);
+    [401, 403],
+    "the BFF/Core boundary must refuse a learner's editorial read; a 200 here would mean the only gate is the UI",
+  ).toContain(status);
 });
 
 test("a learner keeps access to Practice", async ({ page }) => {

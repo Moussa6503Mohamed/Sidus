@@ -98,6 +98,10 @@ test("editorial source to learner practice feedback, end to end", async ({ page 
     await page.goto("/dashboard/editorial/questions");
     await expect(page.getByRole("heading", { name: "Editorial questions", level: 1 })).toBeVisible();
 
+    // Do not let a failed workspace load consume this journey's five-minute overall budget.
+    // A visible picker proves both prerequisite BFF reads completed; any failure now points at
+    // the question workspace boundary within seconds.
+    await expect(page.locator("#question-syllabus")).toBeVisible({ timeout: 15_000 });
     await page.locator("#question-syllabus").selectOption(syllabusId);
     await page.getByRole("button", { name: "New question" }).click();
 
@@ -171,7 +175,7 @@ test("editorial source to learner practice feedback, end to end", async ({ page 
 
     const feedback = card.getByRole("region", { name: "Answer feedback" });
     await expect(feedback).toBeVisible();
-    await expect(feedback.getByRole("heading", { name: "Correct" })).toBeVisible();
+    await expect(feedback.getByRole("heading", { name: "Correct", exact: true })).toBeVisible();
     await expect(feedback).toContainText("1 / 1");
     await expect(feedback).toContainText(run.question.correctExplanation);
     await expect(feedback).toContainText(run.question.incorrectExplanation);
