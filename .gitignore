@@ -12,6 +12,17 @@ __pycache__/
 !.env.example
 !.env.local-import.example
 
+# Browser E2E credential material and artifacts (T-0025). Captured Clerk storage state lives
+# only under D:\Sidus-private-content\e2e and the harness refuses to write it anywhere inside
+# this repository, but these patterns make an accidental copy or a future config change that
+# re-enables traces/videos unstageable rather than merely discouraged: a Playwright trace or
+# storage-state file contains live session cookies.
+storage-state*.json
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
 # Copyrighted source material must never enter this repository.
 *.pdf
 *.epub

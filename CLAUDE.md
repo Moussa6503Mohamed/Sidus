@@ -227,4 +227,9 @@ cd services/ai && python -m pytest
   (T-0024)" and `docs/handoffs/T-0023.md` "Update (T-0024)". Independent review passed and full
   release validation passed on 2026-08-10; T-0024 moved to `docs/tasks/history.md` as
   `done / released`; implementation commit `5e8b35f` unamended.
-- No active task. See `docs/tasks/active.md` / `docs/tasks/history.md`.
+- T-0025 local authenticated browser E2E harness is in review: Playwright uses real Clerk session
+  captures stored only under `D:\Sidus-private-content\e2e`, drives the local UI → BFF → private-TLS
+  Core flow using opaque runtime-only synthetic fixtures, and never enables an auth bypass or
+  weakens TLS. Signed-out E2E passes; full authenticated projects require human interactive Clerk
+  sign-in captures for `admin`, `learner`, and `unknown`. See `docs/e2e-harness.md`, D-0023, and
+  `docs/handoffs/T-0025.md`.

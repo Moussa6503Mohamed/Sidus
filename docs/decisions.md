@@ -927,6 +927,62 @@ Compose/Caddy/Core/client code changed — this was a certificate-generation def
 `docs/handoffs/T-0023.md` "Update (T-0024)".
 **Owner/date:** Claude Code agent, 2026-08-10 (T-0024).
 
+## D-0023 — Local authenticated browser E2E harness
+
+**Status:** approved
+**Decision:** `apps/web` gains a local-only Playwright harness (`@playwright/test` 1.62.1,
+devDependency, exact-pinned) that drives the real signed-in UI → BFF → Core path against the
+isolated T-0023 `sidus-local-import` HTTPS stack: `playwright.config.ts` (four projects —
+`fail-closed`, `journey-admin`, `denial-learner`, `denial-unknown`), a separate
+`playwright.auth.config.ts` for interactive session capture only, `e2e/lib/*` (storage-state
+resolution/validation, synthetic fixtures, stack preflight), and `e2e/*.e2e.ts` specs. Five
+properties are load-bearing:
+
+1. **No auth bypass of any kind.** There is no test-only sign-in route, fake session, injected
+   role, or role-override env var. Every authenticated project runs on cookies captured from a
+   real Clerk sign-in that a human performed in a real browser (`e2e/auth.setup.ts`); the harness
+   never handles a password, email, Clerk secret key, or bearer token.
+2. **Credential material never enters the repository.** Captured storage state lives only under
+   `D:\Sidus-private-content\e2e`; `assertPrivateRoot` refuses any read or write path inside the
+   repo, `.gitignore` makes `storage-state*.json` and Playwright report/result directories
+   unstageable, and every Playwright artifact stream (trace, video, screenshot) is **off** with
+   `outputDir` outside the repo — a trace of a signed-in page embeds live session cookies.
+3. **Fail-closed, never silently unauthenticated.** `globalSetup` proves Core (over real TLS) and
+   the web app are healthy, then requires valid state for every requested profile. A missing,
+   unparseable, cookie-less, expired, or older-than-8-hours capture aborts the run with capture
+   instructions instead of degrading to an anonymous run that would report a meaningless green
+   "denied". Profiles are dropped only by an explicit `SIDUS_E2E_PROFILES` narrowing (`none` for
+   the signed-out suite alone), never by a file happening to be absent.
+4. **Real TLS.** `ignoreHTTPSErrors` stays `false`; the private dev CA is trusted through
+   `NODE_EXTRA_CA_CERTS`, mirroring the T-0022 Python client's `SIDUS_CORE_CA_BUNDLE` path.
+   A chain failure is reported as a distinct, actionable preflight error, never worked around.
+5. **Runtime-only opaque content.** Every record the journey creates is
+   `SIDUS-E2E-SYNTHETIC-<nonce>-<field>`, asserted by `assertSynthetic` before the first
+   keystroke. No migration seed, no committed fixture, and no educational, past-paper,
+   mark-scheme, or otherwise source-derived text can reach the database through this path.
+
+The negative suites assert denial at the BFF/Core layer as well as in the UI, because the
+web-side role check is cosmetic by design (D-0006/D-0011) — a rendered "No editorial access" is
+not evidence of authorization. No production/dev Compose, Core, AI, shared contract, schema,
+migration, route, or business rule changed, and the harness never runs `docker compose down` or
+deletes a record: the operator's stack and data survive for manual testing afterwards.
+
+**Reason:** The editorial → learner path now spans three surfaces, two authorization layers, and a
+TLS boundary, and had only ever been exercised by hand. Unit and integration tests cannot cover it:
+Clerk session establishment, cookie-bound BFF calls, and private-CA TLS only exist in a real
+browser against a real stack.
+**Alternatives:** A test-only auth bypass or seeded session — rejected outright: it would add an
+authentication hole to the product to make a test convenient, and would prove nothing about the
+path that actually ships. Driving Core's HTTP API directly with a bearer token — rejected: it
+skips the BFF allowlist and the UI entirely, which is most of what needed proving. Reusing the
+MCP/agent browser tooling — rejected: not a committed, reproducible artifact the repo owns.
+Vitest + jsdom — rejected: no real navigation, no real cookies, no TLS. Leaving traces/videos on
+for debuggability — rejected: they persist live session cookies into `test-results/`; a failing
+run must not deposit credential material. Skipping a profile whose state is missing — rejected as
+the default: a suite that quietly stops testing what it claims to test is worse than one that
+fails.
+**Owner/date:** Claude Code agent, 2026-08-10 (T-0025).
+
 ## Decision template
 
 ```md
