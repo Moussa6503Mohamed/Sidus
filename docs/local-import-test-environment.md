@@ -41,6 +41,13 @@ Never committed, never printed, never copied into this repo — lives only under
 `D:\Sidus-private-content\local-dev`. Uses `openssl` only (already present in Git Bash on
 Windows) — no new tool to install, no system trust-store changes, no admin rights needed.
 
+**Both the CA and leaf cert need explicit X.509v3 extensions** (`basicConstraints`, `keyUsage`,
+and identifiers) — RFC 5280 leaves them off by default unless a config section requests them,
+and a CA cert missing `keyUsage` fails strict chain validation (`ssl.create_default_context`,
+used by the T-0022 client's `SIDUS_CORE_CA_BUNDLE`, rejects it with `CERTIFICATE_VERIFY_FAILED:
+CA cert does not include key usage extension`). See D-0022 "Update (T-0024)" in
+`docs/decisions.md`.
+
 ```sh
 export MSYS_NO_PATHCONV=1   # Git Bash only: prevents /CN=... from being read as a path
 OUT_DIR="D:\Sidus-private-content\local-dev"
@@ -48,8 +55,20 @@ mkdir -p "$OUT_DIR" && cd "$OUT_DIR"
 
 # Private root CA (this file's cert half — ca.pem — is what SIDUS_CORE_CA_BUNDLE points at)
 openssl genrsa -out ca-key.pem 4096
+cat > ca.cnf <<'EOF'
+[req]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_ca
+prompt = no
+[req_distinguished_name]
+CN = Sidus Local Import Dev CA
+[v3_ca]
+basicConstraints = critical, CA:true
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+EOF
 openssl req -x509 -new -nodes -key ca-key.pem -sha256 -days 825 \
-  -out ca.pem -subj "/CN=Sidus Local Import Dev CA"
+  -out ca.pem -config ca.cnf -extensions v3_ca
 
 # Leaf cert for 127.0.0.1 / localhost, signed by that CA
 openssl genrsa -out server-key.pem 2048
@@ -61,22 +80,30 @@ prompt = no
 [req_distinguished_name]
 CN = 127.0.0.1
 [v3_req]
-keyUsage = keyEncipherment, digitalSignature
+subjectAltName = @alt_names
+[v3_leaf]
+basicConstraints = critical, CA:false
+keyUsage = critical, digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth
 subjectAltName = @alt_names
+authorityKeyIdentifier = keyid,issuer
 [alt_names]
 DNS.1 = localhost
 IP.1 = 127.0.0.1
 EOF
 openssl req -new -key server-key.pem -out server.csr -config server-san.cnf
+# authorityKeyIdentifier needs the CA's identifier, unavailable at CSR-request time — so the
+# CSR only requests subjectAltName (v3_req); the full extension set (v3_leaf) is applied here,
+# at signing, where -CA gives openssl the issuer to compute authorityKeyIdentifier from.
 openssl x509 -req -in server.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial \
-  -out server-cert.pem -days 825 -sha256 -extfile server-san.cnf -extensions v3_req
-rm -f server.csr server-san.cnf ca.srl
+  -out server-cert.pem -days 825 -sha256 -extfile server-san.cnf -extensions v3_leaf
+rm -f server.csr server-san.cnf ca.cnf ca.srl
 ```
 
 Result: `ca.pem`, `ca-key.pem`, `server-cert.pem`, `server-key.pem` in
 `D:\Sidus-private-content\local-dev`. The proxy uses `server-cert.pem`/`server-key.pem`; the
-T-0022 client's `SIDUS_CORE_CA_BUNDLE` points at `ca.pem`.
+T-0022 client's `SIDUS_CORE_CA_BUNDLE` points at `ca.pem`. Verify the chain without printing
+cert contents: `openssl verify -CAfile ca.pem server-cert.pem` must print `server-cert.pem: OK`.
 
 ## Start / stop
 
