@@ -49,9 +49,14 @@ export default async function RootLayout({
                   Dashboard
                 </Link>
                 {role !== "unknown" && (
-                  <Link href="/dashboard/practice" className={navStyles.navlink}>
-                    Practice
-                  </Link>
+                  <>
+                    <Link href="/dashboard/practice" className={navStyles.navlink}>
+                      Practice
+                    </Link>
+                    <Link href="/dashboard/exam" className={navStyles.navlink}>
+                      Exam
+                    </Link>
+                  </>
                 )}
                 {showEditorialNav && (
                   <>

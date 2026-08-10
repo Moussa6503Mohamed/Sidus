@@ -184,4 +184,14 @@ test("editorial source to learner practice feedback, end to end", async ({ page 
     // One-shot attempts: the submit control is gone once marked, never re-armed.
     await expect(card.getByRole("button", { name: "Submit answer" })).toHaveCount(0);
   });
+
+  await test.step("Exam Mode uses same eligible learner projection and refuses an undersized paper", async () => {
+    await page.goto("/dashboard/exam");
+    await expect(page.getByRole("heading", { name: "Exam Mode", level: 1 })).toBeVisible();
+    await page.locator("#exam-syllabus").selectOption(syllabusId);
+    await page.getByRole("button", { name: "Start exam" }).click();
+    // This journey intentionally creates one synthetic question only. The local Exam MVP must
+    // not silently pad a paper or expose a result before enough eligible MCQs exist.
+    await expect(page.getByRole("alert")).toContainText("Need 2 eligible multiple-choice questions");
+  });
 });

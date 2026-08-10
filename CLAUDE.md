@@ -233,3 +233,8 @@ cd services/ai && python -m pytest
   weakens TLS. Signed-out E2E passes; full authenticated projects require human interactive Clerk
   sign-in captures for `admin`, `learner`, and `unknown`. See `docs/e2e-harness.md`, D-0023, and
   `docs/handoffs/T-0025.md`.
+- T-0026 local Exam Mode MVP is in review: `/dashboard/exam` composes existing learner-safe
+  syllabus/question/attempt routes without Core or schema changes. It holds paper order, answers,
+  flags, a clearly labelled browser-local 30-minute timer, and retry state in memory only; submit
+  finalizes answered MCQs sequentially and results use only existing learner-safe feedback. No
+  source/question content is seeded or imported. See `docs/handoffs/T-0026.md`.

@@ -1,5 +1,139 @@
 # Active tasks
 
+## T-0026 — Local Exam Mode MVP
+
+**Status:** review
+**Owner:** Codex
+**Task type:** code+tests, UI/design, security
+**Depends on:** T-0015/T-0016/T-0018 (done / released); T-0025 stays independently in review
+
+### Context
+
+Learner delivery and Practice Mode already provide live verified-question eligibility, safe
+projections, deterministic one-question MCQ marking, and a closed learner BFF. Fastest local MVP
+composes those existing routes in web state; it does not claim server-persisted sessions or an
+authoritative timer.
+
+### Goal
+
+Deliver a usable local authenticated web-only Exam Mode MVP by composing existing learner routes,
+without changing Core, PostgreSQL, shared contracts, or Practice Mode behavior.
+
+### Scope
+
+In:
+
+- Add `/dashboard/exam` using existing learner syllabus/question reads and per-question attempt
+  create/submit writes.
+- Select syllabus, optional opaque curriculum-node ID, and requested question count; admit only
+  eligible MCQs with options and require enough questions before starting.
+- Hold order, answers, flags, navigation, countdown, and partial finalization progress in client
+  memory. Label timer clearly as local MVP behavior.
+- Show one question at a time with back/next, flag, answered/flagged progress, explicit submit
+  confirmation, time-expiry submission, aggregate score, and per-question safe canonical feedback.
+- Finalize sequentially. Reuse a created attempt after submit failure and skip completed results
+  on retry, preventing duplicate attempt creation/submission within current page lifetime.
+- Add focused pure-state/finalization, accessible component, and signed learner Playwright
+  coverage. Preserve Practice unchanged.
+- Update task review state, current-state note, and exact handoff; commit without push.
+
+Out / non-goals:
+
+- No Practice Mode behavior/schema/route replacement.
+- No Core, schema, migration, shared-contract, server exam-session, authoritative timer, refresh
+  resume, cross-device resume, or aggregate exam API change.
+- No AI/LLM, OCR, ingestion, PDFs/books/papers, external source fetch, private-content access, or
+  real educational fixture/seed wording.
+- No free-response marking, question randomization/adaptive selection, pause/extra-time/admin exam
+  management, analytics, scheduler/worker, public release, deployment, push, or T-0025 release.
+- No new learner curriculum-map browse permission. Optional node remains an opaque ID forwarded
+  only to existing eligible-question list route.
+
+### Allowed files
+
+- `apps/web/lib/learner/*`
+- `apps/web/app/dashboard/exam/**`
+- `apps/web/app/layout.tsx`
+- `apps/web/e2e/editorial-to-practice.e2e.ts`, `apps/web/e2e/lib/synthetic.ts`, and matching tests
+- `CLAUDE.md`, `docs/tasks/active.md`, `docs/handoffs/T-0026.md`
+
+### Forbidden files
+
+- `.claude/`, `.claude-flow/`, `DB.jpeg`, `arch.jpeg`, `Sidus*.xlsx`, every env file, every PDF/ZIP
+- `D:\Sidus-private-content` and all external/private source material
+- T-0025 task/handoff/decision/status files except reading existing committed E2E code
+- Production data, source records, question/rubric records, Clerk configuration, credentials
+- AI service behavior and private editorial source/question wording
+- Every `services/core/**` file, migration, and `packages/shared/src/contracts.ts`
+
+### Plan-first questions
+
+1. **Duration?** Fixed 30 minutes in client state. UI says "Local MVP timer" and warns it is not
+   server-authoritative or refresh-persistent.
+2. **Count?** Learner chooses 2–10. Existing list response order is retained; first requested
+   eligible MCQs are used. If too few exist, exam does not start.
+3. **When do answers reach server?** Only after confirmation or timer expiry. Each selected MCQ
+   gets existing create-attempt then submit-attempt calls, sequentially.
+4. **What about unanswered questions?** No attempt is created; review records unanswered/zero marks
+   locally with no fabricated answer, feedback, or max marks. Aggregate max uses returned attempt
+   max marks for answered questions only and labels unanswered count separately.
+5. **How does retry work?** Runtime finalization state stores attempt IDs and completed results by
+   question ID. Retry resumes first incomplete operation and never repeats completed submissions.
+6. **Refresh behavior?** Client state is intentionally lost. This limitation is disclosed; durable
+   exam sessions require later Core/schema work outside T-0026.
+
+### Acceptance criteria
+
+- Authenticated recognized-role learner can choose active syllabus, optional node ID, and 2–10
+  questions; start only when enough eligible MCQs exist.
+- One-at-a-time accessible question UI supports answer choice, back/next, flag, progress, and clear
+  local countdown. No correctness or feedback appears before finalization completes.
+- Confirmation or expiry triggers sequential existing attempt create/submit calls. Partial failure
+  exposes retry; completed results and created attempts are not repeated.
+- Final view shows aggregate awarded/max marks from Core results, correct and unanswered counts,
+  and per-question selected/correct labels plus only returned safe feedback.
+- Existing learner BFF remains closed, Clerk-protected, body-capped, redirect-refusing, and Core-5xx
+  sanitizing. No source locator or private/editorial field appears on Exam surface.
+- Practice Mode focused and full web tests pass unchanged.
+- No seed/content/source/private-data access; E2E writes only runtime opaque synthetic strings.
+
+### Validation commands
+
+- `npm --prefix apps/web run test`
+- `npm --prefix apps/web run typecheck`
+- `npm --prefix apps/web run build`
+- `npm --prefix apps/web run e2e -- --project=denial-learner` against existing authenticated local harness
+- `npm --prefix apps/web exec playwright test -- --list`
+- `git diff --check`
+- Core/schema unchanged diff check; staged allowlist; forbidden-content, source-locator, credential,
+  private-path, and generated-artifact scans.
+
+### Review checklist
+
+- Independent reviewer checks client-only limitations/copy, timer/autosubmit behavior, partial retry
+  state, duplicate-submission prevention, accessibility, no early feedback, Practice isolation,
+  BFF allowlist/body caps, and content/secret audit.
+- Status may become `review` after implementation, validation, handoff, and commit. Never `done`
+  without independent approval.
+
+### Handoff requirements
+
+- `docs/handoffs/T-0026.md` records exact commit, files, absence of Core/schema/contracts changes,
+  every command/result, E2E environment/result, assumptions, gaps, protected-file audit, and
+  reviewer focus. Update `CLAUDE.md` current state. Preserve T-0025 `review` status verbatim.
+
+### Stop condition
+
+Stop after own findings are fixed, requested validation passes (or exact external blocker is
+recorded), implementation is committed but not pushed, task status is `review`, and handoff names
+remaining gaps. Do not release, deploy, push, merge, or mark done.
+
+### Blockers
+
+None at start. Authenticated browser E2E depends on existing local stack/web server/private Clerk
+captures documented by T-0025; absence or staleness is an external validation blocker, not grounds
+for auth bypass.
+
 ## T-0025 — Local authenticated browser E2E harness
 
 **Status:** review
