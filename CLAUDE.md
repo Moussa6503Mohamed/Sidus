@@ -218,11 +218,13 @@ cd services/ai && python -m pytest
   later human actions. See `docs/decisions.md` D-0022, `docs/local-import-test-environment.md`,
   and `docs/handoffs/T-0023.md`. Full release validation passed on 2026-08-08; T-0023 moved to
   `docs/tasks/history.md` as `done / released`; implementation commit `1b3cad6` unamended.
-- T-0024 (in progress, status `review`) fixes a certificate-generation defect in T-0023's local
-  HTTPS test-environment doc: the documented CA lacked a `keyUsage` extension, which
-  `ssl.create_default_context` (the T-0022 client's `SIDUS_CORE_CA_BUNDLE` path) rejects.
-  `docs/local-import-test-environment.md` now generates the CA/leaf cert with explicit openssl
-  config extensions; only the private cert files under `D:\Sidus-private-content\local-dev` were
-  regenerated. No Compose/Caddy/Core/AI/client code, schema, or business rule changed. See
-  `docs/decisions.md` D-0022 "Update (T-0024)" and `docs/handoffs/T-0023.md` "Update (T-0024)".
-- See `docs/tasks/active.md` / `docs/tasks/history.md`.
+- Local TLS certificate-generation defect fixed in T-0024: T-0023's local HTTPS test-environment
+  doc had documented a CA with no `keyUsage` extension, which `ssl.create_default_context` (the
+  T-0022 client's `SIDUS_CORE_CA_BUNDLE` path) rejects. `docs/local-import-test-environment.md`
+  now generates the CA/leaf cert with explicit openssl config extensions; only the private cert
+  files under `D:\Sidus-private-content\local-dev` were regenerated. No Compose/Caddy/Core/AI/
+  client code, schema, or business rule changed. See `docs/decisions.md` D-0022 "Update
+  (T-0024)" and `docs/handoffs/T-0023.md` "Update (T-0024)". Independent review passed and full
+  release validation passed on 2026-08-10; T-0024 moved to `docs/tasks/history.md` as
+  `done / released`; implementation commit `5e8b35f` unamended.
+- No active task. See `docs/tasks/active.md` / `docs/tasks/history.md`.

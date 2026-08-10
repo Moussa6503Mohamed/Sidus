@@ -1,5 +1,70 @@
 # Task history
 
+## T-0024 — Local TLS certificate generation defect fix (D-0022 update)
+
+**Status:** done / released
+**Owner:** Claude Code agent
+**Implementation commit:** `5e8b35f1097392e4b6c71d6fa0447f2e7f398407`
+**Depends on:** T-0023 (done/released — this fixes a defect in its cert-generation doc)
+
+### Goal
+
+Fix a certificate-generation defect in T-0023's local HTTPS test-environment doc: the documented
+CA lacked a `keyUsage` extension, which `ssl.create_default_context` (the T-0022 client's
+`SIDUS_CORE_CA_BUNDLE` path) rejects with `CERTIFICATE_VERIFY_FAILED: CA cert does not include
+key usage extension`.
+
+### Delivered
+
+- `docs/local-import-test-environment.md`: cert-generation section now uses an explicit `ca.cnf`
+  for the root CA (`basicConstraints = critical, CA:true`; `keyUsage = critical, keyCertSign,
+  cRLSign`; `subjectKeyIdentifier = hash`) and a two-section leaf config — the CSR requests only
+  `subjectAltName`; the full extension set (`basicConstraints = critical, CA:false`; `keyUsage =
+  critical, digitalSignature, keyEncipherment`; `extendedKeyUsage = serverAuth`; `subjectAltName`
+  with `DNS:localhost`/`IP:127.0.0.1`; `authorityKeyIdentifier = keyid,issuer`) is applied only at
+  the `x509 -req -CA ... -extensions v3_leaf` signing step.
+- `docs/decisions.md` D-0022 "Update (T-0024)": root cause and fix record.
+- `docs/handoffs/T-0023.md` "Update (T-0024)": bug, root cause, fix, and validation table.
+- Regenerated `ca.pem`/`ca-key.pem`/`server-cert.pem`/`server-key.pem` under
+  `D:\Sidus-private-content\local-dev` with the corrected commands (private, not tracked).
+
+### Constraints
+
+- No `docker-compose.local-import.yml`, Caddyfile, Core, AI, or T-0022 client code change.
+- No schema, migration, or business-rule change.
+- No `content_sources`, approval, question, rubric, node, or attempt row created.
+- No PDF, book, extracted text, diagram, screenshot, past paper, or mark scheme read or touched.
+
+### Open questions / blockers
+
+None.
+
+### Release validation (final pass, 2026-08-10)
+
+| Command | Result |
+| --- | --- |
+| Independent review (security-reviewer agent, doc-only cert-generation diff) | Pass — PASS verdict, no CRITICAL/HIGH/MEDIUM findings |
+| Git/staged audit (`git status --short`, `git show --name-only`, secret grep) | Pass — only the 5 intended files changed in commit `5e8b35f`; pre-existing untracked local files untouched; no secret/key material in diff |
+| `docker compose -f docker-compose.yml config` / `-f docker-compose.test.yml config` / `-f docker-compose.local-import.yml --env-file .env.local-import.example config` | Pass / Pass / Pass |
+| `npm --prefix apps/web run typecheck` | Pass |
+| `npm --prefix apps/web run test` (Vitest) | Pass — 289/289, 32 files |
+| `npm --prefix apps/web run build` | Pass — 29 routes intact |
+| `npx tsc --strict --noEmit packages/shared/src/contracts.ts` | Pass |
+| `gofmt -l . && go build ./... && go vet ./... && go test ./...` (Docker `golang:1.22-alpine`, services/core) | Pass — core, auth, catalogue, contentsource, curriculummap, learner, question all green |
+| `docker compose -f docker-compose.test.yml up -d` + health wait | Pass |
+| `go run ./cmd/migrate` against a fresh disposable `sidus-test` | Pass — 20 migrations applied |
+| `go run ./cmd/migrate` rerun | Pass — idempotent, 0 migrations applied |
+| `go test ./... -run Integration` against `sidus-test` (single clean run) | Pass — catalogue, contentsource, curriculummap, learner, question all green |
+| `docker compose -f docker-compose.test.yml down -v` | Pass — `sidus-test` destroyed only; dev volumes/network untouched |
+| `python -m pytest -q` (services/ai) | Pass — 18 tests |
+| `python -m pytest -q` (`D:\Sidus-private-content\tools`, synthetic tests only, no apply/network) | Pass — 88 tests |
+| `git diff --check` | Pass — clean |
+| Secret/certificate/key/environment/private-content/protected-file audit | Pass — no `.pem`/`.key`/real `.env.local-import` staged, no leaked secret, no private-content path referenced beyond `local-dev`/`tools` |
+
+### Handoff
+
+`docs/handoffs/T-0023.md` "Update (T-0024)"
+
 ## T-0023 — Local-only HTTPS Core test environment for pending-source import (D-0022)
 
 **Status:** done / released
