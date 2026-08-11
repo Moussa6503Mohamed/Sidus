@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { assertSynthetic, syntheticRun, syntheticStrings } from "./lib/synthetic";
+import { assertSynthetic, syntheticRun, syntheticStrings, type SyntheticQuestion } from "./lib/synthetic";
 
 /**
  * The full local journey (T-0025), driven entirely through the real signed-in UI so that every
@@ -33,6 +33,38 @@ async function optionValueByText(page: Page, selectSelector: string, text: strin
   const value = await option.getAttribute("value");
   expect(value, `option "${text}" in ${selectSelector} has no value`).toBeTruthy();
   return value as string;
+}
+
+async function createAndVerifySecondQuestion(page: Page, question: SyntheticQuestion, nodeCode: string, nodeLabel: string) {
+  await page.getByRole("button", { name: "New question" }).click();
+  await page.locator("#question-origin").selectOption("original");
+  await page.locator("#question-node").selectOption({ label: `${nodeCode} â€” ${nodeLabel}` });
+  await page.locator("#question-response-type").selectOption("multiple_choice");
+  await page.locator("#question-language").fill("en");
+  await page.locator("#question-prompt").fill(question.prompt);
+  for (const [index, option] of question.options.entries()) {
+    await page.getByRole("button", { name: "Add option" }).click();
+    await page.locator(`#question-option-id-${index}`).fill(option.id);
+    await page.locator(`#question-option-label-${index}`).fill(option.label);
+  }
+  await page.getByRole("button", { name: "Create draft" }).click();
+  await expect(page.getByRole("heading", { name: "Rubric versions" })).toBeVisible();
+
+  const [correct, incorrect] = question.options;
+  await page.locator("#rubric-max-marks").fill("1");
+  await page.locator("#rubric-correct-option").selectOption(correct.id);
+  await page.locator("#rubric-correct-explanation").fill(question.correctExplanation);
+  await page.getByLabel(`Why option ${incorrect.id} is wrong (required)`).fill(question.incorrectExplanation);
+  await page.getByRole("button", { name: "Add criterion" }).click();
+  await page.locator("#criterion-id-0").fill(question.criterionId);
+  await page.locator("#criterion-marks-0").fill("1");
+  await page.getByRole("button", { name: "Create rubric version" }).click();
+  await page.getByRole("button", { name: "Verify rubric" }).click();
+  await page.getByRole("button", { name: "Confirm rubric verification" }).click();
+  await page.getByLabel("Canonical rubric version").selectOption({ label: "Version 1" });
+  await page.getByRole("button", { name: "Verify question" }).click();
+  await page.getByRole("button", { name: "Confirm verification" }).click();
+  await expect(page.getByText("This question is verified and cannot be edited.")).toBeVisible();
 }
 
 test("editorial source to learner practice feedback, end to end", async ({ page }) => {
@@ -156,6 +188,10 @@ test("editorial source to learner practice feedback, end to end", async ({ page 
     await expect(page.getByText("This question is verified and cannot be edited.")).toBeVisible();
   });
 
+  await test.step("create and verify a second opaque MCQ for complete Exam Mode flow", async () => {
+    await createAndVerifySecondQuestion(page, run.secondQuestion, run.node.nodeCode, run.node.label);
+  });
+
   await test.step("select the now-eligible question in learner Practice", async () => {
     await page.goto("/dashboard/practice");
     await expect(page.getByRole("heading", { name: "Practice", level: 1 })).toBeVisible();
@@ -185,13 +221,19 @@ test("editorial source to learner practice feedback, end to end", async ({ page 
     await expect(card.getByRole("button", { name: "Submit answer" })).toHaveCount(0);
   });
 
-  await test.step("Exam Mode uses same eligible learner projection and refuses an undersized paper", async () => {
+  await test.step("Exam Mode completes a two-question paper through learner-safe marking", async () => {
     await page.goto("/dashboard/exam");
     await expect(page.getByRole("heading", { name: "Exam Mode", level: 1 })).toBeVisible();
     await page.locator("#exam-syllabus").selectOption(syllabusId);
     await page.getByRole("button", { name: "Start exam" }).click();
-    // This journey intentionally creates one synthetic question only. The local Exam MVP must
-    // not silently pad a paper or expose a result before enough eligible MCQs exist.
-    await expect(page.getByRole("alert")).toContainText("Need 2 eligible multiple-choice questions");
+    await expect(page.getByText(run.question.prompt)).toBeVisible();
+    await page.getByRole("radio", { name: run.question.options[0].label }).click();
+    await page.getByRole("button", { name: "Next" }).click();
+    await expect(page.getByText(run.secondQuestion.prompt)).toBeVisible();
+    await page.getByRole("radio", { name: run.secondQuestion.options[0].label }).click();
+    await page.getByRole("button", { name: "Submit all" }).click();
+    await page.getByRole("button", { name: "Confirm submit" }).click();
+    await expect(page.getByRole("heading", { name: "Exam results", level: 1 })).toBeVisible();
+    await expect(page.getByText(/answered score: 2 \/ 2/i)).toBeVisible();
   });
 });

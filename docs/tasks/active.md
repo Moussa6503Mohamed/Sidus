@@ -7,6 +7,10 @@
 **Task type:** code+tests, UI/design, security
 **Depends on:** T-0015/T-0016/T-0018 (done / released); T-0025 stays independently in review
 
+**Review-fix update:** timer now finalizes latest in-memory answers even at expiry, confirmation
+does not pause countdown, dialog focus behavior is covered, and results label answered-only marks.
+Authenticated two-question browser journey is implemented but pending documented local web runtime.
+
 ### Context
 
 Learner delivery and Practice Mode already provide live verified-question eligibility, safe

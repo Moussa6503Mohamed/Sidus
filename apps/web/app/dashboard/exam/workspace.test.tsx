@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExamWorkspace } from "./workspace";
 import type { LearnerQuestion } from "./types";
 
@@ -16,6 +16,10 @@ beforeEach(() => {
   vi.mocked(listExamQuestions).mockResolvedValue({ items: [question("q1"), question("q2")] });
   vi.mocked(createExamAttempt).mockImplementation(async (id) => ({ attemptId: `attempt-${id}`, questionId: id, status: "open", maxMarks: 1 }));
   vi.mocked(submitExamAttempt).mockImplementation(async (attemptId, selectedOptionId) => ({ attemptId, questionId: attemptId.replace("attempt-", ""), selectedOptionId, correctOptionId: selectedOptionId, isCorrect: true, awardedMarks: 1, maxMarks: 1, feedback: { correctExplanation: "opaque-feedback", incorrectExplanations: [] } }));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 async function start(user: ReturnType<typeof userEvent.setup>) {
@@ -52,5 +56,48 @@ describe("ExamWorkspace", () => {
     first.focus(); await user.keyboard("{ArrowRight}");
     expect(second).toHaveFocus();
     expect(second).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("keeps timer running during confirmation, submits latest answers at expiry, and labels partial score", async () => {
+    vi.useFakeTimers({ now: Date.now() });
+    render(<ExamWorkspace durationSeconds={1} />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    fireEvent.change(screen.getByLabelText("Syllabus"), { target: { value: "syl-1" } });
+    fireEvent.submit(screen.getByRole("button", { name: /start exam/i }).closest("form")!);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    fireEvent.click(screen.getByRole("radio", { name: "opaque-q1-a" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("radio", { name: "opaque-q2-a" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit all" }));
+    try {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Confirm submit" })).toHaveFocus();
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+        await Promise.resolve();
+      });
+      expect(screen.getByRole("heading", { name: "Exam results" })).toBeInTheDocument();
+      expect(createExamAttempt).toHaveBeenCalledTimes(2);
+      expect(submitExamAttempt).toHaveBeenCalledWith("attempt-q1", "q1-a");
+      expect(submitExamAttempt).toHaveBeenCalledWith("attempt-q2", "q2-a");
+      expect(screen.getByText(/answered score: 2 \/ 2/i)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("traps confirmation focus and returns it to submit trigger when continuing", async () => {
+    const user = userEvent.setup();
+    render(<ExamWorkspace />);
+    await start(user);
+    await user.click(screen.getByRole("button", { name: "Submit all" }));
+    const confirm = screen.getByRole("button", { name: "Confirm submit" });
+    const continueExam = screen.getByRole("button", { name: "Continue exam" });
+    expect(confirm).toHaveFocus();
+    continueExam.focus();
+    await user.keyboard("{Tab}");
+    expect(confirm).toHaveFocus();
+    await user.click(continueExam);
+    expect(screen.getByRole("button", { name: "Submit all" })).toHaveFocus();
   });
 });

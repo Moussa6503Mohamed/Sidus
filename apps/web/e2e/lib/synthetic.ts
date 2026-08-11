@@ -55,6 +55,7 @@ export interface SyntheticRun {
   source: SyntheticSource;
   node: SyntheticNode;
   question: SyntheticQuestion;
+  secondQuestion: SyntheticQuestion;
 }
 
 /** 16 hex characters of CSPRNG output — opaque, unguessable, and carrying no information. */
@@ -119,7 +120,18 @@ export function syntheticRun(nonce: string = syntheticNonce()): SyntheticRun {
     criterionId: value(nonce, "criterion"),
   };
 
-  return { nonce, source, node, question };
+  const secondQuestion: SyntheticQuestion = {
+    prompt: value(nonce, "prompt", "two"),
+    options: [
+      { id: value(nonce, "opt", "two", "a"), label: value(nonce, "opt", "two", "a", "label") },
+      { id: value(nonce, "opt", "two", "b"), label: value(nonce, "opt", "two", "b", "label") },
+    ],
+    correctExplanation: value(nonce, "correct", "explanation", "two"),
+    incorrectExplanation: value(nonce, "incorrect", "explanation", "two"),
+    criterionId: value(nonce, "criterion", "two"),
+  };
+
+  return { nonce, source, node, question, secondQuestion };
 }
 
 /** Every generated string in a run, keyed for `assertSynthetic`. `sourceUrl` and `sourceHash`
@@ -143,5 +155,13 @@ export function syntheticStrings(run: SyntheticRun): Record<string, string> {
     "question.correctExplanation": run.question.correctExplanation,
     "question.incorrectExplanation": run.question.incorrectExplanation,
     "question.criterionId": run.question.criterionId,
+    "secondQuestion.prompt": run.secondQuestion.prompt,
+    "secondQuestion.options[0].id": run.secondQuestion.options[0].id,
+    "secondQuestion.options[0].label": run.secondQuestion.options[0].label,
+    "secondQuestion.options[1].id": run.secondQuestion.options[1].id,
+    "secondQuestion.options[1].label": run.secondQuestion.options[1].label,
+    "secondQuestion.correctExplanation": run.secondQuestion.correctExplanation,
+    "secondQuestion.incorrectExplanation": run.secondQuestion.incorrectExplanation,
+    "secondQuestion.criterionId": run.secondQuestion.criterionId,
   };
 }

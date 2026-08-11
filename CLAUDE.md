@@ -235,6 +235,8 @@ cd services/ai && python -m pytest
   `docs/handoffs/T-0025.md`.
 - T-0026 local Exam Mode MVP is in review: `/dashboard/exam` composes existing learner-safe
   syllabus/question/attempt routes without Core or schema changes. It holds paper order, answers,
-  flags, a clearly labelled browser-local 30-minute timer, and retry state in memory only; submit
-  finalizes answered MCQs sequentially and results use only existing learner-safe feedback. No
-  source/question content is seeded or imported. See `docs/handoffs/T-0026.md`.
+  flags, browser-local timer, and retry state in memory only; timer expiry reads latest answers
+  and continues through accessible submission confirmation. Results explicitly show an
+  answered-only score because unanswered questions have no Core attempt/max-mark response.
+  Playwright covers opaque two-question full flow but needs documented local web runtime to rerun.
+  No source/question content is seeded or imported. See `docs/handoffs/T-0026.md`.
