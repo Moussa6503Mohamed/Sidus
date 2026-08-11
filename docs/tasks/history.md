@@ -1,5 +1,15 @@
 # Task history
 
+## T-0028 — Learner module selection and flexible question counts
+
+**Status:** done / released
+**Implementation commit:** `0d0ee6a`
+**Release validation:** independent review approved; Web Vitest 343/343, typecheck, production
+build, Core unit/integration, strict shared TypeScript, Compose validation, and `git diff --check`
+passed on 2026-08-11. Learner Practice and Exam now use a safe Module selector, not raw internal
+curriculum identifiers, and support All available or any positive count up to current availability.
+See `docs/handoffs/T-0028.md`.
+
 ## T-0026 — Local Exam Mode MVP
 
 **Status:** done / released
