@@ -26,14 +26,18 @@ type ResponseType string
 
 const (
 	ResponseMultipleChoice     ResponseType = "multiple_choice"
+	ResponseMultiSelect        ResponseType = "multi_select"
+	ResponseExactShortAnswer   ResponseType = "exact_short_answer"
+	ResponseNumericAnswer      ResponseType = "numeric_answer"
 	ResponseShortAnswer        ResponseType = "short_answer"
 	ResponseStructuredResponse ResponseType = "structured_response"
+	ResponseEssay              ResponseType = "essay"
 )
 
 // IsValidResponseType reports whether t is a known response type.
 func IsValidResponseType(t ResponseType) bool {
 	switch t {
-	case ResponseMultipleChoice, ResponseShortAnswer, ResponseStructuredResponse:
+	case ResponseMultipleChoice, ResponseMultiSelect, ResponseExactShortAnswer, ResponseNumericAnswer, ResponseShortAnswer, ResponseStructuredResponse, ResponseEssay:
 		return true
 	default:
 		return false

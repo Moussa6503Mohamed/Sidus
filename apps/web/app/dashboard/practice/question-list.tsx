@@ -4,12 +4,15 @@ import { useRef, useState, type KeyboardEvent } from "react";
 import { getOptionState } from "@/lib/design/option-state";
 import { ApiError, createPracticeAttempt, submitPracticeAttempt } from "./api-client";
 import styles from "./styles.module.css";
-import type { LearnerAttemptResult, LearnerQuestion, LearnerQuestionOption } from "./types";
+import type { LearnerAnswer, LearnerAttemptResult, LearnerQuestion, LearnerQuestionOption } from "./types";
 
 interface QuestionListProps { questions: LearnerQuestion[] }
 
 interface QuestionAttemptState {
   selectedOptionId?: string;
+  selectedOptionIds?: string[];
+  text?: string;
+  value?: string;
   attemptId?: string;
   submitting?: boolean;
   error?: string;
@@ -125,14 +128,21 @@ export function QuestionList({ questions }: QuestionListProps) {
     setStates((current) => ({ ...current, [questionId]: { ...current[questionId], ...updateState } }));
   }
 
+  function answerFor(question: LearnerQuestion, state: QuestionAttemptState): LearnerAnswer | null {
+    if (question.responseType === "multiple_choice" && state.selectedOptionId) return { selectedOptionId: state.selectedOptionId };
+    if (question.responseType === "multi_select" && state.selectedOptionIds?.length) return { selectedOptionIds: state.selectedOptionIds };
+    if ((question.responseType === "exact_short_answer" || question.responseType === "short_answer" || question.responseType === "structured_response" || question.responseType === "essay") && state.text?.trim()) return { text: state.text.trim() };
+    if (question.responseType === "numeric_answer" && state.value?.trim() && Number.isFinite(Number(state.value))) return { value: Number(state.value) };
+    return null;
+  }
   async function submit(question: LearnerQuestion) {
     const state = states[question.id] ?? {};
-    if (!state.selectedOptionId || state.submitting || state.result) return;
+    const answer = answerFor(question, state); if (!answer || state.submitting || state.result) return;
     update(question.id, { submitting: true, error: undefined });
     try {
       const attemptId = state.attemptId ?? (await createPracticeAttempt(question.id)).attemptId;
       update(question.id, { attemptId });
-      const result = await submitPracticeAttempt(attemptId, state.selectedOptionId);
+      const result = await submitPracticeAttempt(attemptId, answer);
       update(question.id, { result, submitting: false });
     } catch (error) {
       update(question.id, { submitting: false, error: messageFor(error) });
@@ -197,9 +207,14 @@ export function QuestionList({ questions }: QuestionListProps) {
                   </section>
                 )}
               </>
-            ) : (
-              <p className={styles.loading}>Practice submission is available for multiple-choice questions only.</p>
-            )}
+            ) : <>
+              {question.responseType === "multi_select" && <fieldset className={styles.options}><legend>Select every answer that applies</legend>{options.map((option) => <label key={option.id}><input type="checkbox" disabled={Boolean(result || state.submitting)} checked={state.selectedOptionIds?.includes(option.id) ?? false} onChange={(event) => update(question.id, { selectedOptionIds: event.target.checked ? [...(state.selectedOptionIds ?? []), option.id] : (state.selectedOptionIds ?? []).filter((id) => id !== option.id), error: undefined })} /> {option.label}</label>)}</fieldset>}
+              {question.responseType === "numeric_answer" && <label className={styles.field}>Numeric answer<input inputMode="decimal" value={state.value ?? ""} disabled={Boolean(result || state.submitting)} onChange={(event) => update(question.id, { value: event.target.value, error: undefined })} /></label>}
+              {["exact_short_answer", "short_answer", "structured_response", "essay"].includes(question.responseType) && <label className={styles.field}>{question.responseType === "exact_short_answer" ? "Answer" : "Written response"}<textarea rows={question.responseType === "essay" ? 8 : 4} value={state.text ?? ""} disabled={Boolean(result || state.submitting)} onChange={(event) => update(question.id, { text: event.target.value, error: undefined })} /></label>}
+              {!result && <button type="button" className={styles.button} disabled={!answerFor(question, state) || state.submitting} onClick={() => void submit(question)}>{state.submitting ? "Submitting…" : "Submit answer"}</button>}
+              {state.error && <p className={styles.bannerError} role="alert">{state.error}</p>}
+              {result && <section className={styles.feedback} aria-live="polite"><h2>{result.resultStatus === "pending_review" ? "Submitted for review" : result.isCorrect ? "Correct" : "Incorrect"}</h2>{result.resultStatus === "pending_review" ? <p>Your written response is saved. Marking is pending review.</p> : <p><strong>Score:</strong> {result.awardedMarks} / {result.maxMarks}</p>}</section>}
+            </>}
           </li>
         );
       })}

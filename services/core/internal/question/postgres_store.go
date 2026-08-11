@@ -378,7 +378,7 @@ func (p *PostgresStore) UpdateQuestion(ctx context.Context, id string, in Update
 	if in.Options != nil {
 		effectiveOptions = *in.Options
 	}
-	if effectiveResponseType != ResponseMultipleChoice {
+	if effectiveResponseType != ResponseMultipleChoice && effectiveResponseType != ResponseMultiSelect {
 		if in.Options != nil {
 			return Question{}, ErrInvalidOptions
 		}

@@ -36,6 +36,7 @@ export type LearnerOperation =
   | { kind: "listLearnerSyllabuses" }
 	| { kind: "listLearnerModules"; syllabusId: string }
   | { kind: "createLearnerAttempt"; questionId: string }
+  | { kind: "submitLearnerAttempt"; attemptId: string; answer: { selectedOptionId?: string; selectedOptionIds?: string[]; text?: string; value?: number } }
   | { kind: "submitLearnerAttempt"; attemptId: string; selectedOptionId: string };
 
 export interface LearnerProxySuccess {
@@ -48,6 +49,16 @@ function requireValidId(id: string): string {
     throw new LearnerProxyError(400, "invalid_id", "identifier is not a valid resource id");
   }
   return id;
+}
+
+function requireValidAnswer(answer: { selectedOptionId?: string; selectedOptionIds?: string[]; text?: string; value?: number }): string {
+  const keys = Object.keys(answer).filter((key) => (answer as Record<string, unknown>)[key] !== undefined);
+  if (keys.length !== 1) throw new LearnerProxyError(400, "invalid_answer", "answer is invalid");
+  if (typeof answer.selectedOptionId === "string") return JSON.stringify({ selectedOptionId: requireValidOptionId(answer.selectedOptionId) });
+  if (Array.isArray(answer.selectedOptionIds) && answer.selectedOptionIds.length > 0 && answer.selectedOptionIds.length <= 6 && answer.selectedOptionIds.every((id) => typeof id === "string" && requireValidOptionId(id))) return JSON.stringify({ selectedOptionIds: answer.selectedOptionIds.map(requireValidOptionId) });
+  if (typeof answer.text === "string" && answer.text.trim() && Array.from(answer.text).length <= 5000) return JSON.stringify({ text: answer.text.trim() });
+  if (typeof answer.value === "number" && Number.isFinite(answer.value)) return JSON.stringify({ value: answer.value });
+  throw new LearnerProxyError(400, "invalid_answer", "answer is invalid");
 }
 
 function requireValidOptionId(id: string): string {
@@ -79,7 +90,7 @@ function resolveRoute(op: LearnerOperation): { method: Method; path: string; bod
       return {
         method: "POST",
         path: `/learner/attempts/${requireValidId(op.attemptId)}/submit`,
-        body: JSON.stringify({ selectedOptionId: requireValidOptionId(op.selectedOptionId) }),
+        body: requireValidAnswer("answer" in op ? op.answer : { selectedOptionId: op.selectedOptionId }),
       };
   }
 }

@@ -228,11 +228,11 @@ func (h *handler) createQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 	var options []MultipleChoiceOption
 	_, hasOptions := raw["options"]
-	if responseType == ResponseMultipleChoice && !hasOptions {
+	if (responseType == ResponseMultipleChoice || responseType == ResponseMultiSelect) && !hasOptions {
 		writeMissingFields(w, []string{"options"})
 		return
 	}
-	if responseType != ResponseMultipleChoice && hasOptions {
+	if responseType != ResponseMultipleChoice && responseType != ResponseMultiSelect && hasOptions {
 		writeQuestionError(w, questionErrorMapping{http.StatusBadRequest, "invalid_options", ErrInvalidOptions.Error()})
 		return
 	}

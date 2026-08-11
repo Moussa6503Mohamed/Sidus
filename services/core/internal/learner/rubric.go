@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math"
 	"strings"
 )
 
@@ -17,6 +18,93 @@ var (
 type markingRubric struct {
 	CorrectOptionID string
 	Feedback        Feedback
+}
+
+// validatePinnedAnswerSchema validates only marking data inside an already canonical, verified
+// rubric. It never returns that key on learner reads; malformed pinned data makes a question
+// unavailable rather than guessing at marking.
+func validatePinnedAnswerSchema(responseType ResponseType, raw, optionsRaw json.RawMessage) error {
+	if responseType == ResponseMultipleChoice {
+		marking, err := parseMarkingRubric(raw)
+		if err != nil {
+			return err
+		}
+		var options []Option
+		if json.Unmarshal(optionsRaw, &options) != nil || !markingCoversOptions(marking, options) {
+			return ErrNotFound
+		}
+		return nil
+	}
+	fields, ok := exactObject(raw, learnerRubricFields)
+	if !ok {
+		return ErrNotFound
+	}
+	if responseType == ResponseShortAnswer || responseType == ResponseStructuredResponse || responseType == ResponseEssay {
+		if fields["answerKey"] != nil || fields["feedback"] != nil {
+			return ErrNotFound
+		}
+		return nil
+	}
+	answerRaw := fields["answerKey"]
+	if answerRaw == nil || fields["feedback"] != nil {
+		return ErrNotFound
+	}
+	answer, ok := exactObject(answerRaw, map[string]struct{}{"correctOptionIds": {}, "acceptedAnswers": {}, "numericValue": {}, "tolerance": {}})
+	if !ok {
+		return ErrNotFound
+	}
+	switch responseType {
+	case ResponseMultiSelect:
+		var ids []string
+		if len(answer) != 1 || json.Unmarshal(answer["correctOptionIds"], &ids) != nil || len(ids) < 2 {
+			return ErrNotFound
+		}
+		var options []Option
+		if json.Unmarshal(optionsRaw, &options) != nil {
+			return ErrNotFound
+		}
+		valid := map[string]struct{}{}
+		for _, opt := range options {
+			valid[opt.ID] = struct{}{}
+		}
+		seen := map[string]struct{}{}
+		for _, id := range ids {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				return ErrNotFound
+			}
+			if _, ok := valid[id]; !ok {
+				return ErrNotFound
+			}
+			if _, dup := seen[id]; dup {
+				return ErrNotFound
+			}
+			seen[id] = struct{}{}
+		}
+		return nil
+	case ResponseExactShortAnswer:
+		var answers []string
+		if len(answer) != 1 || json.Unmarshal(answer["acceptedAnswers"], &answers) != nil || len(answers) == 0 {
+			return ErrNotFound
+		}
+		for _, v := range answers {
+			if normalizeAnswer(v) == "" {
+				return ErrNotFound
+			}
+		}
+		return nil
+	case ResponseNumericAnswer:
+		var value, tolerance float64
+		if len(answer) != 2 || json.Unmarshal(answer["numericValue"], &value) != nil || json.Unmarshal(answer["tolerance"], &tolerance) != nil || math.IsNaN(value) || math.IsInf(value, 0) || math.IsNaN(tolerance) || math.IsInf(tolerance, 0) || tolerance < 0 {
+			return ErrNotFound
+		}
+		return nil
+	}
+	return ErrNotFound
+}
+
+func normalizeAnswer(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(s))), " ")
 }
 
 // parseMarkingRubric accepts only T-0016's exact verified MCQ feedback shape. Old historical

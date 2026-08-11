@@ -12,15 +12,22 @@
 // from a prior write.
 package learner
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ResponseType mirrors question.ResponseType's wire values for the learner projection.
 type ResponseType string
 
 const (
 	ResponseMultipleChoice     ResponseType = "multiple_choice"
+	ResponseMultiSelect        ResponseType = "multi_select"
+	ResponseExactShortAnswer   ResponseType = "exact_short_answer"
+	ResponseNumericAnswer      ResponseType = "numeric_answer"
 	ResponseShortAnswer        ResponseType = "short_answer"
 	ResponseStructuredResponse ResponseType = "structured_response"
+	ResponseEssay              ResponseType = "essay"
 )
 
 // Option is one original, learner-visible multiple-choice option: a stable id and its label. It
@@ -82,10 +89,11 @@ const (
 
 // Attempt is learner-safe open-attempt acknowledgement. Pins remain internal.
 type Attempt struct {
-	AttemptID  string        `json:"attemptId"`
-	QuestionID string        `json:"questionId"`
-	Status     AttemptStatus `json:"status"`
-	MaxMarks   int           `json:"maxMarks"`
+	AttemptID    string        `json:"attemptId"`
+	QuestionID   string        `json:"questionId"`
+	Status       AttemptStatus `json:"status"`
+	MaxMarks     int           `json:"maxMarks"`
+	ResponseType ResponseType  `json:"responseType,omitempty"`
 }
 
 type IncorrectExplanation struct {
@@ -100,14 +108,17 @@ type Feedback struct {
 
 // AttemptResult is exhaustive learner-safe post-submit projection.
 type AttemptResult struct {
-	AttemptID        string   `json:"attemptId"`
-	QuestionID       string   `json:"questionId"`
-	SelectedOptionID string   `json:"selectedOptionId"`
-	CorrectOptionID  string   `json:"correctOptionId"`
-	IsCorrect        bool     `json:"isCorrect"`
-	AwardedMarks     int      `json:"awardedMarks"`
-	MaxMarks         int      `json:"maxMarks"`
-	Feedback         Feedback `json:"feedback"`
+	AttemptID        string          `json:"attemptId"`
+	QuestionID       string          `json:"questionId"`
+	SelectedOptionID string          `json:"selectedOptionId"`
+	CorrectOptionID  string          `json:"correctOptionId"`
+	IsCorrect        bool            `json:"isCorrect"`
+	AwardedMarks     int             `json:"awardedMarks"`
+	MaxMarks         int             `json:"maxMarks"`
+	Feedback         Feedback        `json:"feedback"`
+	ResponseType     ResponseType    `json:"responseType,omitempty"`
+	Answer           json.RawMessage `json:"answer,omitempty"`
+	ResultStatus     string          `json:"resultStatus,omitempty"`
 }
 
 type attemptRecord struct {

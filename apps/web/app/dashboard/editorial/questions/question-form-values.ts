@@ -39,7 +39,7 @@ function validateContent(values: QuestionFieldValues): string | null {
   if (!values.curriculumMapNodeId || !values.responseType || !values.language.trim() || !values.prompt.trim()) {
     return "Node, response type, language, and prompt are required.";
   }
-  if (values.responseType === "multiple_choice") {
+  if (values.responseType === "multiple_choice" || values.responseType === "multi_select") {
     if (values.options.length < 2 || values.options.length > 6) return "Add between 2 and 6 options.";
     const ids = new Set<string>();
     for (const option of values.options) {
@@ -77,13 +77,13 @@ export function buildCreateInput(
     language: values.language.trim(),
     prompt: values.prompt.trim(),
   };
-  if (values.responseType === "multiple_choice") {
+  if (values.responseType === "multiple_choice" || values.responseType === "multi_select") {
     const content = { ...common, responseType: values.responseType, options: normalizedOptions(values.options) };
     return values.originType === "original"
       ? { input: { ...content, originType: "original" } }
       : { input: { ...content, originType: "licensed_adaptation", contentSourceId: values.contentSourceId, sourceLocator: values.sourceLocator.trim() } };
   }
-  const content = { ...common, responseType: values.responseType as "short_answer" | "structured_response" };
+  const content = { ...common, responseType: values.responseType as "exact_short_answer" | "numeric_answer" | "short_answer" | "structured_response" | "essay" };
   return values.originType === "original"
     ? { input: { ...content, originType: "original" } }
     : { input: { ...content, originType: "licensed_adaptation", contentSourceId: values.contentSourceId, sourceLocator: values.sourceLocator.trim() } };
@@ -100,7 +100,7 @@ export function buildUpdatePatch(
   if (values.responseType !== original.responseType) patch.responseType = values.responseType as QuestionResponseType;
   if (values.language.trim() !== original.language) patch.language = values.language.trim();
   if (values.prompt.trim() !== original.prompt) patch.prompt = values.prompt.trim();
-  if (values.responseType === "multiple_choice") {
+  if (values.responseType === "multiple_choice" || values.responseType === "multi_select") {
     const next = normalizedOptions(values.options);
     if (JSON.stringify(next) !== JSON.stringify(original.options)) patch.options = next;
   }

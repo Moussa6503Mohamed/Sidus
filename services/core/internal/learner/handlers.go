@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 
@@ -53,7 +54,7 @@ func (h *handler) createAttempt(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, attempt)
 }
 
-var submitFields = map[string]struct{}{"selectedOptionId": {}}
+var submitFields = map[string]struct{}{"selectedOptionId": {}, "selectedOptionIds": {}, "text": {}, "value": {}}
 
 func decodeSubmit(r *http.Request) (string, bool) {
 	dec := json.NewDecoder(io.LimitReader(r.Body, 4097))
@@ -61,12 +62,54 @@ func decodeSubmit(r *http.Request) (string, bool) {
 	if !ok || len(fields) != 1 {
 		return "", false
 	}
-	var selected string
-	if json.Unmarshal(fields["selectedOptionId"], &selected) != nil {
-		return "", false
+	if selectedRaw, ok := fields["selectedOptionId"]; ok {
+		var selected string
+		if json.Unmarshal(selectedRaw, &selected) != nil {
+			return "", false
+		}
+		selected = strings.TrimSpace(selected)
+		return selected, selected != "" && len([]rune(selected)) <= 64
 	}
-	selected = strings.TrimSpace(selected)
-	return selected, selected != "" && len([]rune(selected)) <= 64
+	if selectedRaw, ok := fields["selectedOptionIds"]; ok {
+		var ids []string
+		if json.Unmarshal(selectedRaw, &ids) != nil || len(ids) == 0 || len(ids) > 6 {
+			return "", false
+		}
+		seen := map[string]struct{}{}
+		for _, id := range ids {
+			id = strings.TrimSpace(id)
+			if id == "" || len([]rune(id)) > 64 {
+				return "", false
+			}
+			if _, dup := seen[id]; dup {
+				return "", false
+			}
+			seen[id] = struct{}{}
+		}
+		normalized, _ := json.Marshal(map[string]any{"selectedOptionIds": ids})
+		return string(normalized), true
+	}
+	if textRaw, ok := fields["text"]; ok {
+		var text string
+		if json.Unmarshal(textRaw, &text) != nil {
+			return "", false
+		}
+		text = strings.TrimSpace(text)
+		if text == "" || len([]rune(text)) > 5000 {
+			return "", false
+		}
+		normalized, _ := json.Marshal(map[string]string{"text": text})
+		return string(normalized), true
+	}
+	if valueRaw, ok := fields["value"]; ok {
+		var value float64
+		if json.Unmarshal(valueRaw, &value) != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+			return "", false
+		}
+		normalized, _ := json.Marshal(map[string]float64{"value": value})
+		return string(normalized), true
+	}
+	return "", false
 }
 
 func exactObjectFromDecoder(dec *json.Decoder, allowed map[string]struct{}) (map[string]json.RawMessage, bool) {
@@ -121,6 +164,8 @@ func (h *handler) submitAttempt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "attempt_already_submitted", "attempt already submitted")
 	case errors.Is(err, ErrInvalidOption):
 		writeError(w, http.StatusBadRequest, "invalid_option", "selected option is invalid")
+	case errors.Is(err, ErrInvalidAnswer):
+		writeError(w, http.StatusBadRequest, "invalid_answer", "answer is invalid")
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
 	default:

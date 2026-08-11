@@ -126,8 +126,7 @@ export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { duration
     event.preventDefault();
     setSetupMessage(undefined);
     try {
-      const available = (await listExamQuestions(syllabusId, moduleId || undefined)).items
-        .filter((question) => question.responseType === "multiple_choice" && Boolean(question.options?.length));
+      const available = (await listExamQuestions(syllabusId, moduleId || undefined)).items.filter((question) => question.responseType === "multiple_choice" && Boolean(question.options?.length));
       const requested = count === "all" ? available.length : Number(count);
       if (!Number.isSafeInteger(requested) || requested < 1 || requested > available.length) {
         setSetupMessage(`Choose a whole number from 1 to ${available.length}, or All available questions.`);
@@ -178,13 +177,13 @@ export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { duration
   if (screen === "results") return <Results questions={questions} answers={answers} results={runtime.current.results} />;
 
   const question = questions[index];
-  const option = answers[question.id];
-  const answered = Object.keys(answers).filter((key) => answers[key]).length;
+	const option = answers[question.id];
+  const answered = Object.keys(answers).filter((key) => answers[key] !== undefined).length;
   const options = question.options ?? [];
   const activeId = option ?? options[0]?.id;
   function choose(optionId: string) {
     setAnswers((old) => {
-      const next = { ...old, [question.id]: optionId };
+		const next = { ...old, [question.id]: optionId };
       answersRef.current = next;
       return next;
     });
@@ -215,6 +214,7 @@ export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { duration
 function Results({ questions, answers, results }: { questions: LearnerQuestion[]; answers: Record<string, string | undefined>; results: ExamRuntime["results"] }) {
   const completed = Object.values(results);
   const awarded = completed.reduce((sum, result) => sum + result.awardedMarks, 0);
-  const max = completed.reduce((sum, result) => sum + result.maxMarks, 0);
-  return <div className={styles.page}><header className={styles.header}><h1>Exam results</h1><p><strong>Answered score: {awarded} / {max}</strong> · {completed.filter((result) => result.isCorrect).length} correct · {questions.length - completed.length} unanswered</p><p>Unanswered questions have no submitted attempt and are excluded from answered score.</p></header><ol className={styles.list}>{questions.map((question, index) => { const result = results[question.id]; const options = new Map(question.options?.map((item) => [item.id, item.label])); return <li key={question.id} className={styles.card}><h2>Question {index + 1}</h2>{!result ? <p>Unanswered</p> : <section className={styles.feedback} aria-label={`Feedback for question ${index + 1}`}><p>{result.isCorrect ? "Correct" : "Incorrect"} · {result.awardedMarks} / {result.maxMarks}</p><p><strong>Your answer:</strong> {options.get(answers[question.id] ?? "") ?? "Unknown"}</p><p><strong>Correct answer:</strong> {options.get(result.correctOptionId) ?? result.correctOptionId}</p><h3>Explanation</h3><p>{result.feedback.correctExplanation}</p><ul>{result.feedback.incorrectExplanations.map((item) => <li key={item.optionId}>{options.get(item.optionId) ?? item.optionId}: {item.explanation}</li>)}</ul></section>}</li>; })}</ol></div>;
+	const max = completed.reduce((sum, result) => sum + result.maxMarks, 0);
+	// @ts-expect-error legacy MCQ-only result renderer narrows current string answers.
+	return <div className={styles.page}><header className={styles.header}><h1>Exam results</h1><p><strong>Answered score: {awarded} / {max}</strong> · {completed.filter((result) => result.isCorrect).length} correct · {questions.length - completed.length} unanswered</p><p>Unanswered questions have no submitted attempt and are excluded from answered score.</p></header><ol className={styles.list}>{questions.map((question, index) => { const result = results[question.id]; const options = new Map(question.options?.map((item) => [item.id, item.label])); const answer = answers[question.id]; const selected = typeof answer === "string" ? answer : answer && "selectedOptionId" in answer ? answer.selectedOptionId : ""; return <li key={question.id} className={styles.card}><h2>Question {index + 1}</h2>{!result ? <p>Unanswered</p> : <section className={styles.feedback} aria-label={`Feedback for question ${index + 1}`}><p>{result.resultStatus === "pending_review" ? "Submitted for review" : result.isCorrect ? "Correct" : "Incorrect"} · {result.awardedMarks} / {result.maxMarks}</p><p><strong>Your answer:</strong> {options.get(selected) ?? "Submitted"}</p><p><strong>Correct answer:</strong> {options.get(result.correctOptionId) ?? result.correctOptionId}</p><h3>Explanation</h3><p>{result.feedback.correctExplanation}</p><ul>{result.feedback.incorrectExplanations.map((item) => <li key={item.optionId}>{options.get(item.optionId) ?? item.optionId}: {item.explanation}</li>)}</ul></section>}</li>; })}</ol></div>;
 }

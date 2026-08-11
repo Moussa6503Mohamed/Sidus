@@ -362,8 +362,12 @@ export interface CurriculumMapEvent {
 /** Shape of answer a question expects. */
 export type QuestionResponseType =
   | "multiple_choice"
+  | "multi_select"
+  | "exact_short_answer"
+  | "numeric_answer"
   | "short_answer"
-  | "structured_response";
+  | "structured_response"
+  | "essay";
 
 /** Original editorial MCQ option. Stable id anchors rubric answer keys across label edits. */
 export interface MultipleChoiceOption {
@@ -449,7 +453,11 @@ export interface RubricStructure {
 }
 
 export interface RubricAnswerKey {
-  correctOptionId: string;
+  correctOptionId?: string;
+  correctOptionIds?: string[];
+  acceptedAnswers?: string[];
+  numericValue?: number;
+  tolerance?: number;
 }
 
 /**
@@ -490,8 +498,8 @@ interface CreateQuestionRequestBase {
 
 /** Create shape enforces options only for MCQ at compile time; Core remains runtime authority. */
 type CreateQuestionContent =
-  | { responseType: "multiple_choice"; options: MultipleChoiceOption[] }
-  | { responseType: "short_answer" | "structured_response"; options?: never };
+  | { responseType: "multiple_choice" | "multi_select"; options: MultipleChoiceOption[] }
+  | { responseType: "exact_short_answer" | "numeric_answer" | "short_answer" | "structured_response" | "essay"; options?: never };
 
 type CreateQuestionOrigin =
   | { originType: "original"; contentSourceId?: never; sourceLocator?: never }
@@ -643,6 +651,7 @@ export interface LearnerAttempt {
   questionId: string;
   status: LearnerAttemptStatus;
   maxMarks: number;
+  responseType?: QuestionResponseType;
 }
 
 export interface LearnerIncorrectExplanation {
@@ -658,6 +667,9 @@ export interface LearnerMCQFeedback {
 export interface LearnerAttemptResult {
   attemptId: string;
   questionId: string;
+  responseType?: QuestionResponseType;
+  answer?: LearnerAnswer;
+  resultStatus?: "marked" | "pending_review";
   selectedOptionId: string;
   correctOptionId: string;
   isCorrect: boolean;
@@ -665,3 +677,11 @@ export interface LearnerAttemptResult {
   maxMarks: number;
   feedback: LearnerMCQFeedback;
 }
+
+/** Learner submission payload. Answer keys are never included in question projections. */
+export type LearnerAnswer =
+  | string
+  | { selectedOptionId: string }
+  | { selectedOptionIds: string[] }
+  | { text: string }
+  | { value: number };

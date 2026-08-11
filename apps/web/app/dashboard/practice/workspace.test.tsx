@@ -217,7 +217,7 @@ describe("PracticeWorkspace — question loading", () => {
     await user.click(screen.getByRole("button", { name: /submit answer/i }));
     await screen.findByRole("region", { name: /answer feedback/i });
     expect(mockedCreateAttempt).toHaveBeenCalledWith("q-1");
-    expect(mockedSubmitAttempt).toHaveBeenCalledWith("attempt-1", "opt-b");
+    expect(mockedSubmitAttempt).toHaveBeenCalledWith("attempt-1", { selectedOptionId: "opt-b" });
     expect(screen.getByText(/0 \/ 2/)).toBeInTheDocument();
     expect(screen.getByText("opaque-correct")).toBeInTheDocument();
     expect(screen.getByText("opaque-wrong")).toBeInTheDocument();

@@ -21,8 +21,12 @@ import type {
 
 const RESPONSE_TYPES: Array<{ value: QuestionResponseType; label: string }> = [
   { value: "multiple_choice", label: "Multiple choice" },
+  { value: "multi_select", label: "Multiple select" },
+  { value: "exact_short_answer", label: "Exact short answer" },
+  { value: "numeric_answer", label: "Numeric answer" },
   { value: "short_answer", label: "Short answer" },
   { value: "structured_response", label: "Structured response" },
+  { value: "essay", label: "Essay" },
 ];
 
 type Mode = { kind: "create" } | { kind: "edit"; question: Question };
@@ -207,7 +211,7 @@ export function QuestionForm(props: QuestionFormProps) {
             aria-required
           />
         </div>
-        {values.responseType === "multiple_choice" && <section aria-labelledby={`${headingId}-options`}>
+        {(values.responseType === "multiple_choice" || values.responseType === "multi_select") && <section aria-labelledby={`${headingId}-options`}>
           <div className={styles.criteriaHeader}>
             <strong id={`${headingId}-options`}>Multiple-choice options (2–6 required)</strong>
             <button type="button" className={sourceStyles.buttonSecondary} onClick={() => setField("options", [...values.options, { id: "", label: "" }])} disabled={values.options.length >= 6}>Add option</button>

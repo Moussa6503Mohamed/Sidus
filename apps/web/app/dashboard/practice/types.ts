@@ -1,5 +1,6 @@
 export type {
   LearnerAttempt,
+  LearnerAnswer,
   LearnerAttemptResult,
   LearnerMCQFeedback,
   LearnerModule,

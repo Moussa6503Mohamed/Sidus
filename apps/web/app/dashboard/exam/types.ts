@@ -1,5 +1,6 @@
 export type {
-  LearnerAttempt,
+	LearnerAttempt,
+	LearnerAnswer,
   LearnerAttemptResult,
   LearnerQuestion,
   LearnerQuestionOption,

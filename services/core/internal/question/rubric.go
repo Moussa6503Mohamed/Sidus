@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math"
 	"strings"
 )
 
@@ -23,7 +24,7 @@ const maxRubricCriteria = 200
 var (
 	rubricDocumentFields  = map[string]struct{}{"criteria": {}, "answerKey": {}, "feedback": {}}
 	rubricCriterionFields = map[string]struct{}{"id": {}, "marks": {}, "descriptor": {}}
-	rubricAnswerKeyFields = map[string]struct{}{"correctOptionId": {}}
+	rubricAnswerKeyFields = map[string]struct{}{"correctOptionId": {}, "correctOptionIds": {}, "acceptedAnswers": {}, "numericValue": {}, "tolerance": {}}
 	rubricFeedbackFields  = map[string]struct{}{"correctExplanation": {}, "incorrectExplanations": {}}
 	rubricIncorrectFields = map[string]struct{}{"optionId": {}, "explanation": {}}
 )
@@ -125,8 +126,8 @@ func ValidateRubric(raw json.RawMessage, maxMarks int) error {
 		return ErrInvalidMaxMarks
 	}
 	if answerKeyRaw, ok := fields["answerKey"]; ok {
-		if _, err := validateAnswerKey(answerKeyRaw); err != nil {
-			return err
+		if !validateAnswerKeyShape(answerKeyRaw) {
+			return ErrInvalidRubric
 		}
 	}
 	if feedbackRaw, ok := fields["feedback"]; ok {
@@ -135,6 +136,30 @@ func ValidateRubric(raw json.RawMessage, maxMarks int) error {
 		}
 	}
 	return nil
+}
+
+func validateAnswerKeyShape(raw json.RawMessage) bool {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	fields, err := decodeExactObject(dec, rubricAnswerKeyFields)
+	if err != nil || requireEOF(dec) != nil || len(fields) != 1 && len(fields) != 2 {
+		return false
+	}
+	if raw, ok := fields["correctOptionId"]; ok {
+		var v string
+		return len(fields) == 1 && json.Unmarshal(raw, &v) == nil && !blank(v)
+	}
+	if raw, ok := fields["correctOptionIds"]; ok {
+		var v []string
+		return len(fields) == 1 && json.Unmarshal(raw, &v) == nil && len(v) > 0
+	}
+	if raw, ok := fields["acceptedAnswers"]; ok {
+		var v []string
+		return len(fields) == 1 && json.Unmarshal(raw, &v) == nil && len(v) > 0
+	}
+	if fields["numericValue"] != nil && fields["tolerance"] != nil {
+		return len(fields) == 2 && isJSONNumber(fields["numericValue"]) && isJSONNumber(fields["tolerance"])
+	}
+	return false
 }
 
 // ValidateRubricForQuestion adds response-type and option-reference rules to structural rubric
@@ -150,16 +175,28 @@ func ValidateRubricForQuestion(raw json.RawMessage, maxMarks int, responseType R
 	}
 	answerKeyRaw, hasAnswerKey := fields["answerKey"]
 	feedbackRaw, hasFeedback := fields["feedback"]
-	if responseType != ResponseMultipleChoice {
+	if responseType == ResponseShortAnswer || responseType == ResponseStructuredResponse || responseType == ResponseEssay {
 		if hasAnswerKey || hasFeedback {
 			return ErrInvalidRubric
 		}
 		return nil
 	}
-	if !hasAnswerKey || !hasFeedback {
+	if !hasAnswerKey {
+		return ErrInvalidRubric
+	}
+	if responseType == ResponseExactShortAnswer || responseType == ResponseNumericAnswer {
+		if hasFeedback || !validateDeterministicAnswerKey(answerKeyRaw, responseType, nil) {
+			return ErrInvalidRubric
+		}
+		return nil
+	}
+	if !hasFeedback {
 		return ErrInvalidRubric
 	}
 	correctOptionID, err := validateAnswerKey(answerKeyRaw)
+	if responseType == ResponseMultiSelect {
+		return validateMultiSelectRubric(answerKeyRaw, feedbackRaw, options)
+	}
 	if err != nil {
 		return err
 	}
@@ -197,6 +234,94 @@ func ValidateRubricForQuestion(raw json.RawMessage, maxMarks int, responseType R
 		if _, ok := seen[id]; !ok {
 			return ErrInvalidRubric
 		}
+	}
+	return nil
+}
+
+func validateDeterministicAnswerKey(raw json.RawMessage, typ ResponseType, options []MultipleChoiceOption) bool {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	fields, err := decodeExactObject(dec, rubricAnswerKeyFields)
+	if err != nil || requireEOF(dec) != nil {
+		return false
+	}
+	switch typ {
+	case ResponseExactShortAnswer:
+		if len(fields) != 1 || fields["acceptedAnswers"] == nil {
+			return false
+		}
+		var answers []string
+		if json.Unmarshal(fields["acceptedAnswers"], &answers) != nil || len(answers) == 0 || len(answers) > 20 {
+			return false
+		}
+		seen := map[string]struct{}{}
+		for _, answer := range answers {
+			normalized := strings.Join(strings.Fields(strings.ToLower(answer)), " ")
+			if normalized == "" || len([]rune(normalized)) > 500 {
+				return false
+			}
+			if _, ok := seen[normalized]; ok {
+				return false
+			}
+			seen[normalized] = struct{}{}
+		}
+		return true
+	case ResponseNumericAnswer:
+		if len(fields) != 2 || fields["numericValue"] == nil || fields["tolerance"] == nil || !isJSONNumber(fields["numericValue"]) || !isJSONNumber(fields["tolerance"]) {
+			return false
+		}
+		var value, tolerance float64
+		return json.Unmarshal(fields["numericValue"], &value) == nil && json.Unmarshal(fields["tolerance"], &tolerance) == nil && !math.IsNaN(value) && !math.IsInf(value, 0) && !math.IsNaN(tolerance) && !math.IsInf(tolerance, 0) && tolerance >= 0
+	}
+	return false
+}
+
+func validateMultiSelectRubric(answerRaw, feedbackRaw json.RawMessage, options []MultipleChoiceOption) error {
+	dec := json.NewDecoder(bytes.NewReader(answerRaw))
+	fields, err := decodeExactObject(dec, rubricAnswerKeyFields)
+	if err != nil || requireEOF(dec) != nil || len(fields) != 1 || fields["correctOptionIds"] == nil {
+		return ErrInvalidRubric
+	}
+	var ids []string
+	if json.Unmarshal(fields["correctOptionIds"], &ids) != nil || len(ids) < 2 || len(ids) >= len(options) {
+		return ErrInvalidRubric
+	}
+	current := map[string]struct{}{}
+	for _, option := range options {
+		current[option.ID] = struct{}{}
+	}
+	seen := map[string]struct{}{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return ErrInvalidRubric
+		}
+		if _, ok := current[id]; !ok {
+			return ErrInvalidRubric
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return ErrInvalidRubric
+		}
+		seen[id] = struct{}{}
+	}
+	feedback, err := validateFeedback(feedbackRaw)
+	if err != nil {
+		return err
+	}
+	if len(feedback.IncorrectExplanations) != len(options)-len(ids) {
+		return ErrInvalidRubric
+	}
+	wrong := map[string]struct{}{}
+	for _, item := range feedback.IncorrectExplanations {
+		if _, correct := seen[item.OptionID]; correct {
+			return ErrInvalidRubric
+		}
+		if _, ok := current[item.OptionID]; !ok {
+			return ErrInvalidRubric
+		}
+		if _, dup := wrong[item.OptionID]; dup {
+			return ErrInvalidRubric
+		}
+		wrong[item.OptionID] = struct{}{}
 	}
 	return nil
 }

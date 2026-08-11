@@ -714,7 +714,7 @@ func TestCreateQuestion_InvalidResponseType_Returns400(t *testing.T) {
 	defer srv.Close()
 
 	req := validCreateReq()
-	req.ResponseType = "essay"
+	req.ResponseType = "not_a_response_type"
 	resp := doJSON(t, http.MethodPost, srv.URL+"/questions", req)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)

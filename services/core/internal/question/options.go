@@ -51,7 +51,7 @@ func ParseOptions(raw json.RawMessage) ([]MultipleChoiceOption, error) {
 }
 
 func validateOptionsForResponseType(responseType ResponseType, options []MultipleChoiceOption) error {
-	if responseType != ResponseMultipleChoice {
+	if responseType != ResponseMultipleChoice && responseType != ResponseMultiSelect {
 		if options != nil {
 			return ErrInvalidOptions
 		}

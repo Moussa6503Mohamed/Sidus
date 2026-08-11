@@ -25,6 +25,7 @@ var ErrMismatchedNode = errors.New("curriculum map node belongs to a different s
 var ErrAttemptNotFound = errors.New("attempt not found")
 var ErrAttemptSubmitted = errors.New("attempt already submitted")
 var ErrInvalidOption = errors.New("selected option is invalid")
+var ErrInvalidAnswer = errors.New("answer is invalid")
 
 // Store serves the learner-safe question projection. Every method re-validates the full
 // eligibility gate at read time: verified question status, an existing verified canonical
