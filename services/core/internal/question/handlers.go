@@ -602,7 +602,7 @@ func writeQuestionError(w http.ResponseWriter, m questionErrorMapping) {
 
 func writeInvalidResponseType(w http.ResponseWriter) {
 	writeError(w, http.StatusBadRequest, "invalid_response_type",
-		"responseType must be one of: multiple_choice, short_answer, structured_response")
+		"responseType must be one of: multiple_choice, multi_select, exact_short_answer, numeric_answer, short_answer, structured_response, essay")
 }
 
 // trimPtr returns a pointer to the trimmed value, or nil if v is nil.

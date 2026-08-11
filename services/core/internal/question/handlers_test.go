@@ -719,8 +719,8 @@ func TestCreateQuestion_InvalidResponseType_Returns400(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
-	if body := decodeJSON[map[string]string](t, resp); body["error"] != "invalid_response_type" {
-		t.Fatalf("error = %q, want invalid_response_type", body["error"])
+	if body := decodeJSON[map[string]string](t, resp); body["error"] != "invalid_response_type" || body["message"] != "responseType must be one of: multiple_choice, multi_select, exact_short_answer, numeric_answer, short_answer, structured_response, essay" {
+		t.Fatalf("body = %#v, want current invalid_response_type response", body)
 	}
 }
 

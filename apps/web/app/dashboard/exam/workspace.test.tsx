@@ -151,4 +151,50 @@ describe("ExamWorkspace", () => {
     expect(submitExamAttempt).toHaveBeenCalledWith("attempt-numeric", { value: 2.5 });
     expect(submitExamAttempt).toHaveBeenCalledWith("attempt-written", { text: "runtime text" });
   });
+
+  it("prevents duplicate finalization while a submission is in flight", async () => {
+    let resolveSubmit: ((value: Awaited<ReturnType<typeof submitExamAttempt>>) => void) | undefined;
+    vi.mocked(submitExamAttempt).mockImplementationOnce(() => new Promise((resolve) => { resolveSubmit = resolve; }));
+    const user = userEvent.setup(); render(<ExamWorkspace />); await start(user);
+    await user.click(screen.getByRole("radio", { name: "opaque-q1-a" }));
+    await user.click(screen.getByRole("button", { name: "Submit all" }));
+    await user.click(screen.getByRole("button", { name: "Confirm submit" }));
+    const submittingButtons = screen.getAllByRole("button", { name: "Submitting…" });
+    expect(submittingButtons).not.toHaveLength(0);
+    submittingButtons.forEach((button) => expect(button).toBeDisabled());
+    expect(createExamAttempt).toHaveBeenCalledTimes(1);
+    expect(submitExamAttempt).toHaveBeenCalledTimes(1);
+    resolveSubmit?.({ attemptId: "attempt-q1", questionId: "q1", selectedOptionId: "q1-a", correctOptionId: "q1-a", isCorrect: true, awardedMarks: 1, maxMarks: 1, feedback: { correctExplanation: "opaque-feedback", incorrectExplanations: [] } });
+    expect(await screen.findByRole("heading", { name: "Exam results" })).toBeInTheDocument();
+  });
+
+  it("preserves answers after a finalization failure and retries without creating a second attempt", async () => {
+    vi.mocked(submitExamAttempt).mockRejectedValueOnce(new Error("offline"));
+    const user = userEvent.setup(); render(<ExamWorkspace />); await start(user);
+    await user.click(screen.getByRole("radio", { name: "opaque-q1-a" }));
+    await user.click(screen.getByRole("button", { name: "Submit all" }));
+    await user.click(screen.getByRole("button", { name: "Confirm submit" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/retry without changing answers/i);
+    await user.click(screen.getByRole("button", { name: /retry submission/i }));
+    expect(await screen.findByRole("heading", { name: "Exam results" })).toBeInTheDocument();
+    expect(createExamAttempt).toHaveBeenCalledTimes(1);
+    expect(submitExamAttempt).toHaveBeenNthCalledWith(1, "attempt-q1", { selectedOptionId: "q1-a" });
+    expect(submitExamAttempt).toHaveBeenNthCalledWith(2, "attempt-q1", { selectedOptionId: "q1-a" });
+  });
+
+  it("removes cleared numeric and written answers before final submit", async () => {
+    vi.mocked(listExamQuestions).mockResolvedValue({ items: [
+      { ...question("numeric"), responseType: "numeric_answer", options: null },
+      { ...question("written"), responseType: "short_answer", options: null },
+    ] });
+    const user = userEvent.setup(); render(<ExamWorkspace />); await start(user);
+    const numeric = screen.getByLabelText("Numeric answer");
+    await user.type(numeric, "2.5"); await user.clear(numeric);
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    const written = screen.getByLabelText("Written response");
+    await user.type(written, "temporary"); await user.clear(written);
+    await user.click(screen.getByRole("button", { name: "Submit all" })); await user.click(screen.getByRole("button", { name: "Confirm submit" }));
+    expect(await screen.findByRole("heading", { name: "Exam results" })).toBeInTheDocument();
+    expect(submitExamAttempt).not.toHaveBeenCalled();
+  });
 });

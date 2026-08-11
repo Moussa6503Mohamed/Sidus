@@ -29,7 +29,7 @@ describe("learner attempt BFF routes", () => {
     expect(call).toHaveBeenLastCalledWith({ kind: "submitLearnerAttempt", attemptId: "a-1", selectedOptionId: "opt-a" });
   });
 
-  it.each([`{}`, `null`, `{"SelectedOptionId":"opt-a"}`, `{"selectedOptionId":""}`, `{"selectedOptionId":"opt-a","extra":1}`, `{"selectedOptionId":"opt-a","selectedOptionId":"opt-b"}`])(
+  it.each([`{}`, `null`, `{"SelectedOptionId":"opt-a"}`, `{"selectedOptionId":""}`, `{"selectedOptionId":"opt-a","extra":1}`, `{"selectedOptionId":"opt-a","selectedOptionId":"opt-b"}`, `{"selectedOptionId":"opt-a","selected\\u004fptionId":"opt-b"}`])(
     "rejects malformed submit body before Core proxy: %s", async (body) => {
       const response = await submitAttempt(new Request("http://local", { method: "POST", body }), params("a-1"));
       expect(response.status).toBe(400);

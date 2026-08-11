@@ -7,7 +7,8 @@ interface RouteParams { params: Promise<{ id: string }> }
 
 function parseAnswer(raw: string): { selectedOptionId?: string; selectedOptionIds?: string[]; text?: string; value?: number } | null {
   try {
-	if ((raw.match(/"selectedOptionId"/g)?.length ?? 0) > 1 || (raw.match(/"selectedOptionIds"/g)?.length ?? 0) > 1 || (raw.match(/"text"/g)?.length ?? 0) > 1 || (raw.match(/"value"/g)?.length ?? 0) > 1) return null;
+	const decodedKeys = Array.from(raw.matchAll(/"((?:\\.|[^"\\])*)"\s*:/g), (match) => JSON.parse(`"${match[1]}"`) as unknown);
+	if (decodedKeys.some((key) => typeof key !== "string") || new Set(decodedKeys).size !== decodedKeys.length) return null;
     const value: unknown = JSON.parse(raw);
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const entries = Object.entries(value as Record<string, unknown>);
