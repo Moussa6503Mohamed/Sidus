@@ -12,7 +12,7 @@ unavailable" and fail closed rather than fabricate a result.
 
 from __future__ import annotations
 
-from typing import Optional, Protocol, runtime_checkable
+from typing import Any, Optional, Protocol, runtime_checkable
 
 from .schemas import SonnetRequest, SonnetResult
 
@@ -24,6 +24,16 @@ class ProviderError(Exception):
 @runtime_checkable
 class SonnetProvider(Protocol):
     def generate(self, request: SonnetRequest) -> SonnetResult: ...
+
+
+@runtime_checkable
+class PrivateMarkingProvider(Protocol):
+    """Optional service-only extension.
+
+    This receives private learner answer/rubric context in memory for a single service request;
+    it is never serialized into the public SonnetRequest, durable job JSON, traces, or APIs.
+    """
+    def generate_marking(self, request: SonnetRequest, private_context: dict[str, Any]) -> SonnetResult: ...
 
 
 def get_provider() -> Optional[SonnetProvider]:

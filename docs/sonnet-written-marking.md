@@ -6,8 +6,9 @@ essay attempt. Core creates one durable request per attempt, pins the question r
 canonical rubric version, and never changes the submitted attempt itself.
 
 Core sends the adapter opaque pins plus the learner answer and pinned criterion descriptors only
-over its HTTPS service-token boundary. That private marking context is never exposed to learner
-routes, browser routes, audit events, logs, or public job responses; it exists so a future
+over its HTTPS service-token boundary. That private marking context is ephemeral: it is passed to
+the provider in memory, never serialized into SQLite job requests/traces, and never exposed to
+learner routes, browser routes, audit events, logs, or public job responses. It exists so a future
 approved provider can mark the response without an unsafe public context lookup. Source material,
 provenance, canonical keys, and credentials are never included. The adapter has no live provider
 in this build. Without a configured HTTPS service URL and service token, a request remains

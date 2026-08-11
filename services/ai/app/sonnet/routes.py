@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..auth import Principal, require_clerk_session
 from .jobs import Job, JobIdConflict, JobStore, SqliteJobStore
 from .orchestrator import run_job
-from .provider import SonnetProvider, get_provider
+from .provider import PrivateMarkingProvider, SonnetProvider, get_provider
 from .schemas import SonnetRequest
 
 router = APIRouter(prefix="/sonnet", tags=["sonnet"])
@@ -43,6 +43,15 @@ class MarkingCriterion(BaseModel):
 class MarkingPrivateContext(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
     answer: dict = Field(min_length=1)
+
+class _EphemeralMarkingProvider:
+    """Passes service-only context to a capable provider without persisting it in JobStore."""
+    def __init__(self, provider: SonnetProvider, context: dict) -> None:
+        self._provider, self._context = provider, context
+    def generate(self, request: SonnetRequest):
+        if isinstance(self._provider, PrivateMarkingProvider):
+            return self._provider.generate_marking(request, self._context)
+        return self._provider.generate(request)
 class MarkingJobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
     job_id: str = Field(alias="jobId", min_length=1, max_length=128)
@@ -131,12 +140,12 @@ def submit_marking_job(
         job_id=request.job_id, task_type="marking", question_id=request.question_id,
         syllabus_id=request.syllabus_id, rubric_version_id=request.rubric_version_id,
         language="en", explanation_version="v1",
-        rubric_criteria=tuple({"criterion_id": c.criterion_id, "max_marks": c.max_marks, "descriptor": c.descriptor} for c in request.rubric_criteria),
+        rubric_criteria=tuple({"criterion_id": c.criterion_id, "max_marks": c.max_marks} for c in request.rubric_criteria),
         prompt_content_ref=request.prompt_content_ref,
-        private_marking_context={"answer": request.private_context.answer},
     )
     try:
-        job = run_job(adapter_request, store=store, provider=provider, owner_subject=SERVICE_OWNER)
+        private_context = {"answer": request.private_context.answer, "criteria": [{"id": c.criterion_id, "descriptor": c.descriptor} for c in request.rubric_criteria]}
+        job = run_job(adapter_request, store=store, provider=_EphemeralMarkingProvider(provider, private_context), owner_subject=SERVICE_OWNER)
     except JobIdConflict:
         existing = store.get(request.job_id)
         if existing is None or existing.owner_subject != SERVICE_OWNER:

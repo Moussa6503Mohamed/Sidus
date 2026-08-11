@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import sqlite3
 from pathlib import Path
 
 import jwt
@@ -100,6 +101,14 @@ def test_submit_job_rejects_malformed_request(rsa_key: rsa.RSAPrivateKey) -> Non
         headers=_auth_headers(rsa_key),
     )
     assert resp.status_code == 422
+
+
+def test_public_job_route_rejects_private_marking_context(rsa_key: rsa.RSAPrivateKey) -> None:
+    client = TestClient(app)
+    response = client.post(
+        "/sonnet/jobs", json={**VALID_PAYLOAD, "privateContext": {"answer": {"text": "must-not-persist"}}}, headers=_auth_headers(rsa_key)
+    )
+    assert response.status_code == 422
 
 
 def test_submit_and_fetch_job_happy_path(rsa_key: rsa.RSAPrivateKey, tmp_path: Path) -> None:
@@ -203,3 +212,28 @@ def test_service_marking_route_is_token_gated_and_fake_provider_only(
     body = response.json()
     assert body["status"] == "accepted"
     assert body["result"]["awardedMarks"] == 2
+    # The service context is deliberately ephemeral: only the public-safe adapter request is durable.
+    with sqlite3.connect(tmp_path / "service-jobs.sqlite3") as conn:
+        saved = conn.execute("SELECT request_json FROM jobs WHERE job_id = ?", ("service-marking-1",)).fetchone()[0]
+    assert "private learner answer" not in saved
+    assert "private criterion" not in saved
+
+
+def test_service_marking_context_is_available_only_to_private_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class ContextAwareFake(FakeSonnetProvider):
+        observed: dict | None = None
+        def generate_marking(self, request, private_context):  # type: ignore[no-untyped-def]
+            self.observed = private_context
+            return self.generate(request)
+    monkeypatch.setenv("SIDUS_CORE_SERVICE_TOKEN", "service-test-token")
+    store = SqliteJobStore(str(tmp_path / "context-jobs.sqlite3"))
+    provider = ContextAwareFake(response_fn=default_response)
+    app.dependency_overrides[get_job_store] = lambda: store
+    app.dependency_overrides[get_provider] = lambda: provider
+    payload = {"jobId":"service-context-1","attemptId":"opaque-attempt","questionId":"opaque-question","syllabusId":"opaque-syllabus","rubricVersionId":"opaque-rubric","rubricCriteria":[{"criterionId":"c1","maxMarks":2,"descriptor":"private descriptor"}],"promptContentRef":"opaque-attempt","privateContext":{"answer":{"text":"private answer"}}}
+    response = TestClient(app).post("/sonnet/marking-jobs", json=payload, headers={"Authorization":"Bearer service-test-token"})
+    assert response.status_code == 200
+    assert provider.observed == {"answer":{"text":"private answer"},"criteria":[{"id":"c1","descriptor":"private descriptor"}]}
+    assert "private answer" not in response.text and "private descriptor" not in response.text
