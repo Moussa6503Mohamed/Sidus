@@ -51,6 +51,10 @@ cd services/ai && python -m pytest
 
 ## Current state
 
+- T-0030 released: private admin PDF quarantine and Sonnet-ready review-intake foundation. Files
+  remain private, bounded, unserved, and scanner-gated; no OCR/extraction/model invocation exists
+  yet. See `docs/handoffs/T-0030.md`.
+
 - T-0029 released: learner Practice and Exam support MCQ, multi-select, exact short answer,
   numeric answer, and written responses. Deterministic types mark only after submission; written
   responses remain pending review and receive no invented score. See `docs/handoffs/T-0029.md`.

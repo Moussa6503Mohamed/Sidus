@@ -1,5 +1,15 @@
 # Task history
 
+## T-0030 — Private admin upload and AI review intake foundation
+
+**Status:** done / released
+**Implementation commits:** `0cd76e5`, `65864ce`
+**Release validation:** independent security review approved. Admin-only private PDF quarantine,
+bounded multipart intake, scanner-attestation gate, immutable audit trail, and Sonnet-ready
+metadata review contract released. No OCR, source extraction, model call, or public file serving.
+Web 352 tests, Go tests, Python 20 tests, type/build/contracts/Compose/diff checks passed.
+See `docs/handoffs/T-0030.md`.
+
 ## T-0029 — Learner answer-type expansion
 
 **Status:** done / released
