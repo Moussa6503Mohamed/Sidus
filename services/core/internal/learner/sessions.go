@@ -331,7 +331,10 @@ func (p *PostgresStore) SubmitSession(ctx context.Context, subject, id string) (
 	if s.Status != "open" {
 		return SessionResult{}, ErrSessionClosed
 	}
-	if deadline != nil && time.Now().UTC().After(*deadline) {
+	// Same at-or-after-deadline semantics as SaveSessionResponse's !Before check, so the exact
+	// deadline instant expires both autosave and submit identically instead of leaving a gap
+	// where submit alone would still succeed at that instant.
+	if deadline != nil && !time.Now().UTC().Before(*deadline) {
 		if _, err = tx.ExecContext(ctx, `UPDATE assessment_sessions SET status='expired',submitted_at=now(),updated_at=now() WHERE id=$1`, id); err != nil {
 			return SessionResult{}, err
 		}
