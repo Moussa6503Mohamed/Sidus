@@ -1,5 +1,14 @@
 # Task history
 
+## T-0032 — Persistent assessment sessions
+
+**Status:** done / released
+**Implementation commits:** `f3742a4`, `8733340`, `29210fc`
+**Release validation:** server session integration and HTTP contract tests pass locally. Sessions
+provide immutable learner-safe paper snapshots, server deadlines, autosave versions, idempotent
+finalization, and mixed answers. Live browser/API E2E remains deferred until final API integration
+phase. See `docs/handoffs/T-0032.md`.
+
 ## T-0031 — Brand-kit alignment
 
 **Status:** done / released

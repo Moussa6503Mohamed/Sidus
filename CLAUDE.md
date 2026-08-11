@@ -51,6 +51,10 @@ cd services/ai && python -m pytest
 
 ## Current state
 
+- T-0032 released: Test/Exam sessions are server-owned with immutable learner-safe item snapshots,
+  server deadline, optimistic autosave, reconnect-ready reads, and idempotent finalization. Live
+  browser/API E2E is deferred until final API integration. See `docs/handoffs/T-0032.md`.
+
 - T-0031 released: white-primary Sidus Observatory alignment across private uploads, mixed answer
   controls, shared primitives, and Exam dialog accessibility. See `docs/handoffs/T-0031.md`.
 
