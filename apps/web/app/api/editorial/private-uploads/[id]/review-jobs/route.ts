@@ -1,0 +1,2 @@
+import { NextResponse } from "next/server"; import { callUploadCore, readSafeJsonBody } from "@/lib/editorial/core-proxy"; import { errorResponse } from "@/lib/editorial/http";
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }): Promise<NextResponse> { try { const r=await callUploadCore({kind:"queueUploadReview",id:(await params).id},await readSafeJsonBody(req));return NextResponse.json(r.body,{status:r.status});}catch(e){return errorResponse(e);} }

@@ -1000,6 +1000,19 @@ projection. Add a fixed 10/20/50 picker — rejected: artificial limit. Add Core
 now — deferred: changes delivery contract beyond this UI task.
 **Owner/date:** Codex, 2026-08-11 (T-0028).
 
+## D-0025 — Private upload quarantine and Sonnet-ready review boundary
+
+**Status:** approved
+**Decision:** Private PDFs enter through admin-only fixed routes. Core accepts only safe PDF
+uploads (media type, filename, `%PDF-` signature, 25 MiB cap), stores bytes only in configured
+private local storage, and persists only metadata, SHA-256, and opaque reference. No learner,
+BFF, or Core route serves file bytes. Quarantine must become scan-clean before a metadata-only
+review job is queued against approved, catalogue-linked source. Human review remains mandatory;
+Sonnet/OCR/extraction/publication disabled until T-0032.
+**Reason:** Operator upload workflow without source disclosure or automatic publication.
+**Alternatives:** public URLs, browser storage, database bytes, automatic model publication — rejected.
+**Owner/date:** Codex, 2026-08-11 (T-0030).
+
 ## Decision template
 
 ```md

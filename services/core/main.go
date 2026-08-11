@@ -16,6 +16,7 @@ import (
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/curriculummap"
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/learner"
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/question"
+	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/uploadintake"
 )
 
 // defaultAuthorizedParty is the only `azp` origin accepted when CLERK_AUTHORIZED_PARTIES is
@@ -120,6 +121,15 @@ func main() {
 		curriculummap.Register(mux, curriculummap.NewPostgresStore(db), verifier)
 		question.Register(mux, question.NewPostgresStore(db), verifier)
 		learner.Register(mux, learner.NewPostgresStore(db), verifier)
+		if privateRoot := strings.TrimSpace(os.Getenv("SIDUS_PRIVATE_UPLOAD_DIR")); privateRoot != "" {
+			if storage, err := uploadintake.NewLocalQuarantineStore(privateRoot); err != nil {
+				log.Printf("private upload intake disabled: %v", err)
+			} else {
+				uploadintake.Register(mux, uploadintake.NewPostgresStore(db), storage, verifier)
+			}
+		} else {
+			log.Println("SIDUS_PRIVATE_UPLOAD_DIR not set: private upload intake disabled")
+		}
 	}
 
 	_ = http.ListenAndServe(":8080", mux)

@@ -631,6 +631,30 @@ export interface LearnerModule {
   label: string;
 }
 
+// --- Private admin upload intake (T-0030) ---
+// Metadata-only contracts. File bytes and AI output never travel through shared/learner types.
+export type PrivateUploadStatus = "quarantined" | "scan_clean" | "review_pending" | "deletion_requested";
+export interface PrivateUpload {
+  id: string;
+  objectRef: string;
+  originalFilename: string;
+  mediaType: "application/pdf";
+  byteSize: number;
+  sha256: string;
+  contentSourceId: string | null;
+  status: PrivateUploadStatus;
+  retentionState: "retained" | "deletion_requested";
+  uploadedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface QueuePrivateUploadReviewRequest { contentSourceId: string; }
+export interface PrivateUploadReviewJob {
+  id: string; uploadId: string; contentSourceId: string;
+  status: "queued" | "completed" | "published" | "rejected";
+  adapterVersion: "sonnet-review-v1"; createdAt: string;
+}
+
 export interface RubricIncorrectExplanation {
   optionId: string;
   explanation: string;

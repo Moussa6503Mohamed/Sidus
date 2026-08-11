@@ -75,6 +75,8 @@ const (
 	// PermUseLearnerAttempt covers creating and submitting only the verified subject's own
 	// Practice Mode attempts. Every recognized role receives identical owner-only access.
 	PermUseLearnerAttempt Permission = "learner_attempt:write"
+	// PermManagePrivateUpload is admin-only because it accepts private source bytes.
+	PermManagePrivateUpload Permission = "private_upload:manage"
 )
 
 // rolePermissions is the least-privilege matrix. A role absent from this map, or the
@@ -129,6 +131,7 @@ var rolePermissions = map[Role]map[Permission]bool{
 		PermReadQuestionRubric:  true,
 		PermReadLearnerQuestion: true,
 		PermUseLearnerAttempt:   true,
+		PermManagePrivateUpload: true,
 	},
 }
 

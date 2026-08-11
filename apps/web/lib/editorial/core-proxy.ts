@@ -57,9 +57,47 @@ export type EditorialOperation =
   | { kind: "createQuestionRubricVersion"; id: string }
   | { kind: "verifyQuestionRubricVersion"; id: string; version: string };
 
+export type UploadOperation =
+  | { kind: "listPrivateUploads" }
+  | { kind: "createPrivateUpload"; filename: string }
+  | { kind: "markUploadScanClean"; id: string }
+  | { kind: "queueUploadReview"; id: string }
+  | { kind: "requestUploadDeletion"; id: string };
+
 export interface ProxySuccess {
   status: number;
   body: unknown;
+}
+
+function resolveUploadRoute(op: UploadOperation): { method: Method; path: string } {
+  switch (op.kind) {
+    case "listPrivateUploads": return { method: "GET", path: "/private-uploads" };
+    case "createPrivateUpload": return { method: "POST", path: "/private-uploads" };
+    case "markUploadScanClean": return { method: "POST", path: `/private-uploads/${requireValidId(op.id)}/scan-clean` };
+    case "queueUploadReview": return { method: "POST", path: `/private-uploads/${requireValidId(op.id)}/review-jobs` };
+    case "requestUploadDeletion": return { method: "POST", path: `/private-uploads/${requireValidId(op.id)}/deletion-request` };
+  }
+}
+
+/** Fixed-route binary upload proxy. PDF bytes move only admin browser -> BFF -> Core private
+ * quarantine. It never logs, parses, caches, or returns bytes. */
+export async function callUploadCore(op: UploadOperation, body?: ArrayBuffer | string): Promise<ProxySuccess> {
+  const baseUrl = process.env.SIDUS_CORE_API_URL;
+  if (!baseUrl) throw new ProxyError(503, "service_unavailable", "the editorial service is not configured");
+  const route = resolveUploadRoute(op);
+  const { getToken } = await auth(); const token = await getToken();
+  if (!token) throw new ProxyError(401, "unauthorized", "sign-in is required");
+  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}${route.path}`, {
+      method: route.method, redirect: "error", signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json", ...(op.kind === "createPrivateUpload" ? { "Content-Type": "application/pdf", "X-Sidus-Upload-Filename": op.filename } : body !== undefined ? { "Content-Type": "application/json" } : {}) },
+      body,
+    });
+    if (response.status >= 500) { await response.text().catch(() => undefined); throw new ProxyError(502, "upstream_error", "the editorial service is temporarily unavailable"); }
+    const text = await response.text(); return { status: response.status, body: text ? JSON.parse(text) : null };
+  } catch (err) { if (err instanceof ProxyError) throw err; throw new ProxyError(502, "upstream_unavailable", "the editorial service is temporarily unavailable"); }
+  finally { clearTimeout(timeout); }
 }
 
 function requireValidId(id: string): string {

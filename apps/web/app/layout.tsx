@@ -72,6 +72,7 @@ export default async function RootLayout({
                     <Link href="/dashboard/editorial/questions" className={navStyles.navlink}>
                       Questions
                     </Link>
+                    {role === "admin" && <Link href="/dashboard/editorial/uploads" className={navStyles.navlink}>Private intake</Link>}
                   </>
                 )}
               </Show>
