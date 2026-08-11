@@ -733,6 +733,78 @@ func TestPostgresStore_Integration_AttemptPinsOwnershipAndSubmit(t *testing.T) {
 	}
 }
 
+func TestPostgresStore_Integration_WrittenMarkingRequestIsConcurrentIdempotent(t *testing.T) {
+	f := newFixture(t)
+	questionID := seedEligibleQuestion(t, f.db, f.syllabusID, f.nodeID)
+	attempt, err := f.store.CreateAttempt(f.ctx, "owner-a", questionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.store.SubmitAttempt(f.ctx, "owner-a", attempt.AttemptID, `{"text":"private response"}`); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 6)
+	for range 6 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, _, err := f.store.RequestMarking(context.Background(), "owner-a", attempt.AttemptID)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent RequestMarking: %v", err)
+		}
+	}
+	var count int
+	if err := f.db.QueryRow(`SELECT count(*) FROM written_marking_requests WHERE attempt_id=$1`, attempt.AttemptID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("requests=%d err=%v", count, err)
+	}
+	if _, err := f.store.GetMarking(f.ctx, "other-owner", attempt.AttemptID); err != ErrMarkingNotFound {
+		t.Fatalf("foreign read=%v", err)
+	}
+}
+
+func TestPostgresStore_Integration_WrittenMarkingRetriesThenTerminalIsImmutable(t *testing.T) {
+	f := newFixture(t)
+	questionID := seedEligibleQuestion(t, f.db, f.syllabusID, f.nodeID)
+	attempt, err := f.store.CreateAttempt(f.ctx, "owner-a", questionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.store.SubmitAttempt(f.ctx, "owner-a", attempt.AttemptID, `{"text":"private response"}`); err != nil {
+		t.Fatal(err)
+	}
+	job, _, _, err := f.store.RequestMarking(f.ctx, "owner-a", attempt.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if _, err = f.store.ApplyMarking(f.ctx, job.RequestID, MarkingOutcome{Status: MarkingPending, Reason: "provider_unavailable"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := f.store.GetMarking(f.ctx, "owner-a", attempt.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Status != MarkingWithheld || p.RetryCount != 2 {
+		t.Fatalf("projection=%+v", p)
+	}
+	accepted := MarkingOutcome{Status: MarkingAccepted, Result: &MarkingResult{CriterionMarks: []CriterionMark{{CriterionID: "c1", MarksAwarded: 1, Feedback: "private feedback"}}, AwardedMarks: 1, MaxMarks: 1, Model: "fake", ModelVersion: "v1", Confidence: .9}}
+	p2, err := f.store.ApplyMarking(f.ctx, job.RequestID, accepted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p2.Status != MarkingWithheld {
+		t.Fatalf("terminal changed: %+v", p2)
+	}
+}
+
 func assertNoAttemptOrEventForQuestion(t *testing.T, db *sql.DB, questionID string) {
 	t.Helper()
 	var attempts, events int

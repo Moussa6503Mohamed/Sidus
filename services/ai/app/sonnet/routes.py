@@ -39,6 +39,10 @@ class MarkingCriterion(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
     criterion_id: str = Field(alias="criterionId", min_length=1, max_length=64)
     max_marks: int = Field(alias="maxMarks", ge=1, le=100)
+    descriptor: str = Field(default="", max_length=4000)
+class MarkingPrivateContext(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    answer: dict = Field(min_length=1)
 class MarkingJobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
     job_id: str = Field(alias="jobId", min_length=1, max_length=128)
@@ -48,6 +52,7 @@ class MarkingJobRequest(BaseModel):
     rubric_version_id: str = Field(alias="rubricVersionId", min_length=1, max_length=128)
     rubric_criteria: tuple[MarkingCriterion, ...] = Field(alias="rubricCriteria", min_length=1, max_length=64)
     prompt_content_ref: str = Field(alias="promptContentRef", min_length=1, max_length=256)
+    private_context: MarkingPrivateContext = Field(alias="privateContext")
 
 
 @lru_cache
@@ -126,8 +131,9 @@ def submit_marking_job(
         job_id=request.job_id, task_type="marking", question_id=request.question_id,
         syllabus_id=request.syllabus_id, rubric_version_id=request.rubric_version_id,
         language="en", explanation_version="v1",
-        rubric_criteria=tuple({"criterion_id": c.criterion_id, "max_marks": c.max_marks} for c in request.rubric_criteria),
+        rubric_criteria=tuple({"criterion_id": c.criterion_id, "max_marks": c.max_marks, "descriptor": c.descriptor} for c in request.rubric_criteria),
         prompt_content_ref=request.prompt_content_ref,
+        private_marking_context={"answer": request.private_context.answer},
     )
     try:
         job = run_job(adapter_request, store=store, provider=provider, owner_subject=SERVICE_OWNER)

@@ -517,44 +517,38 @@ func (p *PostgresStore) RequestMarking(ctx context.Context, learnerSubjectID, at
 		if err != nil {
 			return MarkingJob{}, MarkingProjection{}, false, err
 		}
+		job, buildErr := p.markingJobTx(ctx, tx, learnerSubjectID, attemptID)
+		if buildErr != nil {
+			return MarkingJob{}, MarkingProjection{}, false, buildErr
+		}
 		if err := tx.Commit(); err != nil {
 			return MarkingJob{}, MarkingProjection{}, false, err
 		}
-		return MarkingJob{}, projection, false, nil
+		return job, projection, projection.Status == MarkingPending && projection.RetryCount < 3, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) && !isInvalidTextRepresentation(err) {
 		return MarkingJob{}, MarkingProjection{}, false, fmt.Errorf("lock marking request: %w", err)
 	}
 
-	var job MarkingJob
-	var responseType ResponseType
-	var rubricRaw []byte
-	err = tx.QueryRowContext(ctx, `
-		SELECT a.id, a.question_id, q.syllabus_id, a.canonical_rubric_version_id, a.question_content_revision, a.response_type, rv.rubric
-		FROM learner_attempts a
-		JOIN questions q ON q.id = a.question_id
-		JOIN question_rubric_versions rv ON rv.id = a.canonical_rubric_version_id AND rv.question_id = a.question_id AND rv.question_revision = a.question_content_revision
-		WHERE a.id = $1 AND a.learner_subject_id = $2 AND a.status = 'submitted' AND a.result_status = 'pending_review'
-		FOR UPDATE OF a, rv
-	`, attemptID, learnerSubjectID).Scan(&job.AttemptID, &job.QuestionID, &job.SyllabusID, &job.RubricVersionID, new(int), &responseType, &rubricRaw)
-	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
-		return MarkingJob{}, MarkingProjection{}, false, ErrMarkingIneligible
-	}
+	job, err := p.markingJobTx(ctx, tx, learnerSubjectID, attemptID)
 	if err != nil {
-		return MarkingJob{}, MarkingProjection{}, false, fmt.Errorf("pin written marking attempt: %w", err)
+		return MarkingJob{}, MarkingProjection{}, false, err
 	}
-	if !isWrittenResponse(responseType) {
-		return MarkingJob{}, MarkingProjection{}, false, ErrMarkingIneligible
-	}
-	criteria, ok := markingCriteria(rubricRaw)
-	if !ok {
-		return MarkingJob{}, MarkingProjection{}, false, ErrMarkingIneligible
-	}
-	job.Criteria = criteria
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO written_marking_requests (attempt_id, learner_subject_id, question_id, question_content_revision, canonical_rubric_version_id)
 		SELECT a.id, a.learner_subject_id, a.question_id, a.question_content_revision, a.canonical_rubric_version_id FROM learner_attempts a WHERE a.id = $1
+		ON CONFLICT (attempt_id) DO NOTHING
 		RETURNING id`, attemptID).Scan(&job.RequestID)
+	if errors.Is(err, sql.ErrNoRows) {
+		projection, readErr := getMarkingTx(ctx, tx, learnerSubjectID, attemptID)
+		if readErr != nil {
+			return MarkingJob{}, MarkingProjection{}, false, readErr
+		}
+		if err = tx.Commit(); err != nil {
+			return MarkingJob{}, MarkingProjection{}, false, err
+		}
+		return job, projection, projection.Status == MarkingPending && projection.RetryCount < 3, nil
+	}
 	if err != nil {
 		return MarkingJob{}, MarkingProjection{}, false, fmt.Errorf("insert marking request: %w", err)
 	}
@@ -568,11 +562,44 @@ func (p *PostgresStore) RequestMarking(ctx context.Context, learnerSubjectID, at
 	return job, projection, true, nil
 }
 
+func (p *PostgresStore) markingJobTx(ctx context.Context, tx *sql.Tx, learnerSubjectID, attemptID string) (MarkingJob, error) {
+	var job MarkingJob
+	var responseType ResponseType
+	var rubricRaw []byte
+	err := tx.QueryRowContext(ctx, `
+		SELECT a.id, a.question_id, q.syllabus_id, a.canonical_rubric_version_id, a.question_content_revision, a.response_type, rv.rubric
+		FROM learner_attempts a
+		JOIN questions q ON q.id = a.question_id
+		JOIN question_rubric_versions rv ON rv.id = a.canonical_rubric_version_id AND rv.question_id = a.question_id AND rv.question_revision = a.question_content_revision
+		WHERE a.id = $1 AND a.learner_subject_id = $2 AND a.status = 'submitted' AND a.result_status = 'pending_review'
+		FOR UPDATE OF a, rv
+	`, attemptID, learnerSubjectID).Scan(&job.AttemptID, &job.QuestionID, &job.SyllabusID, &job.RubricVersionID, new(int), &responseType, &rubricRaw)
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
+		return MarkingJob{}, ErrMarkingIneligible
+	}
+	if err != nil {
+		return MarkingJob{}, fmt.Errorf("pin written marking attempt: %w", err)
+	}
+	if !isWrittenResponse(responseType) {
+		return MarkingJob{}, ErrMarkingIneligible
+	}
+	criteria, ok := markingCriteria(rubricRaw)
+	if !ok {
+		return MarkingJob{}, ErrMarkingIneligible
+	}
+	job.Criteria = criteria
+	if err = tx.QueryRowContext(ctx, `SELECT answer_payload FROM learner_attempts WHERE id=$1`, attemptID).Scan(&job.Answer); err != nil {
+		return MarkingJob{}, fmt.Errorf("read private marking answer: %w", err)
+	}
+	return job, nil
+}
+
 func markingCriteria(raw []byte) ([]RubricCriterion, bool) {
 	var doc struct {
 		Criteria []struct {
-			ID    string `json:"id"`
-			Marks int    `json:"marks"`
+			ID         string  `json:"id"`
+			Marks      int     `json:"marks"`
+			Descriptor *string `json:"descriptor"`
 		} `json:"criteria"`
 	}
 	if json.Unmarshal(raw, &doc) != nil || len(doc.Criteria) == 0 || len(doc.Criteria) > 64 {
@@ -589,7 +616,11 @@ func markingCriteria(raw []byte) ([]RubricCriterion, bool) {
 			return nil, false
 		}
 		seen[c.ID] = struct{}{}
-		out = append(out, RubricCriterion{ID: c.ID, MaxMarks: c.Marks})
+		descriptor := ""
+		if c.Descriptor != nil {
+			descriptor = strings.TrimSpace(*c.Descriptor)
+		}
+		out = append(out, RubricCriterion{ID: c.ID, MaxMarks: c.Marks, Descriptor: descriptor})
 	}
 	return out, true
 }

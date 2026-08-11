@@ -12,7 +12,7 @@ output.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -30,6 +30,16 @@ class RubricCriterion(BaseModel):
 
     criterion_id: str = Field(min_length=1, max_length=64)
     max_marks: int = Field(ge=1, le=100)
+    descriptor: str = Field(default="", max_length=4000)
+
+class PrivateMarkingContext(BaseModel):
+    """Private service-only context for a written marking call.
+
+    It is accepted only on the service route, omitted from all public job projections, and is
+    available to a future provider implementation without a browser-facing fetch path.
+    """
+    model_config = ConfigDict(extra="forbid")
+    answer: dict[str, Any] = Field(min_length=1)
 
 
 class SonnetRequest(BaseModel):
@@ -50,6 +60,7 @@ class SonnetRequest(BaseModel):
     explanation_version: str = Field(min_length=1, max_length=32)
     rubric_criteria: tuple[RubricCriterion, ...] = Field(min_length=1, max_length=64)
     prompt_content_ref: str = Field(min_length=1, max_length=256)
+    private_marking_context: PrivateMarkingContext | None = None
 
     @model_validator(mode="after")
     def _unique_criteria(self) -> "SonnetRequest":

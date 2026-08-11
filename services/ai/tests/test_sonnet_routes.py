@@ -193,7 +193,8 @@ def test_service_marking_route_is_token_gated_and_fake_provider_only(
     payload = {
         "jobId": "service-marking-1", "attemptId": "opaque-attempt", "questionId": "opaque-question",
         "syllabusId": "opaque-syllabus", "rubricVersionId": "opaque-rubric",
-        "rubricCriteria": [{"criterionId": "c1", "maxMarks": 2}], "promptContentRef": "opaque-attempt",
+        "rubricCriteria": [{"criterionId": "c1", "maxMarks": 2, "descriptor": "private criterion"}], "promptContentRef": "opaque-attempt",
+        "privateContext": {"answer": {"text": "private learner answer"}},
     }
     client = TestClient(app)
     assert client.post("/sonnet/marking-jobs", json=payload).status_code == 401

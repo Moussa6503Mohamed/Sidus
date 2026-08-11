@@ -2,6 +2,7 @@ package learner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 )
 
@@ -44,10 +45,14 @@ type MarkingJob struct {
 	SyllabusID      string
 	RubricVersionID string
 	Criteria        []RubricCriterion
+	// PrivateContext crosses only the service-authenticated Coreâ†’AI boundary. It is never part
+	// of a learner projection, event, log or public route.
+	Answer json.RawMessage
 }
 type RubricCriterion struct {
-	ID       string
-	MaxMarks int
+	ID         string
+	MaxMarks   int
+	Descriptor string
 }
 type MarkingOutcome struct {
 	Status MarkingStatus

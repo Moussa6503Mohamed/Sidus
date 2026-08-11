@@ -28,9 +28,11 @@ func NewHTTPSonnetMarker(baseURL, token string) (*HTTPSonnetMarker, error) {
 func (m *HTTPSonnetMarker) MarkWrittenAttempt(ctx context.Context, j MarkingJob) (MarkingOutcome, error) {
 	criteria := make([]map[string]any, 0, len(j.Criteria))
 	for _, c := range j.Criteria {
-		criteria = append(criteria, map[string]any{"criterionId": c.ID, "maxMarks": c.MaxMarks})
+		criteria = append(criteria, map[string]any{"criterionId": c.ID, "maxMarks": c.MaxMarks, "descriptor": c.Descriptor})
 	}
-	body, _ := json.Marshal(map[string]any{"jobId": j.RequestID, "attemptId": j.AttemptID, "questionId": j.QuestionID, "syllabusId": j.SyllabusID, "rubricVersionId": j.RubricVersionID, "rubricCriteria": criteria, "promptContentRef": j.AttemptID})
+	// This is a private, TLS-protected service request; no browser route sees privateContext.
+	// It is intentionally not logged or added to Core audit events.
+	body, _ := json.Marshal(map[string]any{"jobId": j.RequestID, "attemptId": j.AttemptID, "questionId": j.QuestionID, "syllabusId": j.SyllabusID, "rubricVersionId": j.RubricVersionID, "rubricCriteria": criteria, "promptContentRef": j.AttemptID, "privateContext": map[string]any{"answer": j.Answer}})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.baseURL+"/sonnet/marking-jobs", bytes.NewReader(body))
 	if err != nil {
 		return MarkingOutcome{}, err

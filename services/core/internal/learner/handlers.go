@@ -226,16 +226,19 @@ func (h *markingHandler) request(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "internal_error", internalErrorMessage)
 		return
 	}
-	// A missing provider is deliberately a pending result, not a fabricated mark or an auth bypass.
+	// A bounded execution loop makes automatic retry reachable on one idempotent POST. A missing
+	// provider deliberately leaves the request pending instead of fabricating a score.
 	if created && h.marker != nil {
-		outcome, callErr := h.marker.MarkWrittenAttempt(r.Context(), job)
-		if callErr != nil {
-			outcome = MarkingOutcome{Status: MarkingPending, Reason: "provider_unavailable"}
-		}
-		projection, err = h.store.ApplyMarking(r.Context(), job.RequestID, outcome)
-		if err != nil {
-			writeError(w, 500, "internal_error", internalErrorMessage)
-			return
+		for projection.Status == MarkingPending && projection.RetryCount < 3 {
+			outcome, callErr := h.marker.MarkWrittenAttempt(r.Context(), job)
+			if callErr != nil {
+				outcome = MarkingOutcome{Status: MarkingPending, Reason: "provider_unavailable"}
+			}
+			projection, err = h.store.ApplyMarking(r.Context(), job.RequestID, outcome)
+			if err != nil {
+				writeError(w, 500, "internal_error", internalErrorMessage)
+				return
+			}
 		}
 	}
 	writeJSON(w, http.StatusAccepted, projection)
