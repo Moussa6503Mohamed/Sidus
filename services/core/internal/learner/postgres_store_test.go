@@ -560,6 +560,48 @@ func TestPostgresStore_Integration_ListActiveSyllabuses_OnlyActiveReturnedWithSa
 
 // --- ListQuestions ---
 
+func TestPostgresStore_Integration_ListModules_OnlyLiveEligibleModulesReturned(t *testing.T) {
+	f := newFixture(t)
+	eligibleNode := f.nodeID
+	emptyNode := seedNode(t, f.db, f.syllabusID, f.sourceID, "verified")
+	draftNode := seedNode(t, f.db, f.syllabusID, f.sourceID, "draft")
+	_ = seedEligibleQuestion(t, f.db, f.syllabusID, eligibleNode)
+	_ = seedEligibleQuestion(t, f.db, f.syllabusID, draftNode)
+
+	items, err := f.store.ListModules(f.ctx, f.syllabusID)
+	if err != nil {
+		t.Fatalf("ListModules: %v", err)
+	}
+	byID := map[string]Module{}
+	for _, item := range items {
+		byID[item.ID] = item
+	}
+	if _, ok := byID[eligibleNode]; !ok {
+		t.Fatalf("eligible module missing: %v", byID)
+	}
+	if _, ok := byID[emptyNode]; ok {
+		t.Fatalf("empty module leaked: %v", byID)
+	}
+	if _, ok := byID[draftNode]; ok {
+		t.Fatalf("draft module leaked: %v", byID)
+	}
+	got := byID[eligibleNode]
+	if got.SyllabusID != f.syllabusID || got.Code == "" || got.Label == "" {
+		t.Fatalf("unsafe/incomplete module: %+v", got)
+	}
+}
+
+func TestPostgresStore_Integration_ListModules_RejectsUnknownOrInactiveSyllabus(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.store.ListModules(f.ctx, "not-a-uuid"); err != ErrUnknownSyllabus {
+		t.Fatalf("malformed = %v", err)
+	}
+	inactive := seedSyllabus(t, f.db, "draft")
+	if _, err := f.store.ListModules(f.ctx, inactive); err != ErrUnknownSyllabus {
+		t.Fatalf("inactive = %v", err)
+	}
+}
+
 func TestPostgresStore_Integration_ListQuestions_UnknownSyllabus_Error(t *testing.T) {
 	f := newFixture(t)
 	if _, err := f.store.ListQuestions(f.ctx, "00000000-0000-0000-0000-000000000000", nil); err != ErrUnknownSyllabus {

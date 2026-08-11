@@ -220,6 +220,53 @@ func (p *PostgresStore) ListActiveSyllabuses(ctx context.Context) ([]Syllabus, e
 	return items, rows.Err()
 }
 
+// ListModules mirrors ListQuestions' live eligibility gate, but projects only four learner-safe
+// module fields. A module remains discoverable only while it has at least one eligible question;
+// source provenance, editorial lifecycle and parent hierarchy never cross this boundary.
+func (p *PostgresStore) ListModules(ctx context.Context, syllabusID string) ([]Module, error) {
+	active, err := syllabusIsActive(ctx, p.db, syllabusID)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		return nil, ErrUnknownSyllabus
+	}
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT DISTINCT n.id, n.syllabus_id, n.node_code, n.label
+		FROM questions q
+		JOIN curriculum_map_nodes n ON n.id = q.curriculum_map_node_id
+		JOIN content_sources s ON s.id = n.content_source_id
+		JOIN question_rubric_versions rv ON rv.id = q.canonical_rubric_version_id AND rv.question_id = q.id
+		LEFT JOIN question_provenance qp ON qp.question_id = q.id AND qp.origin_type = q.origin_type
+		LEFT JOIN content_sources ps ON ps.id = qp.content_source_id
+		WHERE q.syllabus_id = $1
+		  AND q.status = 'verified'
+		  AND rv.status = 'verified'
+		  AND rv.question_revision = q.content_revision
+		  AND n.status = 'verified'
+		  AND s.status = 'approved'
+		  AND s.catalogue_syllabus_id = q.syllabus_id
+		`+licensedEligibilityPredicate+`
+		ORDER BY n.node_code ASC, n.label ASC, n.id ASC
+	`, syllabusID)
+	if err != nil {
+		if isInvalidTextRepresentation(err) {
+			return nil, ErrUnknownSyllabus
+		}
+		return nil, fmt.Errorf("list learner modules: %w", err)
+	}
+	defer rows.Close()
+	items := []Module{}
+	for rows.Next() {
+		var item Module
+		if err := rows.Scan(&item.ID, &item.SyllabusID, &item.Code, &item.Label); err != nil {
+			return nil, fmt.Errorf("scan learner module: %w", err)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (p *PostgresStore) GetQuestion(ctx context.Context, id string) (Projection, error) {
 	query := eligibleQuestionsQuery + ` AND q.id = $1`
 	proj, err := scanProjection(p.db.QueryRowContext(ctx, query, id))

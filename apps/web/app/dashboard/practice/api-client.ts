@@ -1,4 +1,4 @@
-import type { LearnerAttempt, LearnerAttemptResult, LearnerQuestion, LearnerSyllabus } from "./types";
+import type { LearnerAttempt, LearnerAttemptResult, LearnerModule, LearnerQuestion, LearnerSyllabus } from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -42,6 +42,10 @@ export function listPracticeQuestions(
 
 export function listPracticeSyllabuses(): Promise<ListResponse<LearnerSyllabus>> {
   return request(`/api/learner/syllabuses`);
+}
+
+export function listPracticeModules(syllabusId: string): Promise<ListResponse<LearnerModule>> {
+  return request(`/api/learner/modules?${new URLSearchParams({ syllabusId }).toString()}`);
 }
 
 export function createPracticeAttempt(questionId: string): Promise<LearnerAttempt> {

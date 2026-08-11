@@ -15,14 +15,16 @@ vi.mock("./api-client", () => ({
   },
   listPracticeQuestions: vi.fn(),
   listPracticeSyllabuses: vi.fn(),
+  listPracticeModules: vi.fn(),
   createPracticeAttempt: vi.fn(),
   submitPracticeAttempt: vi.fn(),
 }));
 
-import { ApiError, createPracticeAttempt, listPracticeQuestions, listPracticeSyllabuses, submitPracticeAttempt } from "./api-client";
+import { ApiError, createPracticeAttempt, listPracticeModules, listPracticeQuestions, listPracticeSyllabuses, submitPracticeAttempt } from "./api-client";
 
 const mockedListQuestions = vi.mocked(listPracticeQuestions);
 const mockedListSyllabuses = vi.mocked(listPracticeSyllabuses);
+const mockedListModules = vi.mocked(listPracticeModules);
 const mockedCreateAttempt = vi.mocked(createPracticeAttempt);
 const mockedSubmitAttempt = vi.mocked(submitPracticeAttempt);
 
@@ -35,6 +37,7 @@ const oneActiveSyllabus = {
 beforeEach(() => {
   vi.clearAllMocks();
   mockedListSyllabuses.mockResolvedValue(oneActiveSyllabus);
+  mockedListModules.mockResolvedValue({ items: [{ id: "module-1", syllabusId: "syl-1", code: "M1", label: "opaque-module" }] });
   mockedCreateAttempt.mockResolvedValue({ attemptId: "attempt-1", questionId: "q-1", status: "open", maxMarks: 2 });
   mockedSubmitAttempt.mockResolvedValue({
     attemptId: "attempt-1", questionId: "q-1", selectedOptionId: "opt-b", correctOptionId: "opt-a",
@@ -101,7 +104,7 @@ describe("PracticeWorkspace — syllabus discovery", () => {
 });
 
 describe("PracticeWorkspace — question loading", () => {
-  it("loads and renders eligible questions for the selected syllabus, forwarding an optional node filter", async () => {
+  it("loads learner-safe modules and renders eligible questions for selected module", async () => {
     mockedListQuestions.mockResolvedValue({
       items: [
         {
@@ -124,12 +127,39 @@ describe("PracticeWorkspace — question loading", () => {
 
     await screen.findByRole("combobox", { name: /syllabus/i });
     await user.selectOptions(screen.getByRole("combobox", { name: /syllabus/i }), "syl-1");
-    await user.type(screen.getByLabelText(/curriculum node id/i), "node-1");
+    await screen.findByRole("combobox", { name: /module/i });
+    await user.selectOptions(screen.getByRole("combobox", { name: /module/i }), "module-1");
     await user.click(screen.getByRole("button", { name: /load questions/i }));
 
     expect(await screen.findByText("opaque-prompt-1")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "opaque-a" })).toBeInTheDocument();
-    expect(mockedListQuestions).toHaveBeenCalledWith("syl-1", "node-1");
+    expect(mockedListModules).toHaveBeenCalledWith("syl-1");
+    expect(mockedListQuestions).toHaveBeenCalledWith("syl-1", "module-1");
+  });
+
+  it("never asks learner to type raw node identifiers", async () => {
+    render(<PracticeWorkspace />);
+    const user = userEvent.setup();
+    await screen.findByLabelText(/syllabus/i);
+    await user.selectOptions(screen.getByLabelText(/syllabus/i), "syl-1");
+    expect(await screen.findByLabelText(/^module$/i)).toBeInstanceOf(HTMLSelectElement);
+    expect(screen.queryByText(/node/i)).not.toBeInTheDocument();
+  });
+
+  it("uses All available by default and rejects count above availability without truncating", async () => {
+    mockedListQuestions.mockResolvedValue({ items: [{
+      id: "q-1", syllabusId: "syl-1", curriculumMapNodeId: "module-1", responseType: "multiple_choice", language: "en", prompt: "opaque-one", options: [{ id: "a", label: "a" }, { id: "b", label: "b" }], contentRevision: 1,
+    }] });
+    const user = userEvent.setup(); render(<PracticeWorkspace />);
+    await screen.findByLabelText(/syllabus/i);
+    await user.selectOptions(screen.getByLabelText(/syllabus/i), "syl-1");
+    await user.click(screen.getByRole("button", { name: /load questions/i }));
+    expect(await screen.findByText(/showing 1 of 1/i)).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText(/^questions$/i), "custom");
+    await user.clear(screen.getByLabelText(/question count/i));
+    await user.type(screen.getByLabelText(/question count/i), "2");
+    await user.click(screen.getByRole("button", { name: /load questions/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/1 to 1/i);
   });
 
   it("shows an empty state when no questions are eligible", async () => {

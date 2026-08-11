@@ -48,6 +48,11 @@ type Store interface {
 	// failure — an empty result is a valid, non-error response (no active syllabuses yet).
 	ListActiveSyllabuses(ctx context.Context) ([]Syllabus, error)
 
+	// ListModules returns learner-safe module picker entries for one active syllabus. Only verified
+	// modules with at least one question passing the same live eligibility gate as ListQuestions
+	// are discoverable; this prevents empty/draft/source-only curriculum structure from leaking.
+	ListModules(ctx context.Context, syllabusID string) ([]Module, error)
+
 	CreateAttempt(ctx context.Context, learnerSubjectID, questionID string) (Attempt, error)
 	SubmitAttempt(ctx context.Context, learnerSubjectID, attemptID, selectedOptionID string) (AttemptResult, error)
 }

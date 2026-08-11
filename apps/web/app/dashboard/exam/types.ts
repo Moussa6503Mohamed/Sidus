@@ -3,5 +3,6 @@ export type {
   LearnerAttemptResult,
   LearnerQuestion,
   LearnerQuestionOption,
+  LearnerModule,
   LearnerSyllabus,
 } from "../practice/types";

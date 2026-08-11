@@ -62,6 +62,17 @@ type Syllabus struct {
 	DisplayName   string  `json:"displayName"`
 }
 
+// Module is the learner-safe label for one verified curriculum-map entry that currently has at
+// least one eligible learner question. It intentionally contains no source, provenance, status,
+// locator, parent, or editorial lifecycle data. The internal database term remains
+// curriculum_map_nodes; learner surfaces call these Modules.
+type Module struct {
+	ID         string `json:"id"`
+	SyllabusID string `json:"syllabusId"`
+	Code       string `json:"code"`
+	Label      string `json:"label"`
+}
+
 type AttemptStatus string
 
 const (

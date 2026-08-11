@@ -172,6 +172,26 @@ describe("callCoreLearner", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer abc.def.ghi");
   });
 
+  it("calls the exact fixed learner module discovery path after validating syllabusId", async () => {
+    mockSignedIn("abc.def.ghi");
+    fetchSpy.mockResolvedValue(jsonResponse(200, { items: [] }));
+    const result = await callCoreLearner({ kind: "listLearnerModules", syllabusId: "syl-1" });
+    expect(result).toEqual({ status: 200, body: { items: [] } });
+    const [target, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(target).toBe("http://core.internal:8080/learner/modules?syllabusId=syl-1");
+    expect(init.method).toBe("GET");
+    expect(init.redirect).toBe("error");
+  });
+
+  it("rejects invalid learner module syllabus before Clerk and fetch", async () => {
+    mockSignedIn();
+    const err = await callCoreLearner({ kind: "listLearnerModules", syllabusId: "../syl" }).catch((e) => e);
+    expect(err).toBeInstanceOf(LearnerProxyError);
+    expect((err as LearnerProxyError).status).toBe(400);
+    expect(mockedAuth).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("fails closed with 503 for listLearnerSyllabuses when SIDUS_CORE_API_URL is missing", async () => {
     vi.unstubAllEnvs();
     mockSignedIn();

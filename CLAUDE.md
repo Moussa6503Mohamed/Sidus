@@ -241,3 +241,7 @@ cd services/ai && python -m pytest
   Playwright covers opaque two-question full flow and passed on documented local web/Core runtime
   on 2026-08-11. No source/question content is seeded or imported. See
   `docs/handoffs/T-0026.md`.
+- T-0028 learner Module selection and availability-aware count is in review: a learner-safe
+  `GET /learner/modules` route exposes only modules with at least one live eligible question;
+  Practice and Exam use Module selectors and All/custom positive counts without a 10-question
+  cap. Response-type expansion remains separate; see `docs/handoffs/T-0028.md`.

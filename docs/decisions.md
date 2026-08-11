@@ -983,6 +983,23 @@ the default: a suite that quietly stops testing what it claims to test is worse 
 fails.
 **Owner/date:** Claude Code agent, 2026-08-10 (T-0025).
 
+## D-0024 — Learner-safe Module discovery and availability count
+**Status:** approved
+**Decision:** Add `GET /learner/modules?syllabusId=...` behind existing
+`learner_question:read`, returning only verified curriculum entries with at least one question
+that passes the live learner eligibility gate. Learner screens call entries Modules and use only
+an accessible select. Practice and Exam fetch current eligible questions then allow All or a
+positive requested count bounded by that live result; no arbitrary 10-question cap.
+**Reason:** Learners need topic/module practice without opaque internal identifiers. Listing only
+modules backed by an eligible question avoids exposing unpublished/dead curriculum structure.
+Client-side count avoids adding pagination/session semantics to existing immutable learner list
+contracts and blocks rather than silently truncating an unavailable request.
+**Alternatives:** Expose all verified curriculum-map entries — rejected: leaks structure with no
+learner content. Reuse editorial curriculum routes — rejected: wrong permission and broader
+projection. Add a fixed 10/20/50 picker — rejected: artificial limit. Add Core pagination/count
+now — deferred: changes delivery contract beyond this UI task.
+**Owner/date:** Codex, 2026-08-11 (T-0028).
+
 ## Decision template
 
 ```md

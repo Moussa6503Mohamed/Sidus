@@ -50,6 +50,7 @@ type memoryStore struct {
 	nodeSyllabus     map[string]string
 	questions        map[string]Projection
 	syllabuses       []Syllabus
+	modules          []Module
 	attempts         map[string]struct {
 		owner, question string
 		status          AttemptStatus
@@ -70,6 +71,7 @@ func newMemoryStore() *memoryStore {
 				DisplayName:   "opaque-display-name",
 			},
 		},
+		modules: []Module{{ID: "node-1", SyllabusID: "syl-active", Code: "M1", Label: "opaque-module"}},
 		questions: map[string]Projection{
 			"q-1": {
 				ID:                  "q-1",
@@ -125,6 +127,19 @@ func (m *memoryStore) GetQuestion(_ context.Context, id string) (Projection, err
 
 func (m *memoryStore) ListActiveSyllabuses(_ context.Context) ([]Syllabus, error) {
 	return m.syllabuses, nil
+}
+
+func (m *memoryStore) ListModules(_ context.Context, syllabusID string) ([]Module, error) {
+	if !m.activeSyllabuses[syllabusID] {
+		return nil, ErrUnknownSyllabus
+	}
+	items := []Module{}
+	for _, module := range m.modules {
+		if module.SyllabusID == syllabusID {
+			items = append(items, module)
+		}
+	}
+	return items, nil
 }
 
 func (m *memoryStore) CreateAttempt(_ context.Context, owner, questionID string) (Attempt, error) {
@@ -332,6 +347,61 @@ func TestListSyllabuses_MissingToken_Unauthorized(t *testing.T) {
 	rec := doRequest(t, http.MethodGet, "/learner/syllabuses", "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+// --- Learner module discovery ---
+
+func TestListModules_RoleMatrix(t *testing.T) {
+	for _, tok := range []string{adminToken, editorToken, reviewerToken, learnerToken} {
+		rec := doRequest(t, http.MethodGet, "/learner/modules?syllabusId=syl-active", tok)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("token %q: status = %d, want 200; body=%s", tok, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := doRequest(t, http.MethodGet, "/learner/modules?syllabusId=syl-active", noRoleToken); rec.Code != http.StatusForbidden {
+		t.Fatalf("unknown role = %d, want 403", rec.Code)
+	}
+	if rec := doRequest(t, http.MethodGet, "/learner/modules?syllabusId=syl-active", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token = %d, want 401", rec.Code)
+	}
+}
+
+func TestListModules_ValidatesSyllabusAndNoLeakage(t *testing.T) {
+	if rec := doRequest(t, http.MethodGet, "/learner/modules", learnerToken); rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing syllabus = %d", rec.Code)
+	}
+	if rec := doRequest(t, http.MethodGet, "/learner/modules?syllabusId=unknown", learnerToken); rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown syllabus = %d", rec.Code)
+	}
+	rec := doRequest(t, http.MethodGet, "/learner/modules?syllabusId=syl-active", learnerToken)
+	var body struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(body.Items))
+	}
+	var item map[string]json.RawMessage
+	if err := json.Unmarshal(body.Items[0], &item); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"id", "syllabusId", "code", "label"}
+	got := make([]string, 0, len(item))
+	for key := range item {
+		got = append(got, key)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if len(got) != len(want) {
+		t.Fatalf("module keys = %v, want %v", got, want)
+	}
+	for index := range got {
+		if got[index] != want[index] {
+			t.Fatalf("module keys = %v, want %v", got, want)
+		}
 	}
 }
 

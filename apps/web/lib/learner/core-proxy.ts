@@ -34,6 +34,7 @@ export type LearnerOperation =
   | { kind: "listLearnerQuestions"; syllabusId: string; curriculumMapNodeId?: string }
   | { kind: "getLearnerQuestion"; id: string }
   | { kind: "listLearnerSyllabuses" }
+	| { kind: "listLearnerModules"; syllabusId: string }
   | { kind: "createLearnerAttempt"; questionId: string }
   | { kind: "submitLearnerAttempt"; attemptId: string; selectedOptionId: string };
 
@@ -70,6 +71,8 @@ function resolveRoute(op: LearnerOperation): { method: Method; path: string; bod
       return { method: "GET", path: `/learner/questions/${requireValidId(op.id)}` };
     case "listLearnerSyllabuses":
       return { method: "GET", path: "/learner/syllabuses" };
+	case "listLearnerModules":
+		return { method: "GET", path: `/learner/modules?${new URLSearchParams({ syllabusId: requireValidId(op.syllabusId) }).toString()}` };
     case "createLearnerAttempt":
       return { method: "POST", path: `/learner/questions/${requireValidId(op.questionId)}/attempts` };
     case "submitLearnerAttempt":

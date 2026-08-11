@@ -4,13 +4,14 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   ApiError,
   createExamAttempt,
+  listExamModules,
   listExamQuestions,
   listExamSyllabuses,
   submitExamAttempt,
 } from "./api-client";
 import { finalizeExam, type ExamRuntime } from "./finalization";
 import styles from "../practice/styles.module.css";
-import type { LearnerQuestion, LearnerSyllabus } from "./types";
+import type { LearnerModule, LearnerQuestion, LearnerSyllabus } from "./types";
 
 type Screen = "setup" | "taking" | "confirm" | "submitting" | "retry" | "results";
 const DURATION_SECONDS = 30 * 60;
@@ -22,6 +23,9 @@ function errorMessage(error: unknown) {
 function label(syllabus: LearnerSyllabus) {
   return syllabus.track ? `${syllabus.displayName} (${syllabus.track})` : syllabus.displayName;
 }
+function moduleLabel(module: LearnerModule) {
+  return module.label ? `${module.code} — ${module.label}` : module.code;
+}
 
 function clock(seconds: number) {
   return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
@@ -31,8 +35,10 @@ export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { duration
   const [syllabuses, setSyllabuses] = useState<LearnerSyllabus[] | null>(null);
   const [loadError, setLoadError] = useState<string>();
   const [syllabusId, setSyllabusId] = useState("");
-  const [nodeId, setNodeId] = useState("");
-  const [count, setCount] = useState("2");
+  const [modules, setModules] = useState<LearnerModule[] | null>(null);
+  const [moduleError, setModuleError] = useState<string>();
+  const [moduleId, setModuleId] = useState("");
+  const [count, setCount] = useState("all");
   const [questions, setQuestions] = useState<LearnerQuestion[]>([]);
   const [setupMessage, setSetupMessage] = useState<string>();
   const [screen, setScreen] = useState<Screen>("setup");
@@ -63,6 +69,18 @@ export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { duration
   useEffect(() => {
     void loadSyllabuses();
   }, []);
+
+  async function chooseSyllabus(next: string) {
+    setSyllabusId(next);
+    setModuleId("");
+    setCount("all");
+    setSetupMessage(undefined);
+    setModuleError(undefined);
+    if (!next) { setModules(null); return; }
+    setModules(null);
+    try { setModules((await listExamModules(next)).items); }
+    catch (error) { setModules([]); setModuleError(errorMessage(error)); }
+  }
 
   useEffect(() => {
     if ((screen !== "taking" && screen !== "confirm") || !deadline.current) return;
@@ -108,11 +126,11 @@ export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { duration
     event.preventDefault();
     setSetupMessage(undefined);
     try {
-      const available = (await listExamQuestions(syllabusId, nodeId.trim() || undefined)).items
+      const available = (await listExamQuestions(syllabusId, moduleId || undefined)).items
         .filter((question) => question.responseType === "multiple_choice" && Boolean(question.options?.length));
-      const requested = Number(count);
-      if (available.length < requested) {
-        setSetupMessage(`Need ${requested} eligible multiple-choice questions. Only ${available.length} available.`);
+      const requested = count === "all" ? available.length : Number(count);
+      if (!Number.isSafeInteger(requested) || requested < 1 || requested > available.length) {
+        setSetupMessage(`Choose a whole number from 1 to ${available.length}, or All available questions.`);
         return;
       }
       setQuestions(available.slice(0, requested));
@@ -152,7 +170,7 @@ export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { duration
     return <div className={styles.page}><h1>Exam Mode</h1>{loadError ? <p role="alert" className={styles.bannerError}>{loadError} <button className={styles.buttonSecondary} onClick={() => void loadSyllabuses()}>Retry</button></p> : <p role="status">Loading syllabuses…</p>}</div>;
   }
   if (screen === "setup") {
-    return <div className={styles.page}><header className={styles.header}><h1>Exam Mode</h1><p>Local MVP. 30-minute countdown runs in this browser only; refreshing loses exam progress.</p></header><form className={styles.form} onSubmit={start}><div className={styles.field}><label htmlFor="exam-syllabus">Syllabus</label><select id="exam-syllabus" value={syllabusId} onChange={(event) => setSyllabusId(event.target.value)} required><option value="" disabled>Select a syllabus</option>{syllabuses.map((syllabus) => <option key={syllabus.id} value={syllabus.id}>{label(syllabus)}</option>)}</select></div><div className={styles.field}><label htmlFor="exam-node">Curriculum node ID (optional)</label><input id="exam-node" value={nodeId} onChange={(event) => setNodeId(event.target.value)} /></div><div className={styles.field}><label htmlFor="exam-count">Questions</label><select id="exam-count" value={count} onChange={(event) => setCount(event.target.value)}>{[2, 3, 4, 5, 6, 7, 8, 9, 10].map((number) => <option key={number}>{number}</option>)}</select></div><button className={styles.button} disabled={!syllabusId}>Start exam</button></form>{setupMessage && <p role="alert" className={styles.bannerError}>{setupMessage}</p>}</div>;
+    return <div className={styles.page}><header className={styles.header}><h1>Exam Mode</h1><p>Local MVP. 30-minute countdown runs in this browser only; refreshing loses exam progress.</p></header><form className={styles.form} onSubmit={start}><div className={styles.field}><label htmlFor="exam-syllabus">Syllabus</label><select id="exam-syllabus" value={syllabusId} onChange={(event) => void chooseSyllabus(event.target.value)} required><option value="" disabled>Select a syllabus</option>{syllabuses.map((syllabus) => <option key={syllabus.id} value={syllabus.id}>{label(syllabus)}</option>)}</select></div>{syllabusId && <div className={styles.field}><label htmlFor="exam-module">Module</label><select id="exam-module" value={moduleId} onChange={(event) => setModuleId(event.target.value)} disabled={modules === null || Boolean(moduleError)}><option value="">All modules</option>{modules?.map((module) => <option key={module.id} value={module.id}>{moduleLabel(module)}</option>)}</select>{modules === null && !moduleError && <span role="status">Loading modules…</span>}{moduleError && <span role="alert">{moduleError} <button type="button" className={styles.buttonSecondary} onClick={() => void chooseSyllabus(syllabusId)}>Retry modules</button></span>}{modules?.length === 0 && !moduleError && <span>No modules with eligible questions yet.</span>}</div>}<div className={styles.field}><label htmlFor="exam-count">Questions</label><select id="exam-count" value={count === "all" ? "all" : "custom"} onChange={(event) => setCount(event.target.value === "all" ? "all" : count === "all" ? "1" : count)}><option value="all">All available</option><option value="custom">Choose a number</option></select>{count !== "all" && <input aria-label="Question count" type="number" min="1" step="1" value={count} onChange={(event) => setCount(event.target.value)} />}</div><button className={styles.button} disabled={!syllabusId || modules === null || Boolean(moduleError)}>Start exam</button></form>{setupMessage && <p role="alert" className={styles.bannerError}>{setupMessage}</p>}</div>;
   }
   if (screen === "submitting" || screen === "retry") {
     return <div className={styles.page}><h1>Finalising exam</h1><p role="status">{progress || "Preparing answers…"}</p>{screen === "retry" && <p role="alert" className={styles.bannerError}>{finalError} <button className={styles.button} onClick={() => void submitAll()}>Retry remaining answers</button></p>}</div>;

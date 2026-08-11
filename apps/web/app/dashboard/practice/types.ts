@@ -2,6 +2,7 @@ export type {
   LearnerAttempt,
   LearnerAttemptResult,
   LearnerMCQFeedback,
+  LearnerModule,
   LearnerQuestion,
   LearnerQuestionOption,
   LearnerSyllabus,

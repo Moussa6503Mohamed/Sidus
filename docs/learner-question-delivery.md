@@ -122,3 +122,19 @@ Two review findings were fixed on top of the original implementation (still task
 - No Exam Mode, attempt, session, marking, explanation, or AI integration.
 - No seeded or sample question content anywhere in this repository or its tests (D-0005); all
   test fixtures use opaque generated strings.
+
+## Update (T-0028, in review)
+
+Learner setup now uses **Module**, never an opaque curriculum-map identifier. `GET
+/learner/modules?syllabusId=...` uses the existing `learner_question:read` permission and returns
+only `id`, `syllabusId`, `code`, and `label`. Its SQL reuses the live question eligibility gate:
+a module is discoverable only when it is verified and contains at least one currently eligible
+question. No parent hierarchy, source data, lifecycle status, locator, provenance, or audit fields
+are exposed.
+
+The fixed learner BFF adds only `listLearnerModules`; browser calls use its fixed Core route after
+validating syllabus id and obtaining a session token. Practice and Exam now offer All modules and
+module selection plus an availability-aware question-count control: All available or one requested
+positive whole number. There is no arbitrary upper cap and neither surface silently truncates an
+over-large request. Response-type authoring/delivery remains separate; deterministic submission is
+still MCQ-only.

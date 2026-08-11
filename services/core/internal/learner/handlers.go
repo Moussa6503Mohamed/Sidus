@@ -20,6 +20,7 @@ func Register(mux *http.ServeMux, store Store, v auth.Verifier) {
 	mux.HandleFunc("GET /learner/questions", auth.Protect(v, auth.PermReadLearnerQuestion, h.listQuestions))
 	mux.HandleFunc("GET /learner/questions/{id}", auth.Protect(v, auth.PermReadLearnerQuestion, h.getQuestion))
 	mux.HandleFunc("GET /learner/syllabuses", auth.Protect(v, auth.PermReadLearnerQuestion, h.listSyllabuses))
+	mux.HandleFunc("GET /learner/modules", auth.Protect(v, auth.PermReadLearnerQuestion, h.listModules))
 	mux.HandleFunc("POST /learner/questions/{id}/attempts", auth.Protect(v, auth.PermUseLearnerAttempt, h.createAttempt))
 	mux.HandleFunc("POST /learner/attempts/{id}/submit", auth.Protect(v, auth.PermUseLearnerAttempt, h.submitAttempt))
 }
@@ -173,6 +174,24 @@ func (h *handler) getQuestion(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) listSyllabuses(w http.ResponseWriter, r *http.Request) {
 	items, err := h.store.ListActiveSyllabuses(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *handler) listModules(w http.ResponseWriter, r *http.Request) {
+	syllabusID := strings.TrimSpace(r.URL.Query().Get("syllabusId"))
+	if syllabusID == "" {
+		writeMissingFields(w, []string{"syllabusId"})
+		return
+	}
+	items, err := h.store.ListModules(r.Context(), syllabusID)
+	if mapped, ok := mapLearnerError(err); ok {
+		writeLearnerError(w, mapped)
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
 		return

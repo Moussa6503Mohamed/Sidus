@@ -610,6 +610,19 @@ export interface LearnerSyllabus {
   displayName: string;
 }
 
+/**
+ * Learner-safe module-picker entry returned by `GET /learner/modules`. A module appears only
+ * while it contains at least one question that passes the live learner eligibility gate. This
+ * is deliberately hand-written rather than based on editorial curriculum-map types: it cannot
+ * inherit source, locator, provenance, lifecycle, parent, or audit fields.
+ */
+export interface LearnerModule {
+  id: string;
+  syllabusId: string;
+  code: string;
+  label: string;
+}
+
 export interface RubricIncorrectExplanation {
   optionId: string;
   explanation: string;
