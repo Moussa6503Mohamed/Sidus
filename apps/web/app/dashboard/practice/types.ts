@@ -7,4 +7,5 @@ export type {
   LearnerQuestion,
   LearnerQuestionOption,
   LearnerSyllabus,
+  LearnerWrittenMarking,
 } from "@sidus/shared";

@@ -16,7 +16,7 @@ import (
 // learner_question:read, held by every recognized role (learner, editor, reviewer, admin);
 // auth.Protect denies an unknown/missing role before the handler ever runs. This package never
 // widens or reuses the editorial /questions routes.
-func Register(mux *http.ServeMux, store Store, v auth.Verifier) {
+func Register(mux *http.ServeMux, store Store, v auth.Verifier, markers ...SonnetMarker) {
 	h := &handler{store: store}
 	mux.HandleFunc("GET /learner/questions", auth.Protect(v, auth.PermReadLearnerQuestion, h.listQuestions))
 	mux.HandleFunc("GET /learner/questions/{id}", auth.Protect(v, auth.PermReadLearnerQuestion, h.getQuestion))
@@ -24,6 +24,15 @@ func Register(mux *http.ServeMux, store Store, v auth.Verifier) {
 	mux.HandleFunc("GET /learner/modules", auth.Protect(v, auth.PermReadLearnerQuestion, h.listModules))
 	mux.HandleFunc("POST /learner/questions/{id}/attempts", auth.Protect(v, auth.PermUseLearnerAttempt, h.createAttempt))
 	mux.HandleFunc("POST /learner/attempts/{id}/submit", auth.Protect(v, auth.PermUseLearnerAttempt, h.submitAttempt))
+	if markingStore, ok := store.(MarkingStore); ok {
+		var marker SonnetMarker
+		if len(markers) == 1 {
+			marker = markers[0]
+		}
+		mh := &markingHandler{store: markingStore, marker: marker}
+		mux.HandleFunc("POST /learner/attempts/{id}/marking", auth.Protect(v, auth.PermUseLearnerAttempt, mh.request))
+		mux.HandleFunc("GET /learner/attempts/{id}/marking", auth.Protect(v, auth.PermUseLearnerAttempt, mh.get))
+	}
 	if sessions, ok := store.(SessionStore); ok {
 		sh := &sessionHandler{store: sessions}
 		mux.HandleFunc("POST /learner/assessment-sessions", auth.Protect(v, auth.PermUseLearnerAttempt, sh.create))
@@ -183,6 +192,70 @@ func (h *handler) submitAttempt(w http.ResponseWriter, r *http.Request) {
 
 type handler struct {
 	store Store
+}
+
+type markingHandler struct {
+	store  MarkingStore
+	marker SonnetMarker
+}
+
+func emptyRequestBody(r *http.Request) bool {
+	data, err := io.ReadAll(io.LimitReader(r.Body, 4097))
+	return err == nil && len(data) <= 4096 && len(bytes.TrimSpace(data)) == 0
+}
+func (h *markingHandler) request(w http.ResponseWriter, r *http.Request) {
+	if !emptyRequestBody(r) {
+		writeError(w, 400, "invalid_json", "request body must be empty")
+		return
+	}
+	subject, ok := learnerSubject(r)
+	if !ok {
+		writeError(w, 401, "unauthorized", "authentication is required")
+		return
+	}
+	job, projection, created, err := h.store.RequestMarking(r.Context(), subject, r.PathValue("id"))
+	if errors.Is(err, ErrMarkingIneligible) {
+		writeError(w, 409, "marking_ineligible", "attempt is not eligible for written marking")
+		return
+	}
+	if errors.Is(err, ErrMarkingNotFound) {
+		writeError(w, 404, "not_found", "attempt not found")
+		return
+	}
+	if err != nil {
+		writeError(w, 500, "internal_error", internalErrorMessage)
+		return
+	}
+	// A missing provider is deliberately a pending result, not a fabricated mark or an auth bypass.
+	if created && h.marker != nil {
+		outcome, callErr := h.marker.MarkWrittenAttempt(r.Context(), job)
+		if callErr != nil {
+			outcome = MarkingOutcome{Status: MarkingPending, Reason: "provider_unavailable"}
+		}
+		projection, err = h.store.ApplyMarking(r.Context(), job.RequestID, outcome)
+		if err != nil {
+			writeError(w, 500, "internal_error", internalErrorMessage)
+			return
+		}
+	}
+	writeJSON(w, http.StatusAccepted, projection)
+}
+func (h *markingHandler) get(w http.ResponseWriter, r *http.Request) {
+	subject, ok := learnerSubject(r)
+	if !ok {
+		writeError(w, 401, "unauthorized", "authentication is required")
+		return
+	}
+	p, err := h.store.GetMarking(r.Context(), subject, r.PathValue("id"))
+	if errors.Is(err, ErrMarkingNotFound) {
+		writeError(w, 404, "not_found", "attempt not found")
+		return
+	}
+	if err != nil {
+		writeError(w, 500, "internal_error", internalErrorMessage)
+		return
+	}
+	writeJSON(w, 200, p)
 }
 
 type sessionHandler struct{ store SessionStore }

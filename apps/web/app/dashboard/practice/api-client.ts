@@ -1,4 +1,4 @@
-import type { LearnerAnswer, LearnerAttempt, LearnerAttemptResult, LearnerModule, LearnerQuestion, LearnerSyllabus } from "./types";
+import type { LearnerAnswer, LearnerAttempt, LearnerAttemptResult, LearnerModule, LearnerQuestion, LearnerSyllabus, LearnerWrittenMarking } from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -59,3 +59,5 @@ export function submitPracticeAttempt(attemptId: string, answer: LearnerAnswer):
     body: JSON.stringify(answer),
   });
 }
+export function requestWrittenMarking(attemptId: string): Promise<LearnerWrittenMarking> { return request(`/api/learner/attempts/${encodeURIComponent(attemptId)}/marking`, { method: "POST" }); }
+export function getWrittenMarking(attemptId: string): Promise<LearnerWrittenMarking> { return request(`/api/learner/attempts/${encodeURIComponent(attemptId)}/marking`); }

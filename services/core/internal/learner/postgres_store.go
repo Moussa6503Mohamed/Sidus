@@ -502,6 +502,224 @@ func nullableMarks(marked bool, marks int) any {
 	return marks
 }
 
+// RequestMarking pins exactly the already-submitted written attempt and its canonical rubric.
+// The unique attempt_id index is the idempotency key; concurrent calls converge on one row.
+func (p *PostgresStore) RequestMarking(ctx context.Context, learnerSubjectID, attemptID string) (MarkingJob, MarkingProjection, bool, error) {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return MarkingJob{}, MarkingProjection{}, false, fmt.Errorf("begin marking request: %w", err)
+	}
+	defer tx.Rollback()
+	var existingID string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM written_marking_requests WHERE attempt_id = $1 FOR UPDATE`, attemptID).Scan(&existingID)
+	if err == nil {
+		projection, err := getMarkingTx(ctx, tx, learnerSubjectID, attemptID)
+		if err != nil {
+			return MarkingJob{}, MarkingProjection{}, false, err
+		}
+		if err := tx.Commit(); err != nil {
+			return MarkingJob{}, MarkingProjection{}, false, err
+		}
+		return MarkingJob{}, projection, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) && !isInvalidTextRepresentation(err) {
+		return MarkingJob{}, MarkingProjection{}, false, fmt.Errorf("lock marking request: %w", err)
+	}
+
+	var job MarkingJob
+	var responseType ResponseType
+	var rubricRaw []byte
+	err = tx.QueryRowContext(ctx, `
+		SELECT a.id, a.question_id, q.syllabus_id, a.canonical_rubric_version_id, a.question_content_revision, a.response_type, rv.rubric
+		FROM learner_attempts a
+		JOIN questions q ON q.id = a.question_id
+		JOIN question_rubric_versions rv ON rv.id = a.canonical_rubric_version_id AND rv.question_id = a.question_id AND rv.question_revision = a.question_content_revision
+		WHERE a.id = $1 AND a.learner_subject_id = $2 AND a.status = 'submitted' AND a.result_status = 'pending_review'
+		FOR UPDATE OF a, rv
+	`, attemptID, learnerSubjectID).Scan(&job.AttemptID, &job.QuestionID, &job.SyllabusID, &job.RubricVersionID, new(int), &responseType, &rubricRaw)
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
+		return MarkingJob{}, MarkingProjection{}, false, ErrMarkingIneligible
+	}
+	if err != nil {
+		return MarkingJob{}, MarkingProjection{}, false, fmt.Errorf("pin written marking attempt: %w", err)
+	}
+	if !isWrittenResponse(responseType) {
+		return MarkingJob{}, MarkingProjection{}, false, ErrMarkingIneligible
+	}
+	criteria, ok := markingCriteria(rubricRaw)
+	if !ok {
+		return MarkingJob{}, MarkingProjection{}, false, ErrMarkingIneligible
+	}
+	job.Criteria = criteria
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO written_marking_requests (attempt_id, learner_subject_id, question_id, question_content_revision, canonical_rubric_version_id)
+		SELECT a.id, a.learner_subject_id, a.question_id, a.question_content_revision, a.canonical_rubric_version_id FROM learner_attempts a WHERE a.id = $1
+		RETURNING id`, attemptID).Scan(&job.RequestID)
+	if err != nil {
+		return MarkingJob{}, MarkingProjection{}, false, fmt.Errorf("insert marking request: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO written_marking_events (request_id,event_type,actor_id,changed_fields) VALUES ($1,'marking_requested',$2,ARRAY['status'])`, job.RequestID, learnerSubjectID); err != nil {
+		return MarkingJob{}, MarkingProjection{}, false, fmt.Errorf("audit marking request: %w", err)
+	}
+	projection := MarkingProjection{AttemptID: attemptID, Status: MarkingPending}
+	if err = tx.Commit(); err != nil {
+		return MarkingJob{}, MarkingProjection{}, false, fmt.Errorf("commit marking request: %w", err)
+	}
+	return job, projection, true, nil
+}
+
+func markingCriteria(raw []byte) ([]RubricCriterion, bool) {
+	var doc struct {
+		Criteria []struct {
+			ID    string `json:"id"`
+			Marks int    `json:"marks"`
+		} `json:"criteria"`
+	}
+	if json.Unmarshal(raw, &doc) != nil || len(doc.Criteria) == 0 || len(doc.Criteria) > 64 {
+		return nil, false
+	}
+	seen := map[string]struct{}{}
+	out := make([]RubricCriterion, 0, len(doc.Criteria))
+	for _, c := range doc.Criteria {
+		c.ID = strings.TrimSpace(c.ID)
+		if c.ID == "" || c.Marks < 1 || c.Marks > 100 {
+			return nil, false
+		}
+		if _, dup := seen[c.ID]; dup {
+			return nil, false
+		}
+		seen[c.ID] = struct{}{}
+		out = append(out, RubricCriterion{ID: c.ID, MaxMarks: c.Marks})
+	}
+	return out, true
+}
+
+func (p *PostgresStore) ApplyMarking(ctx context.Context, requestID string, outcome MarkingOutcome) (MarkingProjection, error) {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return MarkingProjection{}, fmt.Errorf("begin apply marking: %w", err)
+	}
+	defer tx.Rollback()
+	var attemptID, owner, status string
+	var retries int
+	var rubricRaw []byte
+	err = tx.QueryRowContext(ctx, `SELECT r.attempt_id,r.learner_subject_id,r.status,r.retry_count,rv.rubric FROM written_marking_requests r JOIN question_rubric_versions rv ON rv.id=r.canonical_rubric_version_id WHERE r.id=$1 FOR UPDATE OF r`, requestID).Scan(&attemptID, &owner, &status, &retries, &rubricRaw)
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
+		return MarkingProjection{}, ErrMarkingNotFound
+	}
+	if err != nil {
+		return MarkingProjection{}, fmt.Errorf("lock marking result: %w", err)
+	}
+	if status != string(MarkingPending) {
+		p, e := getMarkingTx(ctx, tx, owner, attemptID)
+		if e != nil {
+			return MarkingProjection{}, e
+		}
+		if e = tx.Commit(); e != nil {
+			return MarkingProjection{}, e
+		}
+		return p, nil
+	}
+	if outcome.Status == MarkingAccepted && outcome.Result != nil && validMarkingResult(*outcome.Result, rubricRaw) {
+		payload, _ := json.Marshal(outcome.Result.CriterionMarks)
+		if _, err = tx.ExecContext(ctx, `INSERT INTO written_marking_results (request_id,criterion_marks,awarded_marks,max_marks,model,model_version,cost_usd_micros,confidence) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, requestID, payload, outcome.Result.AwardedMarks, outcome.Result.MaxMarks, outcome.Result.Model, outcome.Result.ModelVersion, outcome.Result.CostUSDMicros, outcome.Result.Confidence); err != nil {
+			return MarkingProjection{}, fmt.Errorf("persist marking result: %w", err)
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE written_marking_requests SET status='accepted',accepted_at=now(),updated_at=now() WHERE id=$1`, requestID); err != nil {
+			return MarkingProjection{}, fmt.Errorf("accept marking: %w", err)
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO written_marking_events (request_id,event_type,actor_id,changed_fields) VALUES ($1,'marking_accepted','sonnet-service',ARRAY['status','criterionMarks','awardedMarks','confidence'])`, requestID)
+	} else if outcome.Status == MarkingWithheld || retries >= 2 {
+		reason := strings.TrimSpace(outcome.Reason)
+		if reason == "" {
+			reason = "quality_gate_withheld"
+		}
+		if len([]rune(reason)) > 128 {
+			reason = "quality_gate_withheld"
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE written_marking_requests SET status='withheld',withheld_reason=$2,updated_at=now() WHERE id=$1`, requestID, reason)
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `INSERT INTO written_marking_events (request_id,event_type,actor_id,changed_fields) VALUES ($1,'marking_withheld','sonnet-service',ARRAY['status','withheldReason'])`, requestID)
+		}
+	} else {
+		_, err = tx.ExecContext(ctx, `UPDATE written_marking_requests SET retry_count=retry_count+1,updated_at=now() WHERE id=$1`, requestID)
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `INSERT INTO written_marking_events (request_id,event_type,actor_id,changed_fields) VALUES ($1,'marking_retry','sonnet-service',ARRAY['retryCount'])`, requestID)
+		}
+	}
+	if err != nil {
+		return MarkingProjection{}, fmt.Errorf("transition marking: %w", err)
+	}
+	pj, err := getMarkingTx(ctx, tx, owner, attemptID)
+	if err != nil {
+		return MarkingProjection{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return MarkingProjection{}, err
+	}
+	return pj, nil
+}
+
+func validMarkingResult(result MarkingResult, rubricRaw []byte) bool {
+	criteria, ok := markingCriteria(rubricRaw)
+	if !ok || len(criteria) != len(result.CriterionMarks) || result.MaxMarks < 1 || result.AwardedMarks < 0 || result.AwardedMarks > result.MaxMarks || strings.TrimSpace(result.Model) == "" || strings.TrimSpace(result.ModelVersion) == "" || result.CostUSDMicros < 0 || result.Confidence < 0 || result.Confidence > 1 {
+		return false
+	}
+	byID := map[string]int{}
+	total := 0
+	for _, c := range criteria {
+		byID[c.ID] = c.MaxMarks
+		total += c.MaxMarks
+	}
+	if total != result.MaxMarks {
+		return false
+	}
+	awarded := 0
+	seen := map[string]struct{}{}
+	for _, c := range result.CriterionMarks {
+		maxForCriterion, exists := byID[c.CriterionID]
+		_, duplicate := seen[c.CriterionID]
+		if !exists || duplicate || c.MarksAwarded < 0 || c.MarksAwarded > maxForCriterion || strings.TrimSpace(c.Feedback) == "" || len([]rune(c.Feedback)) > 2000 {
+			return false
+		}
+		seen[c.CriterionID] = struct{}{}
+		awarded += c.MarksAwarded
+	}
+	return awarded == result.AwardedMarks
+}
+
+func (p *PostgresStore) GetMarking(ctx context.Context, learnerSubjectID, attemptID string) (MarkingProjection, error) {
+	return getMarkingTx(ctx, p.db, learnerSubjectID, attemptID)
+}
+
+type markingQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func getMarkingTx(ctx context.Context, q markingQueryer, learnerSubjectID, attemptID string) (MarkingProjection, error) {
+	var out MarkingProjection
+	var withheld sql.NullString
+	var payload []byte
+	var r MarkingResult
+	err := q.QueryRowContext(ctx, `SELECT r.attempt_id,r.status,r.retry_count,r.withheld_reason,COALESCE(x.criterion_marks,'[]'::jsonb),COALESCE(x.awarded_marks,0),COALESCE(x.max_marks,0),COALESCE(x.model,''),COALESCE(x.model_version,''),COALESCE(x.cost_usd_micros,0),COALESCE(x.confidence,0) FROM written_marking_requests r LEFT JOIN written_marking_results x ON x.request_id=r.id WHERE r.attempt_id=$1 AND r.learner_subject_id=$2`, attemptID, learnerSubjectID).Scan(&out.AttemptID, &out.Status, &out.RetryCount, &withheld, &payload, &r.AwardedMarks, &r.MaxMarks, &r.Model, &r.ModelVersion, &r.CostUSDMicros, &r.Confidence)
+	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
+		return MarkingProjection{}, ErrMarkingNotFound
+	}
+	if err != nil {
+		return MarkingProjection{}, fmt.Errorf("get marking: %w", err)
+	}
+	if withheld.Valid {
+		out.WithheldReason = withheld.String
+	}
+	if out.Status == MarkingAccepted {
+		if json.Unmarshal(payload, &r.CriterionMarks) != nil {
+			return MarkingProjection{}, fmt.Errorf("decode marking result")
+		}
+		out.Result = &r
+	}
+	return out, nil
+}
+
 func markAnswer(t ResponseType, rubricRaw []byte, raw string) (json.RawMessage, bool, bool, error) {
 	if t == ResponseMultipleChoice {
 		marking, err := parseMarkingRubric(rubricRaw)

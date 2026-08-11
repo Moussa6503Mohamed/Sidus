@@ -120,7 +120,14 @@ func main() {
 		contentsource.Register(mux, contentsource.NewPostgresStore(db), catalogueStore, verifier)
 		curriculummap.Register(mux, curriculummap.NewPostgresStore(db), verifier)
 		question.Register(mux, question.NewPostgresStore(db), verifier)
-		learner.Register(mux, learner.NewPostgresStore(db), verifier)
+		learnerStore := learner.NewPostgresStore(db)
+		var markers []learner.SonnetMarker
+		if marker, err := learner.NewHTTPSonnetMarker(os.Getenv("SIDUS_AI_SERVICE_URL"), os.Getenv("SIDUS_AI_SERVICE_TOKEN")); err == nil {
+			markers = append(markers, marker)
+		} else {
+			log.Println("Sonnet written marking remains pending: AI service marker not configured")
+		}
+		learner.Register(mux, learnerStore, verifier, markers...)
 		if privateRoot := strings.TrimSpace(os.Getenv("SIDUS_PRIVATE_UPLOAD_DIR")); privateRoot != "" {
 			if storage, err := uploadintake.NewLocalQuarantineStore(privateRoot); err != nil {
 				log.Printf("private upload intake disabled: %v", err)

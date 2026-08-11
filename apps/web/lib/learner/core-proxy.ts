@@ -42,7 +42,9 @@ export type LearnerOperation =
   | { kind: "getAssessmentSession"; id: string }
   | { kind: "saveAssessmentResponse"; id: string; body: { ordinal: number; expectedVersion: number; answer: Record<string, unknown> } }
   | { kind: "submitAssessmentSession"; id: string }
-  | { kind: "getAssessmentResult"; id: string };
+  | { kind: "getAssessmentResult"; id: string }
+  | { kind: "requestWrittenMarking"; attemptId: string }
+  | { kind: "getWrittenMarking"; attemptId: string };
 
 export interface LearnerProxySuccess {
   status: number;
@@ -120,6 +122,10 @@ function resolveRoute(op: LearnerOperation): { method: Method; path: string; bod
 			return { method: "POST", path: `/learner/assessment-sessions/${requireValidId(op.id)}/submit` };
 		case "getAssessmentResult":
 			return { method: "GET", path: `/learner/assessment-sessions/${requireValidId(op.id)}/result` };
+		case "requestWrittenMarking":
+			return { method: "POST", path: `/learner/attempts/${requireValidId(op.attemptId)}/marking` };
+		case "getWrittenMarking":
+			return { method: "GET", path: `/learner/attempts/${requireValidId(op.attemptId)}/marking` };
   }
 }
 

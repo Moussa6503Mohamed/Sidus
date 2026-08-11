@@ -51,6 +51,10 @@ cd services/ai && python -m pytest
 
 ## Current state
 
+- T-0034 is in review: owned, version-pinned written-response marking requests now use an
+  immutable criterion-level result lifecycle. The Sonnet adapter stays fake-provider-only and
+  fail-closed until a separately approved live-provider task.
+
 - T-0032 released: Test/Exam sessions are server-owned with immutable learner-safe item snapshots,
   server deadline, optimistic autosave, reconnect-ready reads, and idempotent finalization. Live
   browser/API E2E is deferred until final API integration. See `docs/handoffs/T-0032.md`.

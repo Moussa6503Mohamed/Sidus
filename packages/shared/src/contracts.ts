@@ -709,3 +709,10 @@ export type LearnerAnswer =
   | { selectedOptionIds: string[] }
   | { text: string }
   | { value: number };
+
+/** Learner-safe AI written-marking lifecycle. It intentionally excludes the submitted answer,
+ * rubric, canonical version, source/provenance and internal provider job trace. */
+export type LearnerWrittenMarkingStatus = "pending" | "accepted" | "withheld";
+export interface LearnerCriterionMark { criterionId: string; marksAwarded: number; feedback: string; }
+export interface LearnerWrittenMarkingResult { criterionMarks: LearnerCriterionMark[]; awardedMarks: number; maxMarks: number; model: string; modelVersion: string; costUsdMicros: number; confidence: number; }
+export interface LearnerWrittenMarking { attemptId: string; status: LearnerWrittenMarkingStatus; retryCount: number; withheldReason?: string; result?: LearnerWrittenMarkingResult; }

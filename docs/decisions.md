@@ -1056,3 +1056,8 @@ in scope here; revisit when T-0034 needs Core-visible job state.
 **Alternatives:**
 **Owner/date:**
 ```
+# D-0024 — Written marking is a separate immutable lifecycle
+
+T-0034 keeps `learner_attempts` immutable after submission. AI marking uses a one-per-attempt
+owner-scoped request with separate immutable accepted result and append-only trace. Core forwards
+only opaque pins to the AI adapter; provider absence leaves work pending and never fabricates marks.

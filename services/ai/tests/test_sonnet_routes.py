@@ -181,3 +181,24 @@ def test_submit_job_with_duplicate_job_id_returns_409(
 
     second = client.post("/sonnet/jobs", json=VALID_PAYLOAD, headers=_auth_headers(rsa_key))
     assert second.status_code == 409
+
+
+def test_service_marking_route_is_token_gated_and_fake_provider_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SIDUS_CORE_SERVICE_TOKEN", "service-test-token")
+    store = SqliteJobStore(str(tmp_path / "service-jobs.sqlite3"))
+    app.dependency_overrides[get_job_store] = lambda: store
+    app.dependency_overrides[get_provider] = lambda: FakeSonnetProvider(response_fn=default_response)
+    payload = {
+        "jobId": "service-marking-1", "attemptId": "opaque-attempt", "questionId": "opaque-question",
+        "syllabusId": "opaque-syllabus", "rubricVersionId": "opaque-rubric",
+        "rubricCriteria": [{"criterionId": "c1", "maxMarks": 2}], "promptContentRef": "opaque-attempt",
+    }
+    client = TestClient(app)
+    assert client.post("/sonnet/marking-jobs", json=payload).status_code == 401
+    response = client.post("/sonnet/marking-jobs", json=payload, headers={"Authorization": "Bearer service-test-token"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "accepted"
+    assert body["result"]["awardedMarks"] == 2

@@ -2,9 +2,9 @@
 
 import { useRef, useState, type KeyboardEvent } from "react";
 import { getOptionState } from "@/lib/design/option-state";
-import { ApiError, createPracticeAttempt, submitPracticeAttempt } from "./api-client";
+import { ApiError, createPracticeAttempt, requestWrittenMarking, submitPracticeAttempt } from "./api-client";
 import styles from "./styles.module.css";
-import type { LearnerAnswer, LearnerAttemptResult, LearnerQuestion, LearnerQuestionOption } from "./types";
+import type { LearnerAnswer, LearnerAttemptResult, LearnerQuestion, LearnerQuestionOption, LearnerWrittenMarking } from "./types";
 
 interface QuestionListProps { questions: LearnerQuestion[] }
 
@@ -17,6 +17,7 @@ interface QuestionAttemptState {
   submitting?: boolean;
   error?: string;
   result?: LearnerAttemptResult;
+  marking?: LearnerWrittenMarking;
 }
 
 function messageFor(error: unknown): string {
@@ -143,7 +144,8 @@ export function QuestionList({ questions }: QuestionListProps) {
       const attemptId = state.attemptId ?? (await createPracticeAttempt(question.id)).attemptId;
       update(question.id, { attemptId });
       const result = await submitPracticeAttempt(attemptId, answer);
-      update(question.id, { result, submitting: false });
+      const marking = result.resultStatus === "pending_review" ? await requestWrittenMarking(attemptId) : undefined;
+      update(question.id, { result, marking, submitting: false });
     } catch (error) {
       update(question.id, { submitting: false, error: messageFor(error) });
     }
@@ -213,7 +215,7 @@ export function QuestionList({ questions }: QuestionListProps) {
               {["exact_short_answer", "short_answer", "structured_response", "essay"].includes(question.responseType) && <label className={styles.answerField}>{question.responseType === "exact_short_answer" ? "Answer" : "Written response"}<textarea rows={question.responseType === "essay" ? 8 : 4} value={state.text ?? ""} disabled={Boolean(result || state.submitting)} onChange={(event) => update(question.id, { text: event.target.value, error: undefined })} /></label>}
               {!result && <button type="button" className={styles.button} disabled={!answerFor(question, state) || state.submitting} onClick={() => void submit(question)}>{state.submitting ? "Submitting…" : "Submit answer"}</button>}
               {state.error && <p className={styles.bannerError} role="alert">{state.error}</p>}
-              {result && <section className={styles.feedback} aria-live="polite"><h2>{result.resultStatus === "pending_review" ? "Submitted for review" : result.isCorrect ? "Correct" : "Incorrect"}</h2>{result.resultStatus === "pending_review" ? <p>Your written response is saved. Marking is pending review.</p> : <p><strong>Score:</strong> {result.awardedMarks} / {result.maxMarks}</p>}</section>}
+              {result && <section className={styles.feedback} aria-live="polite"><h2>{result.resultStatus === "pending_review" ? "Marking in progress" : result.isCorrect ? "Correct" : "Incorrect"}</h2>{result.resultStatus === "pending_review" ? <>{state.marking?.status === "accepted" && state.marking.result ? <><p><strong>Score:</strong> {state.marking.result.awardedMarks} / {state.marking.result.maxMarks}</p><ul>{state.marking.result.criterionMarks.map((criterion) => <li key={criterion.criterionId}>{criterion.feedback}</li>)}</ul></> : state.marking?.status === "withheld" ? <p>Automated marking is temporarily unavailable. You can retry later.</p> : <p>Your written response is saved. Automated marking is pending.</p>}</> : <p><strong>Score:</strong> {result.awardedMarks} / {result.maxMarks}</p>}</section>}
             </>}
           </li>
         );
