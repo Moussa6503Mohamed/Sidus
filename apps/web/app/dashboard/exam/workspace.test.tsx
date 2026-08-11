@@ -83,6 +83,7 @@ describe("ExamWorkspace", () => {
   });
   it("uses one roving radio tab stop and arrow keys select the next option", async () => {
     const user = userEvent.setup(); render(<ExamWorkspace />); await start(user);
+    expect(screen.getByRole("radiogroup", { name: "opaque-q1" })).toBeInTheDocument();
     const first = screen.getByRole("radio", { name: "opaque-q1-a" });
     const second = screen.getByRole("radio", { name: "opaque-q1-b" });
     expect(first).toHaveAttribute("tabindex", "0");
