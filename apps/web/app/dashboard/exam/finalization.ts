@@ -1,4 +1,4 @@
-import type { LearnerAttemptResult, LearnerQuestion } from "./types";
+import type { LearnerAnswer, LearnerAttemptResult, LearnerQuestion } from "./types";
 
 export interface ExamRuntime {
   attempts: Record<string, string>;
@@ -7,13 +7,13 @@ export interface ExamRuntime {
 
 export interface ExamOperations {
   createAttempt(questionId: string): Promise<{ attemptId: string }>;
-  submitAttempt(attemptId: string, selectedOptionId: string): Promise<LearnerAttemptResult>;
+  submitAttempt(attemptId: string, answer: LearnerAnswer): Promise<LearnerAttemptResult>;
 }
 
 /** Sequential, idempotent for current page lifetime. Caller retains runtime for retry. */
 export async function finalizeExam(
   questions: LearnerQuestion[],
-  answers: Record<string, string | undefined>,
+  answers: Record<string, LearnerAnswer | undefined>,
   runtime: ExamRuntime,
   operations: ExamOperations,
   onProgress?: (completed: number, total: number) => void,

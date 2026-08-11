@@ -112,8 +112,8 @@ describe("ExamWorkspace", () => {
       });
       expect(screen.getByRole("heading", { name: "Exam results" })).toBeInTheDocument();
       expect(createExamAttempt).toHaveBeenCalledTimes(2);
-      expect(submitExamAttempt).toHaveBeenCalledWith("attempt-q1", "q1-a");
-      expect(submitExamAttempt).toHaveBeenCalledWith("attempt-q2", "q2-a");
+      expect(submitExamAttempt).toHaveBeenCalledWith("attempt-q1", { selectedOptionId: "q1-a" });
+      expect(submitExamAttempt).toHaveBeenCalledWith("attempt-q2", { selectedOptionId: "q2-a" });
       expect(screen.getByText(/answered score: 2 \/ 2/i)).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
@@ -133,5 +133,22 @@ describe("ExamWorkspace", () => {
     expect(confirm).toHaveFocus();
     await user.click(continueExam);
     expect(screen.getByRole("button", { name: "Submit all" })).toHaveFocus();
+  });
+
+  it("renders and submits deterministic and written mixed answers", async () => {
+    vi.mocked(listExamQuestions).mockResolvedValue({ items: [
+      { ...question("multi"), responseType: "multi_select", options: [{ id: "a", label: "opaque-a" }, { id: "b", label: "opaque-b" }] },
+      { ...question("numeric"), responseType: "numeric_answer", options: null },
+      { ...question("written"), responseType: "essay", options: null },
+    ] });
+    const user = userEvent.setup(); render(<ExamWorkspace />); await start(user);
+    await user.click(screen.getByLabelText("opaque-a")); await user.click(screen.getByLabelText("opaque-b"));
+    await user.click(screen.getByRole("button", { name: "Next" })); await user.type(screen.getByLabelText("Numeric answer"), "2.5");
+    await user.click(screen.getByRole("button", { name: "Next" })); await user.type(screen.getByLabelText("Written response"), "runtime text");
+    await user.click(screen.getByRole("button", { name: "Submit all" })); await user.click(screen.getByRole("button", { name: "Confirm submit" }));
+    expect(await screen.findByRole("heading", { name: "Exam results" })).toBeInTheDocument();
+    expect(submitExamAttempt).toHaveBeenCalledWith("attempt-multi", { selectedOptionIds: ["a", "b"] });
+    expect(submitExamAttempt).toHaveBeenCalledWith("attempt-numeric", { value: 2.5 });
+    expect(submitExamAttempt).toHaveBeenCalledWith("attempt-written", { text: "runtime text" });
   });
 });

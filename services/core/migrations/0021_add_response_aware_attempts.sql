@@ -23,3 +23,20 @@ ALTER TABLE learner_attempts ADD CONSTRAINT learner_attempts_response_type_check
 ALTER TABLE learner_attempts ADD CONSTRAINT learner_attempts_result_status_check CHECK (
   result_status IS NULL OR result_status IN ('marked','pending_review')
 );
+
+-- Pins include response type. Submitted rows remain wholly immutable through this trigger.
+CREATE OR REPLACE FUNCTION prevent_learner_attempt_pin_mutation()
+RETURNS trigger AS $$
+BEGIN
+    IF NEW.learner_subject_id IS DISTINCT FROM OLD.learner_subject_id
+       OR NEW.question_id IS DISTINCT FROM OLD.question_id
+       OR NEW.question_content_revision IS DISTINCT FROM OLD.question_content_revision
+       OR NEW.canonical_rubric_version_id IS DISTINCT FROM OLD.canonical_rubric_version_id
+       OR NEW.max_marks IS DISTINCT FROM OLD.max_marks
+       OR NEW.response_type IS DISTINCT FROM OLD.response_type
+       OR OLD.status = 'submitted' THEN
+        RAISE EXCEPTION 'learner attempt pins and submitted attempts are immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
