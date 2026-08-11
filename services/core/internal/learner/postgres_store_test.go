@@ -745,16 +745,21 @@ func TestPostgresStore_Integration_WrittenMarkingRequestIsConcurrentIdempotent(t
 	}
 	var wg sync.WaitGroup
 	errs := make(chan error, 6)
+	requestIDs := make(chan string, 6)
 	for range 6 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _, _, err := f.store.RequestMarking(context.Background(), "owner-a", attempt.AttemptID)
+			job, _, _, err := f.store.RequestMarking(context.Background(), "owner-a", attempt.AttemptID)
+			if err == nil {
+				requestIDs <- job.RequestID
+			}
 			errs <- err
 		}()
 	}
 	wg.Wait()
 	close(errs)
+	close(requestIDs)
 	for err := range errs {
 		if err != nil {
 			t.Fatalf("concurrent RequestMarking: %v", err)
@@ -763,6 +768,17 @@ func TestPostgresStore_Integration_WrittenMarkingRequestIsConcurrentIdempotent(t
 	var count int
 	if err := f.db.QueryRow(`SELECT count(*) FROM written_marking_requests WHERE attempt_id=$1`, attempt.AttemptID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("requests=%d err=%v", count, err)
+	}
+	var stable string
+	for id := range requestIDs {
+		if id == "" {
+			t.Fatal("request id must be nonblank")
+		}
+		if stable == "" {
+			stable = id
+		} else if stable != id {
+			t.Fatalf("request ids differ: %q vs %q", stable, id)
+		}
 	}
 	if _, err := f.store.GetMarking(f.ctx, "other-owner", attempt.AttemptID); err != ErrMarkingNotFound {
 		t.Fatalf("foreign read=%v", err)

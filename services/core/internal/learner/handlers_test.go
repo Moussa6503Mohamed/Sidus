@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"sync"
 	"testing"
 
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/auth"
@@ -39,6 +40,57 @@ func (fakeVerifier) Verify(_ context.Context, token string) (auth.Claims, error)
 	default:
 		return auth.Claims{}, auth.ErrInvalidToken
 	}
+}
+
+type markingMemoryStore struct {
+	*memoryStore
+	mu         sync.Mutex
+	projection MarkingProjection
+	job        MarkingJob
+}
+
+func newMarkingMemoryStore() *markingMemoryStore {
+	return &markingMemoryStore{memoryStore: newMemoryStore(), projection: MarkingProjection{AttemptID: "attempt-1", Status: MarkingPending}, job: MarkingJob{RequestID: "stable-request-id", AttemptID: "attempt-1"}}
+}
+func (m *markingMemoryStore) RequestMarking(_ context.Context, owner, attempt string) (MarkingJob, MarkingProjection, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if owner != "user_learner" || attempt != "attempt-1" {
+		return MarkingJob{}, MarkingProjection{}, false, ErrMarkingNotFound
+	}
+	return m.job, m.projection, m.projection.Status == MarkingPending, nil
+}
+func (m *markingMemoryStore) ApplyMarking(_ context.Context, id string, out MarkingOutcome) (MarkingProjection, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if id != "stable-request-id" {
+		return MarkingProjection{}, ErrMarkingNotFound
+	}
+	if out.Status == MarkingAccepted {
+		m.projection.Status = MarkingAccepted
+		m.projection.Result = out.Result
+	}
+	return m.projection, nil
+}
+func (m *markingMemoryStore) GetMarking(_ context.Context, owner, attempt string) (MarkingProjection, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if owner != "user_learner" || attempt != "attempt-1" {
+		return MarkingProjection{}, ErrMarkingNotFound
+	}
+	return m.projection, nil
+}
+
+type assertingMarker struct {
+	mu  sync.Mutex
+	ids []string
+}
+
+func (m *assertingMarker) MarkWrittenAttempt(_ context.Context, job MarkingJob) (MarkingOutcome, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ids = append(m.ids, job.RequestID)
+	return MarkingOutcome{Status: MarkingAccepted, Result: &MarkingResult{CriterionMarks: []CriterionMark{{CriterionID: "c", MarksAwarded: 1, Feedback: "ok"}}, AwardedMarks: 1, MaxMarks: 1, Model: "fake", ModelVersion: "v1", Confidence: .9}}, nil
 }
 
 // memoryStore is an in-memory Store used only for handler tests: routing, auth wiring, input
@@ -580,5 +632,26 @@ func TestListQuestions_NoLeakage(t *testing.T) {
 	}
 	for _, item := range body.Items {
 		assertOnlyAllowedKeys(t, item)
+	}
+}
+
+func TestMarkingPostRepeatedUsesStableRequestIDOnce(t *testing.T) {
+	store := newMarkingMemoryStore()
+	marker := &assertingMarker{}
+	mux := http.NewServeMux()
+	Register(mux, store, fakeVerifier{}, marker)
+	for range 2 {
+		req := httptest.NewRequest(http.MethodPost, "/learner/attempts/attempt-1/marking", nil)
+		req.Header.Set("Authorization", "Bearer "+learnerToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	marker.mu.Lock()
+	defer marker.mu.Unlock()
+	if len(marker.ids) != 1 || marker.ids[0] != "stable-request-id" {
+		t.Fatalf("marker IDs=%v", marker.ids)
 	}
 }

@@ -521,6 +521,7 @@ func (p *PostgresStore) RequestMarking(ctx context.Context, learnerSubjectID, at
 		if buildErr != nil {
 			return MarkingJob{}, MarkingProjection{}, false, buildErr
 		}
+		job.RequestID = existingID
 		if err := tx.Commit(); err != nil {
 			return MarkingJob{}, MarkingProjection{}, false, err
 		}
@@ -540,6 +541,9 @@ func (p *PostgresStore) RequestMarking(ctx context.Context, learnerSubjectID, at
 		ON CONFLICT (attempt_id) DO NOTHING
 		RETURNING id`, attemptID).Scan(&job.RequestID)
 	if errors.Is(err, sql.ErrNoRows) {
+		if err = tx.QueryRowContext(ctx, `SELECT id FROM written_marking_requests WHERE attempt_id=$1`, attemptID).Scan(&job.RequestID); err != nil {
+			return MarkingJob{}, MarkingProjection{}, false, fmt.Errorf("re-read concurrent marking request: %w", err)
+		}
 		projection, readErr := getMarkingTx(ctx, tx, learnerSubjectID, attemptID)
 		if readErr != nil {
 			return MarkingJob{}, MarkingProjection{}, false, readErr
