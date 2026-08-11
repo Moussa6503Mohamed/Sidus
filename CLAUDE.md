@@ -51,6 +51,9 @@ cd services/ai && python -m pytest
 
 ## Current state
 
+- T-0031 released: white-primary Sidus Observatory alignment across private uploads, mixed answer
+  controls, shared primitives, and Exam dialog accessibility. See `docs/handoffs/T-0031.md`.
+
 - T-0030 released: private admin PDF quarantine and Sonnet-ready review-intake foundation. Files
   remain private, bounded, unserved, and scanner-gated; no OCR/extraction/model invocation exists
   yet. See `docs/handoffs/T-0030.md`.

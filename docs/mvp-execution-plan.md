@@ -12,14 +12,15 @@
 
 | Order | Task | Outcome |
 | --- | --- | --- |
-| 1 | T-0030 private upload and review intake | Admin uploads private PDFs to quarantined object storage; scan, MIME/size checks, retention, immutable metadata, review queue. No public file serving. |
-| 2 | T-0031 persistent assessments | Server assessment session, autosave, resume/reconnect, immutable item order, idempotent finalization. |
-| 3 | T-0032 Sonnet review adapter and evaluation gate | Anthropic Sonnet adapter, strict structured output, version/cost/confidence trace, automated quality gate; disabled until API key configured and evaluation passes. |
-| 4 | T-0033 Sonnet written-response marking | Sonnet produces final criterion-level marks, feedback, confidence, and immutable trace. Invalid or low-confidence work is withheld or retried automatically; no human marking workflow. |
-| 5 | T-0034 learning analytics | Durable learning events, subject/module aggregates, learner dashboard. |
-| 6 | T-0035 teacher and consent | Classes, invitations, explicit acceptance/revocation, assignments, scoped views. |
-| 7 | T-0036 learner experience completion | Tutor/Test rules, Arabic/RTL, offline-safe shell, accessibility/mobile audit. |
-| 8 | T-0037 beta operations | Feature flags, telemetry, backups/restore, rate limits, security/load checks, support runbooks. |
+| 1 | T-0030 private upload and review intake | Complete. Admin uploads private PDFs to quarantined object storage; scan, MIME/size checks, retention, immutable metadata, review queue. No public file serving. |
+| 2 | T-0031 brand-kit alignment | Audit and correct every learner/editorial screen against Sidus Observatory tokens, logo, typography, layout, states, and responsive rules. |
+| 3 | T-0032 persistent assessments | Server assessment session, autosave, resume/reconnect, immutable item order, idempotent finalization. |
+| 4 | T-0033 Sonnet review adapter and evaluation gate | Anthropic Sonnet adapter, strict structured output, version/cost/confidence trace, automated quality gate; disabled until API key configured and evaluation passes. |
+| 5 | T-0034 Sonnet written-response marking | Sonnet produces final criterion-level marks, feedback, confidence, and immutable trace. Invalid or low-confidence work is withheld or retried automatically; no human marking workflow. |
+| 6 | T-0035 learning analytics | Durable learning events, subject/module aggregates, learner dashboard. |
+| 7 | T-0036 teacher and consent | Classes, invitations, explicit acceptance/revocation, assignments, scoped views. |
+| 8 | T-0037 learner experience completion | Tutor/Test rules, Arabic/RTL, offline-safe shell, accessibility/mobile audit. |
+| 9 | T-0038 beta operations | Feature flags, telemetry, backups/restore, rate limits, security/load checks, support runbooks. |
 
 ## Deferred until dedicated designs
 

@@ -1,5 +1,14 @@
 # Task history
 
+## T-0031 — Brand-kit alignment
+
+**Status:** done / released
+**Implementation commits:** `c38890d`, `472f1a4`
+**Release validation:** independent UI review approved after accessible Exam radiogroup fix.
+White-primary Observatory surfaces, branded upload and mixed answer controls, token cleanup, and
+accessible Exam dialog released. Web 353/353, typecheck, production build, and diff checks passed.
+Plex local font assets remain a documented future asset task. See `docs/handoffs/T-0031.md`.
+
 ## T-0030 — Private admin upload and AI review intake foundation
 
 **Status:** done / released
