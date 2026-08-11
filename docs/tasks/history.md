@@ -1,5 +1,18 @@
 # Task history
 
+## T-0034 — Automated Sonnet written-response marking
+
+**Status:** done / released (fake-provider-only)
+**Implementation commits:** `bffdee0`, `50c11bc`, `1592895`, `70475c1`
+**Release validation:** independent review approved after race/retry and private-context fixes.
+Written attempts now receive owner-scoped, immutable criterion-level AI marking records with
+automatic bounded retry/withhold behavior. Private answer and rubric context exists only in-memory
+on authenticated Core-to-AI calls; it never enters learner routes, public Sonnet jobs, SQLite job
+data, event traces, or logs. AI 65/65, web 357/357 plus typecheck/build, Core build/vet/unit,
+fresh 0024 migration/integration/rerun, Compose, shared-contract, and diff checks passed. Live
+Anthropic calls remain disabled until calibration and beta validation. See
+`docs/handoffs/T-0034.md`.
+
 ## T-0033 — Sonnet adapter and automated quality gate
 
 **Status:** done / released (adapter-only)
