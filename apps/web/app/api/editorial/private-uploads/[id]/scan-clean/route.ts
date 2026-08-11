@@ -1,2 +1,0 @@
-import { NextResponse } from "next/server"; import { callUploadCore } from "@/lib/editorial/core-proxy"; import { errorResponse } from "@/lib/editorial/http";
-export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }): Promise<NextResponse> { try { const r=await callUploadCore({kind:"markUploadScanClean",id:(await params).id});return NextResponse.json(r.body,{status:r.status});}catch(e){return errorResponse(e);} }

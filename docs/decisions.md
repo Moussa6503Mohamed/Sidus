@@ -1005,7 +1005,9 @@ now — deferred: changes delivery contract beyond this UI task.
 **Status:** approved
 **Decision:** Private PDFs enter through admin-only fixed routes. Core accepts only safe PDF
 uploads (media type, filename, `%PDF-` signature, 25 MiB cap), stores bytes only in configured
-private local storage, and persists only metadata, SHA-256, and opaque reference. No learner,
+private local storage, and persists only metadata, SHA-256, and opaque reference. Scan-clean is
+not an admin transition: only future scanner worker attestation for exact object reference plus
+stored SHA-256 may unlock it. No learner,
 BFF, or Core route serves file bytes. Quarantine must become scan-clean before a metadata-only
 review job is queued against approved, catalogue-linked source. Human review remains mandatory;
 Sonnet/OCR/extraction/publication disabled until T-0032.

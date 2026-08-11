@@ -18,7 +18,6 @@ func Register(mux *http.ServeMux, store Store, storage *LocalQuarantineStore, v 
 	h := &handler{store: store, storage: storage}
 	mux.HandleFunc("POST /private-uploads", auth.Protect(v, PermManageUpload, h.create))
 	mux.HandleFunc("GET /private-uploads", auth.Protect(v, PermManageUpload, h.list))
-	mux.HandleFunc("POST /private-uploads/{id}/scan-clean", auth.Protect(v, PermManageUpload, h.scanClean))
 	mux.HandleFunc("POST /private-uploads/{id}/review-jobs", auth.Protect(v, PermManageUpload, h.queueReview))
 	mux.HandleFunc("POST /private-uploads/{id}/deletion-request", auth.Protect(v, PermManageUpload, h.requestDeletion))
 }
@@ -99,9 +98,6 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOut(w, 200, map[string]any{"items": v})
-}
-func (h *handler) scanClean(w http.ResponseWriter, r *http.Request) {
-	h.transition(w, r, func(id, a string) (Upload, error) { return h.store.MarkScanClean(r.Context(), id, a) })
 }
 func (h *handler) requestDeletion(w http.ResponseWriter, r *http.Request) {
 	h.transition(w, r, func(id, a string) (Upload, error) { return h.store.RequestDeletion(r.Context(), id, a) })

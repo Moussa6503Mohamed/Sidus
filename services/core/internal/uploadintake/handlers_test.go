@@ -99,3 +99,13 @@ func TestDecodeQueueReviewBodyIsExact(t *testing.T) {
 		t.Fatalf("got %q %v", v, ok)
 	}
 }
+
+func TestManualScanCleanRouteIsNotMounted(t *testing.T) {
+	_, h := testServer(t)
+	defer h.Close()
+	r := req(t, h.URL+"/private-uploads/id/scan-clean", "application/json", "", "{}")
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", r.StatusCode)
+	}
+}

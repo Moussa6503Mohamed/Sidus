@@ -60,7 +60,6 @@ export type EditorialOperation =
 export type UploadOperation =
   | { kind: "listPrivateUploads" }
   | { kind: "createPrivateUpload"; filename: string }
-  | { kind: "markUploadScanClean"; id: string }
   | { kind: "queueUploadReview"; id: string }
   | { kind: "requestUploadDeletion"; id: string };
 
@@ -73,7 +72,6 @@ function resolveUploadRoute(op: UploadOperation): { method: Method; path: string
   switch (op.kind) {
     case "listPrivateUploads": return { method: "GET", path: "/private-uploads" };
     case "createPrivateUpload": return { method: "POST", path: "/private-uploads" };
-    case "markUploadScanClean": return { method: "POST", path: `/private-uploads/${requireValidId(op.id)}/scan-clean` };
     case "queueUploadReview": return { method: "POST", path: `/private-uploads/${requireValidId(op.id)}/review-jobs` };
     case "requestUploadDeletion": return { method: "POST", path: `/private-uploads/${requireValidId(op.id)}/deletion-request` };
   }
