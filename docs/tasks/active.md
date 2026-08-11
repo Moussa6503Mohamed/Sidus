@@ -9,7 +9,8 @@
 
 **Review-fix update:** timer now finalizes latest in-memory answers even at expiry, confirmation
 does not pause countdown, dialog focus behavior is covered, and results label answered-only marks.
-Authenticated two-question browser journey is implemented but pending documented local web runtime.
+Authenticated two-question browser journey now passes against documented local web runtime;
+full Playwright suite passes (10 tests).
 
 ### Context
 

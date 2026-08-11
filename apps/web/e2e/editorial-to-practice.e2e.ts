@@ -38,7 +38,7 @@ async function optionValueByText(page: Page, selectSelector: string, text: strin
 async function createAndVerifySecondQuestion(page: Page, question: SyntheticQuestion, nodeCode: string, nodeLabel: string) {
   await page.getByRole("button", { name: "New question" }).click();
   await page.locator("#question-origin").selectOption("original");
-  await page.locator("#question-node").selectOption({ label: `${nodeCode} â€” ${nodeLabel}` });
+  await page.locator("#question-node").selectOption({ label: `${nodeCode} — ${nodeLabel}` });
   await page.locator("#question-response-type").selectOption("multiple_choice");
   await page.locator("#question-language").fill("en");
   await page.locator("#question-prompt").fill(question.prompt);
@@ -76,6 +76,7 @@ test("editorial source to learner practice feedback, end to end", async ({ page 
   assertSynthetic(syntheticStrings(run));
 
   let syllabusId = "";
+  let nodeId = "";
 
   await test.step("register a pending synthetic content source", async () => {
     await page.goto("/dashboard/editorial/sources");
@@ -141,6 +142,7 @@ test("editorial source to learner practice feedback, end to end", async ({ page 
     await page
       .locator("#question-node")
       .selectOption({ label: `${run.node.nodeCode} — ${run.node.label}` });
+    nodeId = await page.locator("#question-node").inputValue();
     await page.locator("#question-response-type").selectOption("multiple_choice");
     await page.locator("#question-language").fill("en");
     await page.locator("#question-prompt").fill(run.question.prompt);
@@ -199,12 +201,15 @@ test("editorial source to learner practice feedback, end to end", async ({ page 
     await page.locator("#practice-syllabus-id").selectOption(syllabusId);
     await page.getByRole("button", { name: "Load questions" }).click();
 
-    await expect(page.getByText(run.question.prompt)).toBeVisible();
+    await expect(page.getByText(run.question.prompt, { exact: true })).toBeVisible();
   });
 
   await test.step("submit an answer and read the canonical feedback", async () => {
     const [correct, incorrect] = run.question.options;
-    const card = page.getByRole("listitem").filter({ hasText: run.question.prompt });
+    const card = page.getByRole("listitem").filter({
+      has: page.getByText(run.question.prompt, { exact: true }),
+    });
+    await expect(card).toHaveCount(1);
 
     await card.getByRole("radio", { name: correct.label }).click();
     await card.getByRole("button", { name: "Submit answer" }).click();
@@ -225,10 +230,11 @@ test("editorial source to learner practice feedback, end to end", async ({ page 
     await page.goto("/dashboard/exam");
     await expect(page.getByRole("heading", { name: "Exam Mode", level: 1 })).toBeVisible();
     await page.locator("#exam-syllabus").selectOption(syllabusId);
+    await page.locator("#exam-node").fill(nodeId);
     await page.getByRole("button", { name: "Start exam" }).click();
     await expect(page.getByText(run.question.prompt)).toBeVisible();
     await page.getByRole("radio", { name: run.question.options[0].label }).click();
-    await page.getByRole("button", { name: "Next" }).click();
+    await page.getByRole("button", { name: "Next", exact: true }).click();
     await expect(page.getByText(run.secondQuestion.prompt)).toBeVisible();
     await page.getByRole("radio", { name: run.secondQuestion.options[0].label }).click();
     await page.getByRole("button", { name: "Submit all" }).click();
