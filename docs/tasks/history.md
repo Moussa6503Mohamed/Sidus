@@ -1,5 +1,14 @@
 # Task history
 
+## T-0029 — Learner answer-type expansion
+
+**Status:** done / released
+**Implementation commits:** `84cbcb3`, `1d1f95f`, `02cbd69`
+**Release validation:** independent review approved. Practice and Exam support deterministic MCQ,
+multi-select, exact short answer, and numeric answers, plus written answers that remain pending
+review. Web 348/348, Core unit/integration, 21 migrations plus idempotent rerun, Python, shared
+TypeScript, Compose, and diff checks passed on 2026-08-11. See `docs/handoffs/T-0029.md`.
+
 ## T-0028 — Learner module selection and flexible question counts
 
 **Status:** done / released

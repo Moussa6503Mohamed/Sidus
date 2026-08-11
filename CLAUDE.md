@@ -51,6 +51,10 @@ cd services/ai && python -m pytest
 
 ## Current state
 
+- T-0029 released: learner Practice and Exam support MCQ, multi-select, exact short answer,
+  numeric answer, and written responses. Deterministic types mark only after submission; written
+  responses remain pending review and receive no invented score. See `docs/handoffs/T-0029.md`.
+
 - T-0028 released: learner Practice and Exam now expose only human-readable Modules through a
   learner-safe eligible-only projection. Raw curriculum identifiers are not shown or requested.
   Both modes support All available or any positive count up to live availability. See
