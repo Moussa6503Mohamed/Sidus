@@ -54,6 +54,10 @@ cd services/ai && python -m pytest
 - T-0032 released: Test/Exam sessions are server-owned with immutable learner-safe item snapshots,
   server deadline, optimistic autosave, reconnect-ready reads, and idempotent finalization. Live
   browser/API E2E is deferred until final API integration. See `docs/handoffs/T-0032.md`.
+- T-0033 released as adapter-only: Sonnet work has strict schemas, owner-scoped job routes,
+  append-only traces, deterministic fake-provider coverage, and automated retry/withhold quality
+  gates. The provider remains fail-closed with no live API call until model calibration and
+  credential validation. See `docs/handoffs/T-0033.md`.
 
 - T-0031 released: white-primary Sidus Observatory alignment across private uploads, mixed answer
   controls, shared primitives, and Exam dialog accessibility. See `docs/handoffs/T-0031.md`.
@@ -270,12 +274,3 @@ cd services/ai && python -m pytest
   autosave, deadline enforcement, one-open-Exam uniqueness, and immutable events. Learner BFF
   routes are fixed and closed; Exam Mode creates a server-owned session and saves response
   mutations. See `docs/assessment-sessions.md` and `docs/handoffs/T-0032.md`.
-- T-0033 Sonnet adapter and automated quality gate is in review: `services/ai/app/sonnet/` adds a
-  `SonnetProvider` interface, strict request/result schemas keyed to the canonical explanation
-  cache fields, a SQLite-backed durable job store with an append-only version/cost/confidence
-  trace per attempt, a deterministic rubric/consistency quality gate, and a retry/withhold
-  orchestrator (structural violations withhold immediately; low confidence retries up to three
-  attempts). `get_provider()` always returns `None` in this build — no API key, live Anthropic
-  call, PDF, OCR, or extraction is involved; tests use only a deterministic fake provider. Two
-  Clerk-protected, owner-scoped routes (`POST /sonnet/jobs`, `GET /sonnet/jobs/{id}`) sit in
-  `services/ai`. See `docs/decisions.md` D-0026 and `docs/handoffs/T-0033.md`.

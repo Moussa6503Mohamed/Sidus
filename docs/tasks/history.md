@@ -1,5 +1,16 @@
 # Task history
 
+## T-0033 — Sonnet adapter and automated quality gate
+
+**Status:** done / released (adapter-only)
+**Implementation commit:** `79d9345`
+**Release validation:** independent security/contract review approved. Strict schemas, owner-scoped
+Clerk routes, append-only job traces, deterministic quality gates, retry/withhold behavior, and a
+fail-closed provider boundary released. Python 62/62, web 357/357 plus typecheck/build, Core
+build/vet/unit, Compose, shared-contract, and diff checks passed. Live Anthropic calls remain
+intentionally disabled and must be calibrated/validated before beta production use. See
+`docs/handoffs/T-0033.md`.
+
 ## T-0032 — Persistent assessment sessions
 
 **Status:** done / released
