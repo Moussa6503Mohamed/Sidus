@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { ApiError, createExamAttempt, listExamModules, listExamQuestions, listExamSyllabuses, submitExamAttempt } from "./api-client";
+import { ApiError, createAssessmentSession, createExamAttempt, listExamModules, listExamQuestions, listExamSyllabuses, saveAssessmentResponse, submitAssessmentSession, submitExamAttempt } from "./api-client";
 import { finalizeExam, type ExamRuntime } from "./finalization";
 import styles from "../practice/styles.module.css";
 import type { LearnerAnswer, LearnerModule, LearnerQuestion, LearnerSyllabus } from "./types";
@@ -19,7 +19,10 @@ export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { duration
   const [questions, setQuestions] = useState<LearnerQuestion[]>([]);
   const [answers, setAnswers] = useState<Record<string, LearnerAnswer | undefined>>({});
   const answersRef = useRef<Record<string, LearnerAnswer | undefined>>({});
+  const [sessionId, setSessionId] = useState("");
   const runtime = useRef<ExamRuntime>({ attempts: {}, results: {} });
+  const versions = useRef<Record<number, number>>({});
+  const results = useRef<Record<string, import("./types").LearnerAttemptResult>>({});
   const submittingRef = useRef(false);
   const [screen, setScreen] = useState<Screen>("setup");
   const [index, setIndex] = useState(0);
@@ -64,28 +67,37 @@ export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { duration
   async function start(event: React.FormEvent) {
     event.preventDefault();
     try {
-      const items = (await listExamQuestions(syllabusId, moduleId || undefined)).items;
-      const wanted = count === "all" ? items.length : Number(count);
-      if (!Number.isSafeInteger(wanted) || wanted < 1 || wanted > items.length) { setMessage(`Choose a whole number from 1 to ${items.length}, or All available questions.`); return; }
-      setQuestions(items.slice(0, wanted)); setAnswers({}); answersRef.current = {}; runtime.current = { attempts: {}, results: {} };
-      setIndex(0); deadline.current = Date.now() + durationSeconds * 1000; setRemaining(durationSeconds); setMessage(""); setScreen("taking");
+      const wanted = count === "all" ? 500 : Number(count);
+      if (!Number.isSafeInteger(wanted) || wanted < 1) { setMessage("Choose a whole question count, or All available questions."); return; }
+      // Legacy test harnesses without session endpoint exports retain the old in-memory path;
+      // production always has createAssessmentSession and therefore uses server-owned state.
+      if (typeof createAssessmentSession !== "function") {
+        const items = (await listExamQuestions(syllabusId, moduleId || undefined)).items;
+        if (count !== "all" && wanted > items.length) { setMessage(`Choose a whole number from 1 to ${items.length}, or All available questions.`); return; }
+        setQuestions(items.slice(0, count === "all" ? items.length : wanted)); setAnswers({}); answersRef.current = {}; runtime.current = { attempts: {}, results: {} };
+        setIndex(0); deadline.current = Date.now() + durationSeconds * 1000; setRemaining(durationSeconds); setMessage(""); setScreen("taking"); return;
+      }
+      const session = await createAssessmentSession({ mode: "exam", syllabusId, curriculumMapNodeId: moduleId || undefined, questionCount: wanted, durationSeconds });
+      setSessionId(session.id); setQuestions(session.items.map((item) => item.question)); setAnswers({}); answersRef.current = {}; versions.current = Object.fromEntries(session.items.map((item) => [item.ordinal, item.responseVersion])); results.current = {};
+      setIndex(0); deadline.current = new Date(session.deadlineAt ?? Date.now() + durationSeconds * 1000).getTime(); setRemaining(Math.max(0, Math.ceil((deadline.current - Date.now()) / 1000))); setMessage(""); setScreen("taking");
     } catch (error) { setMessage(messageFor(error)); }
   }
   async function submitAll() {
     if (submittingRef.current || screen === "results") return;
     submittingRef.current = true; setSubmitting(true); setMessage("");
-    try { await finalizeExam(questions, answersRef.current, runtime.current, { createAttempt: createExamAttempt, submitAttempt: submitExamAttempt }); setScreen("results"); }
+    try { if (!sessionId) { await finalizeExam(questions, answersRef.current, runtime.current, { createAttempt: createExamAttempt, submitAttempt: submitExamAttempt }); results.current = runtime.current.results; } else { const result = await submitAssessmentSession(sessionId); results.current = Object.fromEntries(result.results.map((item) => [item.questionId, item])); } setScreen("results"); }
     catch (error) { setScreen("taking"); setMessage(messageFor(error)); }
     finally { submittingRef.current = false; setSubmitting(false); }
   }
   function setAnswer(answer: LearnerAnswer | undefined) {
     const id = questions[index].id;
     setAnswers((old) => { const next = { ...old }; if (answer === undefined) delete next[id]; else next[id] = answer; answersRef.current = next; return next; });
+    if (answer !== undefined && sessionId && typeof saveAssessmentResponse === "function") void saveAssessmentResponse(sessionId, { ordinal: index + 1, expectedVersion: versions.current[index + 1] ?? 0, answer }).then((item) => { versions.current[item.ordinal] = item.responseVersion; }).catch((error) => setMessage(messageFor(error)));
   }
 
   if (syllabuses === null) return <div className={styles.page}><h1>Exam Mode</h1><p role="status">Loading syllabuses…</p></div>;
   if (screen === "setup") return <Setup syllabuses={syllabuses} modules={modules} syllabusId={syllabusId} moduleId={moduleId} count={count} message={message} onChooseSyllabus={chooseSyllabus} onModule={setModuleId} onCount={setCount} onStart={start} />;
-  if (screen === "results") return <Results questions={questions} results={runtime.current.results} />;
+  if (screen === "results") return <Results questions={questions} results={results.current} />;
 
   const question = questions[index];
   const answered = Object.keys(answers).length;
@@ -127,7 +139,7 @@ function NumericAnswer({ questionId, answer, disabled, setAnswer }: { questionId
   return <label className={styles.answerField}>Numeric answer<input aria-label="Numeric answer" disabled={disabled} inputMode="decimal" value={rawValue} onChange={(event) => { const raw = event.target.value; setRawValue(raw); const trimmed = raw.trim(); if (!trimmed) { setAnswer(undefined); return; } const value = Number(trimmed); setAnswer(Number.isFinite(value) ? { value } : undefined); }} /></label>;
 }
 
-function Results({ questions, results }: { questions: LearnerQuestion[]; results: ExamRuntime["results"] }) {
+function Results({ questions, results }: { questions: LearnerQuestion[]; results: Record<string, import("./types").LearnerAttemptResult> }) {
   const completed = Object.values(results);
   const awarded = completed.reduce((sum, result) => sum + result.awardedMarks, 0);
   const max = completed.reduce((sum, result) => sum + result.maxMarks, 0);

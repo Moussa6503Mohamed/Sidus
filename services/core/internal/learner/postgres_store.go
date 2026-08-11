@@ -400,11 +400,24 @@ func (p *PostgresStore) SubmitAttempt(ctx context.Context, learnerSubjectID, att
 	}
 	defer tx.Rollback()
 
+	result, err := submitAttemptTx(ctx, tx, learnerSubjectID, attemptID, selectedOptionID)
+	if err != nil {
+		return AttemptResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AttemptResult{}, fmt.Errorf("commit learner submission: %w", err)
+	}
+	return result, nil
+}
+
+// submitAttemptTx writes one pinned attempt but leaves commit/rollback to caller. Assessment
+// sessions use this inside their own transaction so final submission is all-or-nothing.
+func submitAttemptTx(ctx context.Context, tx *sql.Tx, learnerSubjectID, attemptID, selectedOptionID string) (AttemptResult, error) {
 	var result AttemptResult
 	var status AttemptStatus
 	var rubricRaw, optionsRaw []byte
 	var responseType ResponseType
-	err = tx.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(ctx, `
 		SELECT a.id, a.question_id, a.status, a.max_marks, rv.rubric, q.options, a.response_type
 		FROM learner_attempts a
 		JOIN questions q ON q.id = a.question_id
@@ -466,9 +479,6 @@ func (p *PostgresStore) SubmitAttempt(ctx context.Context, learnerSubjectID, att
 		        ARRAY['answer','resultStatus','status','isCorrect','awardedMarks','submittedAt'])
 	`, attemptID, learnerSubjectID); err != nil {
 		return AttemptResult{}, fmt.Errorf("insert learner submission event: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return AttemptResult{}, fmt.Errorf("commit learner submission: %w", err)
 	}
 	return result, nil
 }

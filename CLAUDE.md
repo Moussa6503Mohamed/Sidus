@@ -261,3 +261,8 @@ cd services/ai && python -m pytest
   `GET /learner/modules` route exposes only modules with at least one live eligible question;
   Practice and Exam use Module selectors and All/custom positive counts without a 10-question
   cap. Response-type expansion remains separate; see `docs/handoffs/T-0028.md`.
+- T-0032 persistent assessment sessions is in review: `0023_create_assessment_sessions.sql`
+  introduces owner-scoped server sessions, immutable learner-safe item snapshots, versioned
+  autosave, deadline enforcement, one-open-Exam uniqueness, and immutable events. Learner BFF
+  routes are fixed and closed; Exam Mode creates a server-owned session and saves response
+  mutations. See `docs/assessment-sessions.md` and `docs/handoffs/T-0032.md`.

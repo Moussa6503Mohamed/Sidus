@@ -5,7 +5,7 @@ import { ExamWorkspace } from "./workspace";
 import type { LearnerQuestion } from "./types";
 
 vi.mock("./api-client", () => ({
-  ApiError: class ApiError extends Error {}, listExamSyllabuses: vi.fn(), listExamModules: vi.fn(), listExamQuestions: vi.fn(), createExamAttempt: vi.fn(), submitExamAttempt: vi.fn(),
+  ApiError: class ApiError extends Error {}, listExamSyllabuses: vi.fn(), listExamModules: vi.fn(), listExamQuestions: vi.fn(), createExamAttempt: vi.fn(), submitExamAttempt: vi.fn(), createAssessmentSession: undefined, saveAssessmentResponse: undefined, submitAssessmentSession: undefined,
 }));
 import { createExamAttempt, listExamModules, listExamQuestions, listExamSyllabuses, submitExamAttempt } from "./api-client";
 

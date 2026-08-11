@@ -24,6 +24,14 @@ func Register(mux *http.ServeMux, store Store, v auth.Verifier) {
 	mux.HandleFunc("GET /learner/modules", auth.Protect(v, auth.PermReadLearnerQuestion, h.listModules))
 	mux.HandleFunc("POST /learner/questions/{id}/attempts", auth.Protect(v, auth.PermUseLearnerAttempt, h.createAttempt))
 	mux.HandleFunc("POST /learner/attempts/{id}/submit", auth.Protect(v, auth.PermUseLearnerAttempt, h.submitAttempt))
+	if sessions, ok := store.(SessionStore); ok {
+		sh := &sessionHandler{store: sessions}
+		mux.HandleFunc("POST /learner/assessment-sessions", auth.Protect(v, auth.PermUseLearnerAttempt, sh.create))
+		mux.HandleFunc("GET /learner/assessment-sessions/{id}", auth.Protect(v, auth.PermUseLearnerAttempt, sh.get))
+		mux.HandleFunc("PATCH /learner/assessment-sessions/{id}/responses", auth.Protect(v, auth.PermUseLearnerAttempt, sh.save))
+		mux.HandleFunc("POST /learner/assessment-sessions/{id}/submit", auth.Protect(v, auth.PermUseLearnerAttempt, sh.submit))
+		mux.HandleFunc("GET /learner/assessment-sessions/{id}/result", auth.Protect(v, auth.PermUseLearnerAttempt, sh.result))
+	}
 }
 
 func learnerSubject(r *http.Request) (string, bool) {
@@ -175,6 +183,118 @@ func (h *handler) submitAttempt(w http.ResponseWriter, r *http.Request) {
 
 type handler struct {
 	store Store
+}
+
+type sessionHandler struct{ store SessionStore }
+
+func decodeSessionBody(r *http.Request, target any) bool {
+	data, err := io.ReadAll(io.LimitReader(r.Body, 8193))
+	if err != nil || len(data) == 0 || len(data) > 8192 {
+		return false
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if dec.Decode(target) != nil {
+		return false
+	}
+	return dec.Decode(&struct{}{}) == io.EOF
+}
+
+func (h *sessionHandler) create(w http.ResponseWriter, r *http.Request) {
+	var in CreateSessionInput
+	if !decodeSessionBody(r, &in) {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request body is invalid")
+		return
+	}
+	subject, ok := learnerSubject(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
+		return
+	}
+	s, err := h.store.CreateSession(r.Context(), subject, in)
+	writeSessionError(w, err)
+	if err == nil {
+		writeJSON(w, http.StatusCreated, s)
+	}
+}
+func (h *sessionHandler) get(w http.ResponseWriter, r *http.Request) {
+	subject, ok := learnerSubject(r)
+	if !ok {
+		writeError(w, 401, "unauthorized", "authentication is required")
+		return
+	}
+	s, err := h.store.GetSession(r.Context(), subject, r.PathValue("id"))
+	writeSessionError(w, err)
+	if err == nil {
+		writeJSON(w, 200, s)
+	}
+}
+func (h *sessionHandler) save(w http.ResponseWriter, r *http.Request) {
+	var in SaveResponseInput
+	if !decodeSessionBody(r, &in) {
+		writeError(w, 400, "invalid_json", "request body is invalid")
+		return
+	}
+	subject, ok := learnerSubject(r)
+	if !ok {
+		writeError(w, 401, "unauthorized", "authentication is required")
+		return
+	}
+	item, err := h.store.SaveSessionResponse(r.Context(), subject, r.PathValue("id"), in)
+	writeSessionError(w, err)
+	if err == nil {
+		writeJSON(w, 200, item)
+	}
+}
+func (h *sessionHandler) submit(w http.ResponseWriter, r *http.Request) {
+	data, err := io.ReadAll(io.LimitReader(r.Body, 4097))
+	if err != nil || len(data) > 4096 || len(bytes.TrimSpace(data)) != 0 {
+		writeError(w, 400, "invalid_json", "request body must be empty")
+		return
+	}
+	subject, ok := learnerSubject(r)
+	if !ok {
+		writeError(w, 401, "unauthorized", "authentication is required")
+		return
+	}
+	result, err := h.store.SubmitSession(r.Context(), subject, r.PathValue("id"))
+	writeSessionError(w, err)
+	if err == nil {
+		writeJSON(w, 200, result)
+	}
+}
+func (h *sessionHandler) result(w http.ResponseWriter, r *http.Request) {
+	subject, ok := learnerSubject(r)
+	if !ok {
+		writeError(w, 401, "unauthorized", "authentication is required")
+		return
+	}
+	result, err := h.store.GetSessionResult(r.Context(), subject, r.PathValue("id"))
+	writeSessionError(w, err)
+	if err == nil {
+		writeJSON(w, 200, result)
+	}
+}
+func writeSessionError(w http.ResponseWriter, err error) {
+	if err == nil {
+		return
+	}
+	switch {
+	case errors.Is(err, ErrSessionNotFound):
+		writeError(w, 404, "not_found", "assessment session not found")
+	case errors.Is(err, ErrSessionConflict):
+		writeError(w, 409, "session_conflict", "assessment session conflict")
+	case errors.Is(err, ErrSessionExpired):
+		writeError(w, 409, "session_expired", "assessment session deadline elapsed")
+	case errors.Is(err, ErrSessionClosed):
+		writeError(w, 409, "session_closed", "assessment session is closed")
+	case errors.Is(err, ErrNoQuestions):
+		writeError(w, 409, "no_questions", "no eligible questions")
+	case errors.Is(err, ErrInvalidAnswer):
+		writeError(w, 400, "invalid_input", "request is invalid")
+	default:
+		writeError(w, 500, "internal_error", internalErrorMessage)
+	}
 }
 
 // internalErrorMessage is the only text ever returned for database, scan, or other

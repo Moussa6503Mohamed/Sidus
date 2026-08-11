@@ -1,0 +1,4 @@
+import { NextResponse } from "next/server";
+import { callCoreLearner } from "@/lib/learner/core-proxy";
+import { learnerErrorResponse } from "@/lib/learner/http";
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }): Promise<NextResponse> { try { const { id } = await params; const body: unknown = await request.json(); if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json({ error: "invalid_json", message: "request body is invalid" }, { status: 400 }); const b=body as Record<string,unknown>; const result=await callCoreLearner({kind:"saveAssessmentResponse",id,body:{ordinal:b.ordinal as number,expectedVersion:b.expectedVersion as number,answer:b.answer as Record<string,unknown>}}); return NextResponse.json(result.body,{status:result.status}); } catch(err){return learnerErrorResponse(err);} }

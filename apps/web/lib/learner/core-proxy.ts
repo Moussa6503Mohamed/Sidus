@@ -28,7 +28,7 @@ export class LearnerProxyError extends Error {
   }
 }
 
-type Method = "GET" | "POST";
+type Method = "GET" | "POST" | "PATCH";
 
 export type LearnerOperation =
   | { kind: "listLearnerQuestions"; syllabusId: string; curriculumMapNodeId?: string }
@@ -37,7 +37,12 @@ export type LearnerOperation =
 	| { kind: "listLearnerModules"; syllabusId: string }
   | { kind: "createLearnerAttempt"; questionId: string }
   | { kind: "submitLearnerAttempt"; attemptId: string; answer: { selectedOptionId?: string; selectedOptionIds?: string[]; text?: string; value?: number } }
-  | { kind: "submitLearnerAttempt"; attemptId: string; selectedOptionId: string };
+  | { kind: "submitLearnerAttempt"; attemptId: string; selectedOptionId: string }
+  | { kind: "createAssessmentSession"; body: { mode: "practice" | "exam"; syllabusId: string; curriculumMapNodeId?: string; questionCount: number; durationSeconds?: number } }
+  | { kind: "getAssessmentSession"; id: string }
+  | { kind: "saveAssessmentResponse"; id: string; body: { ordinal: number; expectedVersion: number; answer: Record<string, unknown> } }
+  | { kind: "submitAssessmentSession"; id: string }
+  | { kind: "getAssessmentResult"; id: string };
 
 export interface LearnerProxySuccess {
   status: number;
@@ -69,6 +74,19 @@ function requireValidOptionId(id: string): string {
   return normalized;
 }
 
+function requireSessionCreate(body: { mode: "practice" | "exam"; syllabusId: string; curriculumMapNodeId?: string; questionCount: number; durationSeconds?: number }): string {
+  if ((body.mode !== "practice" && body.mode !== "exam") || !Number.isSafeInteger(body.questionCount) || body.questionCount < 1 || body.questionCount > 500) throw new LearnerProxyError(400, "invalid_input", "assessment setup is invalid");
+  const safe: Record<string, unknown> = { mode: body.mode, syllabusId: requireValidId(body.syllabusId), questionCount: body.questionCount };
+  if (body.curriculumMapNodeId !== undefined) safe.curriculumMapNodeId = requireValidId(body.curriculumMapNodeId);
+  if (body.mode === "exam") { if (!Number.isSafeInteger(body.durationSeconds) || body.durationSeconds! < 60 || body.durationSeconds! > 14400) throw new LearnerProxyError(400, "invalid_input", "assessment setup is invalid"); safe.durationSeconds = body.durationSeconds; }
+  return JSON.stringify(safe);
+}
+function requireSaveResponse(body: { ordinal: number; expectedVersion: number; answer: Record<string, unknown> }): string {
+  if (!Number.isSafeInteger(body.ordinal) || body.ordinal < 1 || !Number.isSafeInteger(body.expectedVersion) || body.expectedVersion < 0) throw new LearnerProxyError(400, "invalid_input", "assessment response is invalid");
+  const answer = JSON.parse(requireValidAnswer(body.answer as { selectedOptionId?: string; selectedOptionIds?: string[]; text?: string; value?: number }));
+  return JSON.stringify({ ordinal: body.ordinal, expectedVersion: body.expectedVersion, answer });
+}
+
 function resolveRoute(op: LearnerOperation): { method: Method; path: string; body?: string } {
   switch (op.kind) {
     case "listLearnerQuestions": {
@@ -92,6 +110,16 @@ function resolveRoute(op: LearnerOperation): { method: Method; path: string; bod
         path: `/learner/attempts/${requireValidId(op.attemptId)}/submit`,
         body: requireValidAnswer("answer" in op ? op.answer : { selectedOptionId: op.selectedOptionId }),
       };
+		case "createAssessmentSession":
+			return { method: "POST", path: "/learner/assessment-sessions", body: requireSessionCreate(op.body) };
+		case "getAssessmentSession":
+			return { method: "GET", path: `/learner/assessment-sessions/${requireValidId(op.id)}` };
+		case "saveAssessmentResponse":
+			return { method: "PATCH", path: `/learner/assessment-sessions/${requireValidId(op.id)}/responses`, body: requireSaveResponse(op.body) };
+		case "submitAssessmentSession":
+			return { method: "POST", path: `/learner/assessment-sessions/${requireValidId(op.id)}/submit` };
+		case "getAssessmentResult":
+			return { method: "GET", path: `/learner/assessment-sessions/${requireValidId(op.id)}/result` };
   }
 }
 
