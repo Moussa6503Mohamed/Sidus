@@ -1,0 +1,29 @@
+.page { display: flex; flex-direction: column; gap: var(--space-6); max-width: var(--page-max); }
+.header { display: grid; gap: var(--space-3); max-width: var(--content-measure); }
+.header h1, .registryHeading h2, .formHeading h2 { margin: 0; }
+.header h1 { font-size: clamp(1.9rem, 4vw, 2.5rem); letter-spacing: -0.02em; }
+.eyebrow { margin: 0; color: var(--text-muted); font: 650 0.75rem/1 var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase; }
+.lede, .formHeading p, .muted { margin: 0; color: var(--text-secondary); }
+.uploadForm, .registry { border: var(--border-hairline) solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: var(--shadow-1); }
+.uploadForm { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-4); align-items: end; padding: var(--space-5); }
+.formHeading { grid-column: 1 / -1; display: grid; gap: var(--space-1); }
+.formHeading h2, .registryHeading h2 { font-size: 1.25rem; }
+.fileField { display: grid; gap: var(--space-2); font: 650 0.8125rem/1.4 var(--font-sans); color: var(--text-primary); }
+.fileField input, .actions select { min-height: var(--space-10); width: 100%; border: var(--border-hairline) solid var(--border-default); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); background: var(--surface-raised); color: var(--text-primary); font: 400 0.875rem/1.4 var(--font-sans); }
+.fileField input:hover, .actions select:hover { border-color: var(--border-strong); }
+.fileField small { color: var(--text-muted); font: 400 0.75rem/1.4 var(--font-sans); }
+.registry { overflow: hidden; }
+.registryHeading { display: flex; justify-content: space-between; gap: var(--space-4); align-items: center; padding: var(--space-5); border-bottom: var(--border-hairline) solid var(--border-subtle); }
+.count, .status { display: inline-flex; align-items: center; width: fit-content; border: var(--border-hairline) solid var(--neutral-border); border-radius: var(--radius-pill); padding: var(--space-1) var(--space-2); background: var(--neutral-bg); color: var(--neutral-fg); font: 650 0.75rem/1.4 var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; }
+.status[data-status="scan_clean"] { border-color: var(--success-border); background: var(--success-bg); color: var(--success-fg); }
+.status[data-status="deletion_requested"] { border-color: var(--danger-border); background: var(--danger-bg); color: var(--danger-fg); }
+.tableWrap { overflow-x: auto; }
+.tableWrap table { width: 100%; min-width: 48rem; border-collapse: collapse; }
+.tableWrap th, .tableWrap td { padding: var(--space-3) var(--space-5); text-align: left; vertical-align: middle; border-bottom: var(--border-hairline) solid var(--border-subtle); color: var(--text-secondary); }
+.tableWrap th { background: var(--surface-sunken); color: var(--text-muted); font: 650 0.6875rem/1.4 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.tableWrap tr:last-child td { border-bottom: 0; }
+.filename { color: var(--text-primary) !important; font-weight: 600; overflow-wrap: anywhere; }
+.mono { font-family: var(--font-mono); font-size: 0.8125rem; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 19rem; }
+.loading { display: grid; gap: var(--space-3); padding: var(--space-5); color: var(--text-muted); }
+@media (max-width: 40rem) { .uploadForm { grid-template-columns: 1fr; } .uploadForm > button { width: 100%; } .registryHeading { align-items: flex-start; flex-direction: column; } .tableWrap table { min-width: 42rem; } }

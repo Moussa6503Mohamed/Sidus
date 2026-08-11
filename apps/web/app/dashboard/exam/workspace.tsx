@@ -11,41 +11,125 @@ const DURATION_SECONDS = 30 * 60;
 const messageFor = (error: unknown) => error instanceof ApiError ? error.message : "Exam submission failed. Retry without changing answers.";
 
 export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { durationSeconds?: number }) {
-  const [syllabuses, setSyllabuses] = useState<LearnerSyllabus[] | null>(null); const [modules, setModules] = useState<LearnerModule[] | null>(null);
-  const [syllabusId, setSyllabusId] = useState(""); const [moduleId, setModuleId] = useState(""); const [count, setCount] = useState("all");
-  const [questions, setQuestions] = useState<LearnerQuestion[]>([]); const [answers, setAnswers] = useState<Record<string, LearnerAnswer | undefined>>({});
-  const answersRef = useRef<Record<string, LearnerAnswer | undefined>>({}); const runtime = useRef<ExamRuntime>({ attempts: {}, results: {} }); const submittingRef = useRef(false);
-  const [screen, setScreen] = useState<Screen>("setup"); const [index, setIndex] = useState(0); const [message, setMessage] = useState(""); const [submitting, setSubmitting] = useState(false); const [remaining, setRemaining] = useState(durationSeconds);
-  const deadline = useRef<number | undefined>(undefined); const submitButton = useRef<HTMLButtonElement>(null); const confirmButton = useRef<HTMLButtonElement>(null);
-  useEffect(() => { void listExamSyllabuses().then((r) => setSyllabuses(r.items)).catch((e) => setMessage(messageFor(e))); }, []);
-  useEffect(() => { if (screen !== "taking" && screen !== "confirm") return; const timer = window.setInterval(() => { const seconds=Math.max(0,Math.ceil((deadline.current!-Date.now())/1000)); setRemaining(seconds); if(seconds===0&&!submittingRef.current) void submitAll(); }, 250); return () => clearInterval(timer); }, [screen]);
+  const [syllabuses, setSyllabuses] = useState<LearnerSyllabus[] | null>(null);
+  const [modules, setModules] = useState<LearnerModule[] | null>(null);
+  const [syllabusId, setSyllabusId] = useState("");
+  const [moduleId, setModuleId] = useState("");
+  const [count, setCount] = useState("all");
+  const [questions, setQuestions] = useState<LearnerQuestion[]>([]);
+  const [answers, setAnswers] = useState<Record<string, LearnerAnswer | undefined>>({});
+  const answersRef = useRef<Record<string, LearnerAnswer | undefined>>({});
+  const runtime = useRef<ExamRuntime>({ attempts: {}, results: {} });
+  const submittingRef = useRef(false);
+  const [screen, setScreen] = useState<Screen>("setup");
+  const [index, setIndex] = useState(0);
+  const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [remaining, setRemaining] = useState(durationSeconds);
+  const deadline = useRef<number | undefined>(undefined);
+  const submitButton = useRef<HTMLButtonElement>(null);
+  const confirmButton = useRef<HTMLButtonElement>(null);
+  const continueButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => { void listExamSyllabuses().then((result) => setSyllabuses(result.items)).catch((error) => setMessage(messageFor(error))); }, []);
+  useEffect(() => {
+    if (screen !== "taking" && screen !== "confirm") return;
+    const timer = window.setInterval(() => {
+      const seconds = Math.max(0, Math.ceil((deadline.current! - Date.now()) / 1000));
+      setRemaining(seconds);
+      if (seconds === 0 && !submittingRef.current) void submitAll();
+    }, 250);
+    return () => clearInterval(timer);
+  }, [screen]);
   useEffect(() => { if (screen === "confirm") confirmButton.current?.focus(); }, [screen]);
-  useEffect(() => { if (screen !== "confirm") return; const trap=(event:globalThis.KeyboardEvent)=>{ if(event.key!=="Tab")return; const confirm=confirmButton.current; if(confirm&&document.activeElement!==confirm){event.preventDefault();confirm.focus();} }; document.addEventListener("keydown",trap); return()=>document.removeEventListener("keydown",trap); },[screen]);
-  async function chooseSyllabus(id:string){setSyllabusId(id);setModuleId("");setModules(null);if(!id)return;try{setModules((await listExamModules(id)).items)}catch(e){setModules([]);setMessage(messageFor(e))}}
-  async function start(event:React.FormEvent){event.preventDefault();try{const items=(await listExamQuestions(syllabusId,moduleId||undefined)).items;const wanted=count==="all"?items.length:Number(count);if(!Number.isSafeInteger(wanted)||wanted<1||wanted>items.length){setMessage(`Choose a whole number from 1 to ${items.length}, or All available questions.`);return}setQuestions(items.slice(0,wanted));setAnswers({});answersRef.current={};runtime.current={attempts:{},results:{}};setIndex(0);deadline.current=Date.now()+durationSeconds*1000;setRemaining(durationSeconds);setMessage("");setScreen("taking")}catch(e){setMessage(messageFor(e))}}
-  async function submitAll(){if(submittingRef.current||screen==="results")return;submittingRef.current=true;setSubmitting(true);setMessage("");try{await finalizeExam(questions,answersRef.current,runtime.current,{createAttempt:createExamAttempt,submitAttempt:submitExamAttempt});setScreen("results")}catch(e){setScreen("taking");setMessage(messageFor(e))}finally{submittingRef.current=false;setSubmitting(false)}}
-  function setAnswer(answer:LearnerAnswer|undefined){const id=questions[index].id;setAnswers(old=>{const next={...old};if(answer===undefined)delete next[id];else next[id]=answer;answersRef.current=next;return next})}
-  if(syllabuses===null)return <div className={styles.page}><h1>Exam Mode</h1><p role="status">Loading syllabuses…</p></div>;
-  if(screen==="setup")return <div className={styles.page}><h1>Exam Mode</h1><form className={styles.form} onSubmit={start}><label className={styles.field}>Syllabus<select aria-label="Syllabus" value={syllabusId} onChange={e=>void chooseSyllabus(e.target.value)} required><option value="" disabled>Select a syllabus</option>{syllabuses.map(s=><option key={s.id} value={s.id}>{s.track?`${s.displayName} (${s.track})`:s.displayName}</option>)}</select></label>{syllabusId&&<label className={styles.field}>Module<select aria-label="Module" value={moduleId} onChange={e=>setModuleId(e.target.value)} disabled={modules===null}><option value="">All modules</option>{modules?.map(m=><option key={m.id} value={m.id}>{m.label?`${m.code} — ${m.label}`:m.code}</option>)}</select></label>}<label className={styles.field}>Questions<select aria-label="Questions" value={count==="all"?"all":"custom"} onChange={e=>setCount(e.target.value==="all"?"all":"1")}><option value="all">All available</option><option value="custom">Choose a number</option></select>{count!=="all"&&<input aria-label="Question count" type="number" min="1" value={count} onChange={e=>setCount(e.target.value)}/>}</label><button className={styles.button} disabled={!syllabusId||modules===null}>Start exam</button></form>{message&&<p role="alert">{message}</p>}</div>;
-  if(screen==="results")return <Results questions={questions} results={runtime.current.results}/>;
-  const question=questions[index]; const answered=Object.keys(answers).length;
-  return <div className={styles.page}><h1>Exam Mode</h1><p>Local timer: {String(Math.floor(remaining/60)).padStart(2,"0")}:{String(remaining%60).padStart(2,"0")} · {answered}/{questions.length} answered</p><section className={styles.card}><p>Question {index+1} of {questions.length}</p><p>{question.prompt}</p><AnswerControl question={question} answer={answers[question.id]} disabled={submitting} setAnswer={setAnswer}/></section><nav className={styles.form}><button type="button" className={styles.buttonSecondary} disabled={submitting||index===0} onClick={()=>setIndex(index-1)}>Back</button><button type="button" className={styles.buttonSecondary} disabled={submitting||index===questions.length-1} onClick={()=>setIndex(index+1)}>Next</button><button ref={submitButton} type="button" className={styles.button} disabled={submitting} onClick={()=>setScreen("confirm")}>{submitting?"Submitting…":"Submit all"}</button></nav>{message&&<p role="alert" className={styles.bannerError}>{message} <button type="button" className={styles.buttonSecondary} disabled={submitting} onClick={()=>void submitAll()}>Retry submission</button></p>}{screen==="confirm"&&<section role="dialog" aria-modal="true" className={styles.feedback}><h2>Submit all answers?</h2><button ref={confirmButton} className={styles.button} disabled={submitting} onClick={()=>void submitAll()}>{submitting?"Submitting…":"Confirm submit"}</button><button className={styles.buttonSecondary} disabled={submitting} onClick={()=>{setScreen("taking");submitButton.current?.focus()}}>Continue exam</button></section>}</div>;
+  useEffect(() => {
+    if (screen !== "confirm") return;
+    const trap = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const items = [confirmButton.current, continueButton.current].filter((item): item is HTMLButtonElement => Boolean(item));
+      if (!items.length) return;
+      event.preventDefault();
+      const current = items.indexOf(document.activeElement as HTMLButtonElement);
+      items[(current + (event.shiftKey ? -1 : 1) + items.length) % items.length].focus();
+    };
+    document.addEventListener("keydown", trap);
+    return () => document.removeEventListener("keydown", trap);
+  }, [screen]);
+
+  async function chooseSyllabus(id: string) {
+    setSyllabusId(id); setModuleId(""); setModules(null);
+    if (!id) return;
+    try { setModules((await listExamModules(id)).items); } catch (error) { setModules([]); setMessage(messageFor(error)); }
+  }
+  async function start(event: React.FormEvent) {
+    event.preventDefault();
+    try {
+      const items = (await listExamQuestions(syllabusId, moduleId || undefined)).items;
+      const wanted = count === "all" ? items.length : Number(count);
+      if (!Number.isSafeInteger(wanted) || wanted < 1 || wanted > items.length) { setMessage(`Choose a whole number from 1 to ${items.length}, or All available questions.`); return; }
+      setQuestions(items.slice(0, wanted)); setAnswers({}); answersRef.current = {}; runtime.current = { attempts: {}, results: {} };
+      setIndex(0); deadline.current = Date.now() + durationSeconds * 1000; setRemaining(durationSeconds); setMessage(""); setScreen("taking");
+    } catch (error) { setMessage(messageFor(error)); }
+  }
+  async function submitAll() {
+    if (submittingRef.current || screen === "results") return;
+    submittingRef.current = true; setSubmitting(true); setMessage("");
+    try { await finalizeExam(questions, answersRef.current, runtime.current, { createAttempt: createExamAttempt, submitAttempt: submitExamAttempt }); setScreen("results"); }
+    catch (error) { setScreen("taking"); setMessage(messageFor(error)); }
+    finally { submittingRef.current = false; setSubmitting(false); }
+  }
+  function setAnswer(answer: LearnerAnswer | undefined) {
+    const id = questions[index].id;
+    setAnswers((old) => { const next = { ...old }; if (answer === undefined) delete next[id]; else next[id] = answer; answersRef.current = next; return next; });
+  }
+
+  if (syllabuses === null) return <div className={styles.page}><h1>Exam Mode</h1><p role="status">Loading syllabuses…</p></div>;
+  if (screen === "setup") return <Setup syllabuses={syllabuses} modules={modules} syllabusId={syllabusId} moduleId={moduleId} count={count} message={message} onChooseSyllabus={chooseSyllabus} onModule={setModuleId} onCount={setCount} onStart={start} />;
+  if (screen === "results") return <Results questions={questions} results={runtime.current.results} />;
+
+  const question = questions[index];
+  const answered = Object.keys(answers).length;
+  return <div className={styles.page}>
+    <header className={styles.header}><h1>Exam Mode</h1><p>Timer: {String(Math.floor(remaining / 60)).padStart(2, "0")}:{String(remaining % 60).padStart(2, "0")} · {answered}/{questions.length} answered</p></header>
+    <section className={styles.card}><p className={styles.muted}>Question {index + 1} of {questions.length}</p><p className={styles.prompt}>{question.prompt}</p><AnswerControl question={question} answer={answers[question.id]} disabled={submitting} setAnswer={setAnswer} /></section>
+    <nav className={styles.form} aria-label="Exam navigation"><button type="button" className={styles.buttonSecondary} disabled={submitting || index === 0} onClick={() => setIndex(index - 1)}>Back</button><button type="button" className={styles.buttonSecondary} disabled={submitting || index === questions.length - 1} onClick={() => setIndex(index + 1)}>Next</button><button ref={submitButton} type="button" className={styles.button} disabled={submitting} onClick={() => setScreen("confirm")}>{submitting ? "Submitting…" : "Submit all"}</button></nav>
+    {message && <p role="alert" className={styles.bannerError}>{message} <button type="button" className={styles.buttonSecondary} disabled={submitting} onClick={() => void submitAll()}>Retry submission</button></p>}
+    {screen === "confirm" && <div className={styles.dialogScrim}><section role="dialog" aria-modal="true" aria-labelledby="exam-submit-title" className={styles.dialog}><h2 id="exam-submit-title">Submit all answers?</h2><p>Answers will be marked or queued for AI marking after submission.</p><div className={styles.dialogActions}><button ref={confirmButton} className={styles.button} disabled={submitting} onClick={() => void submitAll()}>{submitting ? "Submitting…" : "Confirm submit"}</button><button ref={continueButton} className={styles.buttonSecondary} disabled={submitting} onClick={() => { setScreen("taking"); submitButton.current?.focus(); }}>Continue exam</button></div></section></div>}
+  </div>;
 }
 
-function AnswerControl({question,answer,disabled,setAnswer}:{question:LearnerQuestion;answer:LearnerAnswer|undefined;disabled:boolean;setAnswer:(a:LearnerAnswer|undefined)=>void}) { const options=question.options??[]; const selected=typeof answer==="object"&&answer&&"selectedOptionId" in answer?answer.selectedOptionId:""; const onKey=(event:KeyboardEvent<HTMLButtonElement>,index:number)=>{if(event.key==="ArrowRight"||event.key==="ArrowDown"){event.preventDefault();const next=options[(index+1)%options.length];setAnswer({selectedOptionId:next.id});event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[(index+1)%options.length]?.focus()}};if(question.responseType==="multiple_choice")return <div className={styles.options} role="radiogroup">{options.map((option,index)=><button key={option.id} type="button" role="radio" disabled={disabled} aria-checked={selected===option.id} tabIndex={selected?selected===option.id?0:-1:index===0?0:-1} className={styles.optionButton} onClick={()=>setAnswer({selectedOptionId:option.id})} onKeyDown={e=>onKey(e,index)}>{option.label}</button>)}</div>;if(question.responseType==="multi_select")return <fieldset disabled={disabled}><legend>Select every answer that applies</legend>{options.map(option=>{const ids=typeof answer==="object"&&answer&&"selectedOptionIds"in answer?answer.selectedOptionIds:[];return <label key={option.id}><input type="checkbox" checked={ids.includes(option.id)} onChange={e=>setAnswer({selectedOptionIds:e.target.checked?[...ids,option.id]:ids.filter(id=>id!==option.id)})}/>{option.label}</label>})}</fieldset>;if(question.responseType==="numeric_answer")return <NumericAnswer questionId={question.id} answer={answer} disabled={disabled} setAnswer={setAnswer}/>;const text=typeof answer==="object"&&answer&&"text"in answer?answer.text:"";return <textarea aria-label="Written response" disabled={disabled} rows={question.responseType==="essay"?8:4} value={text} onChange={e=>setAnswer(e.target.value.trim()?{text:e.target.value}:undefined)}/>;}
+function Setup({ syllabuses, modules, syllabusId, moduleId, count, message, onChooseSyllabus, onModule, onCount, onStart }: { syllabuses: LearnerSyllabus[]; modules: LearnerModule[] | null; syllabusId: string; moduleId: string; count: string; message: string; onChooseSyllabus: (id: string) => Promise<void>; onModule: (id: string) => void; onCount: (value: string) => void; onStart: (event: React.FormEvent) => void }) {
+  return <div className={styles.page}><header className={styles.header}><h1>Exam Mode</h1><p>Timed assessment. Results appear only after submission.</p></header><form className={styles.form} onSubmit={onStart}><label className={styles.field}>Syllabus<select aria-label="Syllabus" value={syllabusId} onChange={(event) => void onChooseSyllabus(event.target.value)} required><option value="" disabled>Select a syllabus</option>{syllabuses.map((syllabus) => <option key={syllabus.id} value={syllabus.id}>{syllabus.track ? `${syllabus.displayName} (${syllabus.track})` : syllabus.displayName}</option>)}</select></label>{syllabusId && <label className={styles.field}>Module<select aria-label="Module" value={moduleId} onChange={(event) => onModule(event.target.value)} disabled={modules === null}><option value="">All modules</option>{modules?.map((module) => <option key={module.id} value={module.id}>{module.label ? `${module.code} — ${module.label}` : module.code}</option>)}</select></label>}<label className={styles.field}>Questions<select aria-label="Questions" value={count === "all" ? "all" : "custom"} onChange={(event) => onCount(event.target.value === "all" ? "all" : "1")}><option value="all">All available</option><option value="custom">Choose a number</option></select>{count !== "all" && <input aria-label="Question count" type="number" min="1" value={count} onChange={(event) => onCount(event.target.value)} />}</label><button className={styles.button} disabled={!syllabusId || modules === null}>Start exam</button></form>{message && <p role="alert" className={styles.bannerError}>{message}</p>}</div>;
+}
+
+function AnswerControl({ question, answer, disabled, setAnswer }: { question: LearnerQuestion; answer: LearnerAnswer | undefined; disabled: boolean; setAnswer: (answer: LearnerAnswer | undefined) => void }) {
+  const options = question.options ?? [];
+  const selected = typeof answer === "object" && answer && "selectedOptionId" in answer ? answer.selectedOptionId : "";
+  const onKey = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(event.key)) return;
+    event.preventDefault();
+    const direction = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
+    const nextIndex = (index + direction + options.length) % options.length;
+    setAnswer({ selectedOptionId: options[nextIndex].id });
+    event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("[role='radio']")[nextIndex]?.focus();
+  };
+  if (question.responseType === "multiple_choice") return <div className={styles.options} role="radiogroup">{options.map((option, index) => <button key={option.id} type="button" role="radio" disabled={disabled} aria-checked={selected === option.id} tabIndex={selected ? selected === option.id ? 0 : -1 : index === 0 ? 0 : -1} className={styles.optionButton} onClick={() => setAnswer({ selectedOptionId: option.id })} onKeyDown={(event) => onKey(event, index)}>{option.label}</button>)}</div>;
+  if (question.responseType === "multi_select") return <fieldset className={styles.checkGroup} disabled={disabled}><legend>Select every answer that applies</legend>{options.map((option) => { const ids = typeof answer === "object" && answer && "selectedOptionIds" in answer ? answer.selectedOptionIds : []; return <label key={option.id} className={styles.checkOption}><input type="checkbox" checked={ids.includes(option.id)} onChange={(event) => setAnswer({ selectedOptionIds: event.target.checked ? [...ids, option.id] : ids.filter((id) => id !== option.id) })} /><span>{option.label}</span></label>; })}</fieldset>;
+  if (question.responseType === "numeric_answer") return <NumericAnswer questionId={question.id} answer={answer} disabled={disabled} setAnswer={setAnswer} />;
+  const text = typeof answer === "object" && answer && "text" in answer ? answer.text : "";
+  return <label className={styles.answerField}>Written response<textarea aria-label="Written response" disabled={disabled} rows={question.responseType === "essay" ? 8 : 4} value={text} onChange={(event) => setAnswer(event.target.value.trim() ? { text: event.target.value } : undefined)} /></label>;
+}
 
 function NumericAnswer({ questionId, answer, disabled, setAnswer }: { questionId: string; answer: LearnerAnswer | undefined; disabled: boolean; setAnswer: (answer: LearnerAnswer | undefined) => void }) {
   const numericValue = typeof answer === "object" && answer && "value" in answer ? answer.value : undefined;
   const [rawValue, setRawValue] = useState(numericValue === undefined ? "" : String(numericValue));
   useEffect(() => { setRawValue(numericValue === undefined ? "" : String(numericValue)); }, [questionId, numericValue]);
-  return <input aria-label="Numeric answer" disabled={disabled} inputMode="decimal" value={rawValue} onChange={(event) => {
-    const raw = event.target.value;
-    setRawValue(raw);
-    const trimmed = raw.trim();
-    if (!trimmed) { setAnswer(undefined); return; }
-    const value = Number(trimmed);
-    setAnswer(Number.isFinite(value) ? { value } : undefined);
-  }}/>;
+  return <label className={styles.answerField}>Numeric answer<input aria-label="Numeric answer" disabled={disabled} inputMode="decimal" value={rawValue} onChange={(event) => { const raw = event.target.value; setRawValue(raw); const trimmed = raw.trim(); if (!trimmed) { setAnswer(undefined); return; } const value = Number(trimmed); setAnswer(Number.isFinite(value) ? { value } : undefined); }} /></label>;
 }
 
-function Results({questions,results}:{questions:LearnerQuestion[];results:ExamRuntime["results"]}){const completed=Object.values(results);const awarded=completed.reduce((sum,result)=>sum+result.awardedMarks,0);const max=completed.reduce((sum,result)=>sum+result.maxMarks,0);return <div className={styles.page}><h1>Exam results</h1><p>Answered score: {awarded} / {max}</p><ol>{questions.map((q,index)=>{const result=results[q.id];return <li key={q.id}><h2>Question {index+1}</h2>{!result?<p>Unanswered</p>:result.resultStatus==="pending_review"?<p>Submitted for review. Marking is pending.</p>:<><p>{result.isCorrect?"Correct":"Incorrect"} · {result.awardedMarks} / {result.maxMarks}</p>{result.feedback.correctExplanation&&<p>{result.feedback.correctExplanation}</p>}</>}</li>})}</ol></div>}
+function Results({ questions, results }: { questions: LearnerQuestion[]; results: ExamRuntime["results"] }) {
+  const completed = Object.values(results);
+  const awarded = completed.reduce((sum, result) => sum + result.awardedMarks, 0);
+  const max = completed.reduce((sum, result) => sum + result.maxMarks, 0);
+  return <div className={styles.page}><header className={styles.header}><h1>Exam results</h1><p>Answered score: {awarded} / {max}</p></header><ol className={styles.list}>{questions.map((question, index) => { const result = results[question.id]; return <li key={question.id} className={styles.card}><h2>Question {index + 1}</h2>{!result ? <p>Unanswered</p> : result.resultStatus === "pending_review" ? <p>Submitted for AI marking.</p> : <><p>{result.isCorrect ? "Correct" : "Incorrect"} · {result.awardedMarks} / {result.maxMarks}</p>{result.feedback.correctExplanation && <p>{result.feedback.correctExplanation}</p>}</>}</li>; })}</ol></div>;
+}

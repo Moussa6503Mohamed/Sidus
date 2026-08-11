@@ -162,6 +162,61 @@
   gap: var(--space-3);
 }
 
+.checkGroup {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-4);
+  border: var(--border-hairline) solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+}
+
+.checkGroup legend {
+  padding: 0 var(--space-1);
+  font: 650 0.875rem/1.4 var(--font-sans);
+  color: var(--text-primary);
+}
+
+.checkOption {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.checkOption:hover { background: var(--brand-tint); }
+.checkOption input { accent-color: var(--brand-primary); margin-top: var(--space-1); }
+
+.answerField {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--text-primary);
+  font: 650 0.8125rem/1.4 var(--font-sans);
+}
+
+.answerField input,
+.answerField textarea {
+  width: 100%;
+  border: var(--border-hairline) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: 400 0.9375rem/1.5 var(--font-sans);
+  resize: vertical;
+}
+
+.answerField input:focus-visible,
+.answerField textarea:focus-visible,
+.checkOption input:focus-visible { outline: var(--border-emphasis) solid var(--focus-ring); outline-offset: var(--border-emphasis); }
+.answerField input:disabled,
+.answerField textarea:disabled,
+.checkOption input:disabled { cursor: not-allowed; opacity: 0.7; }
+
 /* Default border is --border-hairline (1px); the selected/correct/selected-incorrect states
    below step up to --border-emphasis (2px). Padding on both is derived from --space-4 minus the
    border tokens so the option's total box size never shifts when its border grows on selection
@@ -302,6 +357,31 @@
   display: grid;
   gap: var(--space-2);
 }
+
+.dialogScrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--scrim);
+}
+
+.dialog {
+  width: min(100%, 32rem);
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-3);
+}
+
+.dialog h2,
+.dialog p { margin: 0; }
+.dialogActions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 
 .feedback h2,
 .feedback h3,
