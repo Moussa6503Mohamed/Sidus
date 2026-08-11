@@ -227,16 +227,17 @@ cd services/ai && python -m pytest
   (T-0024)" and `docs/handoffs/T-0023.md` "Update (T-0024)". Independent review passed and full
   release validation passed on 2026-08-10; T-0024 moved to `docs/tasks/history.md` as
   `done / released`; implementation commit `5e8b35f` unamended.
-- T-0025 local authenticated browser E2E harness is in review: Playwright uses real Clerk session
+- T-0025 local authenticated browser E2E harness released: Playwright uses real Clerk session
   captures stored only under `D:\Sidus-private-content\e2e`, drives the local UI → BFF → private-TLS
   Core flow using opaque runtime-only synthetic fixtures, and never enables an auth bypass or
-  weakens TLS. Signed-out E2E passes; full authenticated projects require human interactive Clerk
-  sign-in captures for `admin`, `learner`, and `unknown`. See `docs/e2e-harness.md`, D-0023, and
+  weakens TLS. Signed-out and full authenticated E2E passed 10/10 on 2026-08-11 with private
+  captures for `admin`, `learner`, and `unknown`. See `docs/e2e-harness.md`, D-0023, and
   `docs/handoffs/T-0025.md`.
-- T-0026 local Exam Mode MVP is in review: `/dashboard/exam` composes existing learner-safe
+- T-0026 local Exam Mode MVP released: `/dashboard/exam` composes existing learner-safe
   syllabus/question/attempt routes without Core or schema changes. It holds paper order, answers,
   flags, browser-local timer, and retry state in memory only; timer expiry reads latest answers
   and continues through accessible submission confirmation. Results explicitly show an
   answered-only score because unanswered questions have no Core attempt/max-mark response.
-  Playwright covers opaque two-question full flow but needs documented local web runtime to rerun.
-  No source/question content is seeded or imported. See `docs/handoffs/T-0026.md`.
+  Playwright covers opaque two-question full flow and passed on documented local web/Core runtime
+  on 2026-08-11. No source/question content is seeded or imported. See
+  `docs/handoffs/T-0026.md`.

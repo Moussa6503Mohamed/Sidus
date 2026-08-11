@@ -1,5 +1,21 @@
 # Task history
 
+## T-0026 — Local Exam Mode MVP
+
+**Status:** done / released
+**Implementation commits:** `0206568`, `665addc`, `8a7871e`
+**Release validation:** Web Vitest 333/333, typecheck, production build, and authenticated local
+Playwright 10/10 passed on 2026-08-11. Exam Mode is browser-local only: no durable session,
+authoritative timer, or real source content. See `docs/handoffs/T-0026.md`.
+
+## T-0025 — Local authenticated browser E2E harness
+
+**Status:** done / released
+**Implementation commits:** `13052b1`, `57702fb`
+**Release validation:** real local Clerk captures for admin/learner/unknown, strict private-CA TLS,
+and full Playwright 10/10 passed on 2026-08-11. Storage state and artifacts remain outside Git.
+See `docs/handoffs/T-0025.md`.
+
 ## T-0024 — Local TLS certificate generation defect fix (D-0022 update)
 
 **Status:** done / released
