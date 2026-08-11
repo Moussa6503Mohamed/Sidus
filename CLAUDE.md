@@ -270,3 +270,12 @@ cd services/ai && python -m pytest
   autosave, deadline enforcement, one-open-Exam uniqueness, and immutable events. Learner BFF
   routes are fixed and closed; Exam Mode creates a server-owned session and saves response
   mutations. See `docs/assessment-sessions.md` and `docs/handoffs/T-0032.md`.
+- T-0033 Sonnet adapter and automated quality gate is in review: `services/ai/app/sonnet/` adds a
+  `SonnetProvider` interface, strict request/result schemas keyed to the canonical explanation
+  cache fields, a SQLite-backed durable job store with an append-only version/cost/confidence
+  trace per attempt, a deterministic rubric/consistency quality gate, and a retry/withhold
+  orchestrator (structural violations withhold immediately; low confidence retries up to three
+  attempts). `get_provider()` always returns `None` in this build — no API key, live Anthropic
+  call, PDF, OCR, or extraction is involved; tests use only a deterministic fake provider. Two
+  Clerk-protected, owner-scoped routes (`POST /sonnet/jobs`, `GET /sonnet/jobs/{id}`) sit in
+  `services/ai`. See `docs/decisions.md` D-0026 and `docs/handoffs/T-0033.md`.

@@ -1015,6 +1015,37 @@ Sonnet/OCR/extraction/publication disabled until T-0032.
 **Alternatives:** public URLs, browser storage, database bytes, automatic model publication — rejected.
 **Owner/date:** Codex, 2026-08-11 (T-0030).
 
+## D-0026 — Sonnet adapter interface, durable job lifecycle, and automated quality gate
+**Status:** approved
+**Decision:** `services/ai/app/sonnet` adds a provider-agnostic `SonnetProvider` protocol,
+strict pydantic request/result schemas (request fields mirror the canonical explanation cache
+key: question + syllabus + rubric + language + explanation version), a SQLite-backed durable
+`JobStore` recording an append-only per-attempt trace (model, cost, confidence, verdict), a
+deterministic quality gate (rubric-shape and cross-attempt consistency checks, no model calls),
+and an orchestrator applying a fixed retry/withhold policy (structural rubric violations withhold
+immediately; low confidence retries up to 3 attempts, then withholds). `get_provider()` always
+returns `None` in this build — there is no live Anthropic call, and every route/consumer fails
+closed on `None` rather than fabricating a result. Every job is owner-scoped to the Clerk
+`principal.subject` that created it: `GET /sonnet/jobs/{id}` returns `404` (never `403`, so
+existence itself doesn't leak) for a job owned by a different principal, identical to an unknown
+`job_id`. A duplicate client-supplied `job_id` raises a structured `JobIdConflict` mapped to `409`
+rather than an unhandled SQLite `IntegrityError`. `POST /sonnet/jobs` and `GET /sonnet/jobs/{id}`
+sit behind the existing Clerk session dependency. Tests use only a deterministic
+`FakeSonnetProvider`; no API key, network access, PDFs, OCR, or extraction is involved.
+**Reason:** Per `docs/mvp-execution-plan.md`, T-0033 is scoped to the adapter and evaluation gate,
+"disabled until API key configured and evaluation passes" — building a real Anthropic HTTP call in
+this task would be untested networking code the boundary explicitly excludes. A local SQLite file
+gives genuine process-restart durability for the job trace without requiring new Core/Postgres
+schema or cross-service coordination, matching the task's AI-service-only scope. Structural gate
+failures never retry because retrying cannot fix an internally invalid response shape; only
+confidence is treated as potentially transient.
+**Alternatives:** Wire a real `httpx`-based Anthropic call now, gated by an unset key — rejected:
+adds untested live-call code against a boundary that explicitly forbids it in this task. In-memory
+job store — rejected: not durable across process restart, and "durable job lifecycle" is a named
+requirement. Route job persistence through Core Postgres — deferred: no Core schema change is
+in scope here; revisit when T-0034 needs Core-visible job state.
+**Owner/date:** Codex, 2026-08-12 (T-0033).
+
 ## Decision template
 
 ```md
