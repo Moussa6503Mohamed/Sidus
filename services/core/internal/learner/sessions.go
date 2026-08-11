@@ -169,10 +169,11 @@ func (p *PostgresStore) GetSession(ctx context.Context, subject, id string) (Ses
 	defer rows.Close()
 	for rows.Next() {
 		var item SessionItem
-		var raw []byte
-		if err := rows.Scan(&item.Ordinal, &raw, &item.Answer, &item.ResponseVersion); err != nil {
+		var raw, answer []byte
+		if err := rows.Scan(&item.Ordinal, &raw, &answer, &item.ResponseVersion); err != nil {
 			return Session{}, fmt.Errorf("scan session item: %w", err)
 		}
+		item.Answer = json.RawMessage(answer)
 		item.Question, err = sessionProjection(raw)
 		if err != nil {
 			return Session{}, err
@@ -227,6 +228,25 @@ func validSessionAnswer(q Projection, answer json.RawMessage) bool {
 	return true
 }
 
+// sessionSubmitValue converts a stored session response payload (always the single-key JSON
+// object validSessionAnswer accepted, e.g. {"selectedOptionId":"opt-b"}) into the exact form
+// submitAttemptTx/markAnswer expects. Every response type except multiple_choice already
+// consumes that JSON object as-is; multiple_choice uniquely expects the bare option ID string
+// (matching the direct-submit handler's decodeSubmit contract), so it must be unwrapped here or
+// every session MCQ answer would fail to match any option.
+func sessionSubmitValue(t ResponseType, answer []byte) (string, error) {
+	if t != ResponseMultipleChoice {
+		return string(answer), nil
+	}
+	var payload struct {
+		SelectedOptionID string `json:"selectedOptionId"`
+	}
+	if json.Unmarshal(answer, &payload) != nil || strings.TrimSpace(payload.SelectedOptionID) == "" {
+		return "", ErrInvalidAnswer
+	}
+	return strings.TrimSpace(payload.SelectedOptionID), nil
+}
+
 func (p *PostgresStore) SaveSessionResponse(ctx context.Context, subject, id string, in SaveResponseInput) (SessionItem, error) {
 	if in.Ordinal < 1 || in.ExpectedVersion < 0 {
 		return SessionItem{}, ErrInvalidAnswer
@@ -252,8 +272,8 @@ func (p *PostgresStore) SaveSessionResponse(ctx context.Context, subject, id str
 		return SessionItem{}, ErrSessionExpired
 	}
 	var item SessionItem
-	var raw []byte
-	err = tx.QueryRowContext(ctx, `SELECT ordinal,snapshot,response_payload,response_version FROM assessment_session_items WHERE session_id=$1 AND ordinal=$2 FOR UPDATE`, id, in.Ordinal).Scan(&item.Ordinal, &raw, &item.Answer, &item.ResponseVersion)
+	var raw, existingAnswer []byte
+	err = tx.QueryRowContext(ctx, `SELECT ordinal,snapshot,response_payload,response_version FROM assessment_session_items WHERE session_id=$1 AND ordinal=$2 FOR UPDATE`, id, in.Ordinal).Scan(&item.Ordinal, &raw, &existingAnswer, &item.ResponseVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SessionItem{}, ErrSessionNotFound
 	}
@@ -270,10 +290,12 @@ func (p *PostgresStore) SaveSessionResponse(ctx context.Context, subject, id str
 	if !validSessionAnswer(item.Question, in.Answer) {
 		return SessionItem{}, ErrInvalidAnswer
 	}
-	err = tx.QueryRowContext(ctx, `UPDATE assessment_session_items SET response_payload=$1,response_version=response_version+1 WHERE session_id=$2 AND ordinal=$3 RETURNING response_payload,response_version`, in.Answer, id, in.Ordinal).Scan(&item.Answer, &item.ResponseVersion)
+	var savedAnswer []byte
+	err = tx.QueryRowContext(ctx, `UPDATE assessment_session_items SET response_payload=$1,response_version=response_version+1 WHERE session_id=$2 AND ordinal=$3 RETURNING response_payload,response_version`, in.Answer, id, in.Ordinal).Scan(&savedAnswer, &item.ResponseVersion)
 	if err != nil {
 		return SessionItem{}, fmt.Errorf("save item: %w", err)
 	}
+	item.Answer = json.RawMessage(savedAnswer)
 	if _, err = tx.ExecContext(ctx, `UPDATE assessment_sessions SET version=version+1,updated_at=now() WHERE id=$1`, id); err != nil {
 		return SessionItem{}, fmt.Errorf("touch session: %w", err)
 	}
@@ -321,19 +343,20 @@ func (p *PostgresStore) SubmitSession(ctx context.Context, subject, id string) (
 		}
 		return SessionResult{}, ErrSessionExpired
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT ordinal,attempt_id,response_payload FROM assessment_session_items WHERE session_id=$1 ORDER BY ordinal`, id)
+	rows, err := tx.QueryContext(ctx, `SELECT i.ordinal,i.attempt_id,i.response_payload,a.response_type FROM assessment_session_items i JOIN learner_attempts a ON a.id=i.attempt_id WHERE i.session_id=$1 ORDER BY i.ordinal`, id)
 	if err != nil {
 		return SessionResult{}, err
 	}
 	type pending struct {
-		ordinal int
-		attempt string
-		answer  []byte
+		ordinal      int
+		attempt      string
+		answer       []byte
+		responseType ResponseType
 	}
 	var pendingItems []pending
 	for rows.Next() {
 		var x pending
-		if err := rows.Scan(&x.ordinal, &x.attempt, &x.answer); err != nil {
+		if err := rows.Scan(&x.ordinal, &x.attempt, &x.answer, &x.responseType); err != nil {
 			rows.Close()
 			return SessionResult{}, err
 		}
@@ -346,7 +369,11 @@ func (p *PostgresStore) SubmitSession(ctx context.Context, subject, id string) (
 		if len(x.answer) == 0 {
 			continue
 		}
-		result, err := submitAttemptTx(ctx, tx, subject, x.attempt, string(x.answer))
+		submitValue, err := sessionSubmitValue(x.responseType, x.answer)
+		if err != nil {
+			return SessionResult{}, err
+		}
+		result, err := submitAttemptTx(ctx, tx, subject, x.attempt, submitValue)
 		if err != nil {
 			return SessionResult{}, err
 		}
@@ -373,7 +400,11 @@ func (p *PostgresStore) GetSessionResult(ctx context.Context, subject, id string
 		return SessionResult{}, ErrSessionClosed
 	}
 	r := SessionResult{Session: s}
-	rows, err := p.db.QueryContext(ctx, `SELECT a.id,a.question_id,a.selected_option_id,COALESCE(a.is_correct,false),COALESCE(a.awarded_marks,0),a.max_marks,a.response_type,a.answer_payload,COALESCE(a.result_status,'marked') FROM assessment_session_items i JOIN learner_attempts a ON a.id=i.attempt_id WHERE i.session_id=$1 AND a.status='submitted' ORDER BY i.ordinal`, id)
+	// Join the pinned canonical rubric so multiple_choice results can carry the same
+	// learner-safe correct-option/feedback data submitAttemptTx returns synchronously —
+	// otherwise every reconnect/refresh (and SubmitSession's own return value, which is
+	// re-derived through this method) would silently drop it.
+	rows, err := p.db.QueryContext(ctx, `SELECT a.id,a.question_id,a.selected_option_id,COALESCE(a.is_correct,false),COALESCE(a.awarded_marks,0),a.max_marks,a.response_type,a.answer_payload,COALESCE(a.result_status,'marked'),rv.rubric FROM assessment_session_items i JOIN learner_attempts a ON a.id=i.attempt_id LEFT JOIN question_rubric_versions rv ON rv.id=a.canonical_rubric_version_id AND rv.question_id=a.question_id WHERE i.session_id=$1 AND a.status='submitted' ORDER BY i.ordinal`, id)
 	if err != nil {
 		return SessionResult{}, fmt.Errorf("list session results: %w", err)
 	}
@@ -381,10 +412,16 @@ func (p *PostgresStore) GetSessionResult(ctx context.Context, subject, id string
 	for rows.Next() {
 		var x AttemptResult
 		var selected sql.NullString
-		if err := rows.Scan(&x.AttemptID, &x.QuestionID, &selected, &x.IsCorrect, &x.AwardedMarks, &x.MaxMarks, &x.ResponseType, &x.Answer, &x.ResultStatus); err != nil {
+		var rubricRaw []byte
+		if err := rows.Scan(&x.AttemptID, &x.QuestionID, &selected, &x.IsCorrect, &x.AwardedMarks, &x.MaxMarks, &x.ResponseType, &x.Answer, &x.ResultStatus, &rubricRaw); err != nil {
 			return SessionResult{}, err
 		}
 		x.SelectedOptionID = selected.String
+		if x.ResponseType == ResponseMultipleChoice {
+			marking, _ := parseMarkingRubric(rubricRaw)
+			x.CorrectOptionID = marking.CorrectOptionID
+			x.Feedback = marking.Feedback
+		}
 		r.Results = append(r.Results, x)
 	}
 	return r, rows.Err()
