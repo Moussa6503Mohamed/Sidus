@@ -1,5 +1,16 @@
 # Task history
 
+## T-0035 — Learning analytics foundation
+
+**Status:** done / released
+**Implementation commits:** `51d7ae1`, `b24efe5`
+**Release validation:** independent review approved. Append-only, owner-only outcome snapshots
+produce reproducible subject/module summaries. Pending and withheld written marking remains outside
+score denominators. Analytics projections exclude answers, question identifiers, rubrics, sources,
+provenance, feedback, model data, and costs. Core build/vet/unit, fresh 0025 migration,
+integration/rerun, web 360/360 plus typecheck/build, shared-contract, Compose, and diff checks
+passed. See `docs/handoffs/T-0035.md`.
+
 ## T-0034 — Automated Sonnet written-response marking
 
 **Status:** done / released (fake-provider-only)
