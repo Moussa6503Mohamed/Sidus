@@ -8,7 +8,7 @@ export function LocaleToggle({ currentLocale }: { currentLocale: string }) {
 
   const toggleLocale = () => {
     const nextLocale = currentLocale === "ar" ? "en" : "ar";
-    document.cookie = `sidus_locale=${nextLocale}; path=/; max-age=31536000`;
+    document.cookie = `sidus_locale=${nextLocale}; path=/; max-age=31536000; SameSite=Lax`;
     router.refresh();
   };
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = "sidus-shell-v1";
+const CACHE_NAME = "sidus-shell-v2"; // updated version
 const SHELL_URLS = [
   "/",
   "/offline"
@@ -6,7 +6,9 @@ const SHELL_URLS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_URLS))
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(SHELL_URLS))
+      .catch((err) => console.warn("SW install cache error:", err))
   );
   self.skipWaiting();
 });

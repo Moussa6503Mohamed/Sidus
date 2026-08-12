@@ -60,14 +60,27 @@ export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { duration
   }, [screen]);
 
   useEffect(() => {
-    if (screen !== "taking") return;
+    if (screen !== "taking" && screen !== "confirm") return;
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "You have an exam in progress. Are you sure you want to leave?";
       return event.returnValue;
     };
+    const blockNavigation = () => {
+      if (window.confirm("You have an exam in progress. Are you sure you want to leave?")) {
+        window.removeEventListener("popstate", blockNavigation);
+        window.history.back();
+      } else {
+        window.history.pushState(null, "", window.location.href);
+      }
+    };
     window.addEventListener("beforeunload", warnBeforeUnload);
-    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+    window.history.pushState(null, "", window.location.href);
+    window.addEventListener("popstate", blockNavigation);
+    return () => {
+      window.removeEventListener("beforeunload", warnBeforeUnload);
+      window.removeEventListener("popstate", blockNavigation);
+    };
   }, [screen]);
 
   async function chooseSyllabus(id: string) {

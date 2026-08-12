@@ -198,4 +198,24 @@ describe("ExamWorkspace", () => {
     expect(await screen.findByRole("heading", { name: "Exam results" })).toBeInTheDocument();
     expect(submitExamAttempt).not.toHaveBeenCalled();
   });
+  it("adds beforeunload and popstate listeners during taking and confirm screens", async () => {
+    const addEventListenerSpy = vi.spyOn(window, "addEventListener");
+    const removeEventListenerSpy = vi.spyOn(window, "removeEventListener");
+    const user = userEvent.setup(); 
+    render(<ExamWorkspace />);
+    await start(user);
+    
+    expect(addEventListenerSpy).toHaveBeenCalledWith("beforeunload", expect.any(Function));
+    expect(addEventListenerSpy).toHaveBeenCalledWith("popstate", expect.any(Function));
+    
+    // go to confirm
+    await user.click(screen.getByRole("button", { name: "Submit all" }));
+    
+    // submit
+    await user.click(screen.getByRole("button", { name: "Confirm submit" }));
+    expect(await screen.findByRole("heading", { name: "Exam results" })).toBeInTheDocument();
+    
+    expect(removeEventListenerSpy).toHaveBeenCalledWith("beforeunload", expect.any(Function));
+    expect(removeEventListenerSpy).toHaveBeenCalledWith("popstate", expect.any(Function));
+  });
 });
