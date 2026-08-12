@@ -15,6 +15,9 @@ import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { THEME_BOOTSTRAP_SCRIPT } from "@/components/theme/theme-script";
 import navStyles from "@/components/nav/nav.module.css";
 import "@/styles/tokens.css";
+import { cookies } from "next/headers";
+import { SwRegistry } from "@/components/sw-registry";
+import { LocaleToggle } from "@/components/nav/LocaleToggle";
 
 export const metadata: Metadata = {
   title: "Sidus Observatory",
@@ -26,10 +29,14 @@ export default async function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   const role = await getOptionalEditorialRole();
   const showEditorialNav = isEditorialRole(role);
+  
+  const cookieStore = await cookies();
+  const currentLocale = cookieStore.get("sidus_locale")?.value || "en";
+  const dir = currentLocale === "ar" ? "rtl" : "ltr";
 
   return (
     <ClerkProvider>
-      <html lang="en" suppressHydrationWarning>
+      <html lang={currentLocale} dir={dir} suppressHydrationWarning>
         {/* Constant script, no interpolated values — applies the persisted theme before first
             paint so there is no light/dark flash. See components/theme/theme-script.ts. */}
         <head>
@@ -80,6 +87,7 @@ export default async function RootLayout({
               </Show>
             </nav>
             <div className={navStyles.spacer} />
+            <LocaleToggle currentLocale={currentLocale} />
             <ThemeToggle />
             <Show when="signed-out">
               <SignInButton />
@@ -91,6 +99,7 @@ export default async function RootLayout({
             </Show>
           </header>
           {children}
+          <SwRegistry />
         </body>
       </html>
     </ClerkProvider>

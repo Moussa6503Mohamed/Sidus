@@ -59,6 +59,17 @@ export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { duration
     return () => document.removeEventListener("keydown", trap);
   }, [screen]);
 
+  useEffect(() => {
+    if (screen !== "taking") return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "You have an exam in progress. Are you sure you want to leave?";
+      return event.returnValue;
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [screen]);
+
   async function chooseSyllabus(id: string) {
     setSyllabusId(id); setModuleId(""); setModules(null);
     if (!id) return;

@@ -1,78 +1,56 @@
 # Active tasks
 
-## Recently released: T-0036 — Teacher classes, consent, and assignments
+## T-0037 — Learner experience completion
 
-**Status:** done / released
-**Type:** Core authorization/data + learner/teacher UI + tests.
+**Status:** in progress
+**Type:** Web frontend + accessibility
 
 ### Context
 
-Sidus remains AI-first. Teachers may create scoped classes and assignments. Learners must actively
-accept class membership and may revoke it. Teacher manual checking exists only when explicitly
-selected on an assignment; it must never replace normal automated marking.
+Sidus needs to finalize its learner experience before wider rollout.
+The web shell must be offline-safe (caching the app shell but explicitly not private data).
+The platform must support an Arabic/RTL scaffold to prepare for multi-language rollouts.
+Tutor (Practice) and Test (Exam) modes need distinct rules to ensure different interaction models.
+A full accessibility and mobile audit is required to ensure usability across devices.
 
 ### Goal
 
-Build private-beta class membership consent and assignment delivery without cross-class access,
-silent enrollment, learner answer leaks, or a generic human-review workflow.
+Complete the learner experience: distinct Tutor/Test rules, Arabic/RTL scaffold, offline-safe shell, and accessibility/mobile audit.
 
 ### Scope
 
-- Teacher-owned classes, opaque invitations, explicit learner acceptance/revocation, append-only
-  consent/audit events, and role-scoped roster views.
-- Teacher assignments using verified eligible question/module selection and immutable assignment
-  settings. Teacher chooses `automated` default or explicit `manual_teacher` checking.
-- Learner assignment list/start/read states; teacher assignment/class management and aggregated
-  assignment progress only. No raw learner answers, canonical keys, source/provenance, rubric
-  descriptors, AI traces, or cross-class analytics.
-- Fixed Core routes, closed BFF operations, shared contracts, white-primary Sidus UI.
+- **Tutor/Test Rules:** Differentiate rules between Practice Mode (Tutor) and Exam Mode (Test).
+- **Arabic/RTL Scaffold:** Set up Next.js internationalization (i18n) for Arabic (ar) or a layout that supports `dir="rtl"` dynamically, along with localized strings skeleton.
+- **Offline-safe Shell:** Introduce a Service Worker to cache static assets/shell. Crucially, the service worker must NOT cache any private user data, API responses with answers, or any sensitive payloads.
+- **Accessibility/Mobile Audit:** Fix contrast, keyboard navigation, screen reader labels, responsive layouts (max width 390px testing), and touch targets.
 
 ### Allowed files
 
-- `services/core/internal/teacher/**`, `services/core/internal/learner/**`,
-  `services/core/internal/auth/**`, `services/core/main.go`, `services/core/migrations/0026_*`,
-  Core tests.
-- `apps/web/app/dashboard/**`, `apps/web/app/api/{learner,teacher}/**`,
-  `apps/web/lib/{learner,teacher}/**`, web tests/styles.
-- `packages/shared/src/contracts.ts`, `docs/teacher-classes-assignments.md`,
-  `docs/decisions.md`, `docs/handoffs/T-0036.md`, `CLAUDE.md`, this task file.
+- `apps/web/**`
+- `docs/tasks/active.md`, `docs/handoffs/T-0037.md`
 
 ### Forbidden
 
-- Live AI/API calls, PDFs/OCR/extraction/source reads, content seeds, public invitation indexing,
-  email/SMS delivery, parent/org views, billing, cross-class/global ranking, or generic manual
-  reviewer queue.
-- Raw learner answers, rubrics/canonical keys, sources/provenance, model traces/costs in teacher
-  projections, browser logs, or events.
-- Protected/untracked files and unrelated refactors.
+- No live APIs/keys
+- No PDFs/source content handling
+- No question seeds
+- No service worker caching of private data
+- No human workflows or protected files
+- No pushing to remote repositories
 
 ### Acceptance criteria
 
-- Invitation token is opaque, hashed at rest, bounded lifetime/use, no membership before explicit
-  learner acceptance; revocation removes future teacher access without mutating history.
-- Every class/assignment route is owner/member scoped; enumeration and cross-tenant access fail
-  closed with stable non-leaking responses.
-- Assignments snapshot immutable settings/question/module selection; automated is default;
-  `manual_teacher` requires explicit teacher selection and returns a distinct pending-teacher
-  state, never silently invokes/overrides AI marking.
-- Teacher sees only assignment aggregates and consent state. Learner sees own assigned work only.
-- UI has loading/empty/error/retry/access-denied/consent-revoked states, keyboard-safe forms and
-  dialogs, white-primary tokens.
+- Tutor and Test modes have distinct behavioral rules and visual cues.
+- App shell can load offline via Service Worker, with zero private data cached.
+- Application supports RTL layout and Arabic locale routing/context.
+- Accessibility audit addressed (ARIA labels, focus states, color contrast).
+- Mobile layout works flawlessly down to small device sizes.
 
 ### Validation
 
-- Core build/vet/unit; fresh disposable migration/integration/rerun including token/ownership/
-  acceptance/revocation/assignment races.
-- Web tests/typecheck/build; strict shared TypeScript; Compose/diff/secret audit.
-- No live AI/API or private-source testing.
-
-### Review checklist
-
-- Token hashing/leakage, consent lifecycle, owner/member boundaries, revocation, immutable
-  assignment snapshots, explicit manual mode only, teacher projection privacy, race/idempotency,
-  BFF validation and UI a11y.
+- Web tests (`npm --prefix apps/web run test`), typecheck (`npm --prefix apps/web run typecheck`), build (`npm --prefix apps/web run build`).
+- `git diff --check` and secret audit.
 
 ### Stop condition
 
-Implementation committed, independent review approved, release validation passed, release docs
-committed/pushed. Stop before T-0037.
+Implementation committed, release validation passed, release docs (handoff) committed. Leave review notes. Do not push.
