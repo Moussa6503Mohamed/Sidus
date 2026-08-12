@@ -5,6 +5,8 @@ import { ExamWorkspace } from "./workspace";
 import type { AssessmentSession, AssessmentSessionResult } from "./api-client";
 import type { LearnerQuestion } from "./types";
 
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+
 // Companion to workspace.test.tsx, which stubs createAssessmentSession/saveAssessmentResponse/
 // submitAssessmentSession as undefined to exercise the legacy in-memory fallback path. This file
 // mocks them as real functions instead, so ExamWorkspace takes the server-owned session branch

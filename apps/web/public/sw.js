@@ -1,4 +1,4 @@
-const CACHE_NAME = "sidus-shell-v2"; // updated version
+const CACHE_NAME = "sidus-shell-v3"; // same-origin-only fetch handling
 const SHELL_URLS = [
   "/",
   "/offline"
@@ -31,7 +31,14 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
-  // Explicitly ignore any private API routes or external API domains
+  // Only ever process/cache same-origin requests. Any other origin (CDNs, auth iframes,
+  // analytics, fonts, etc.) must pass through untouched — do not call respondWith at all,
+  // so the browser handles the request natively.
+  if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  // Explicitly ignore any private API routes or dashboard content.
   if (url.pathname.startsWith("/api") || url.pathname.startsWith("/dashboard")) {
     return;
   }

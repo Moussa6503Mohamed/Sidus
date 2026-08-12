@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useRouter } from "next/navigation";
 import { ApiError, createAssessmentSession, createExamAttempt, listExamModules, listExamQuestions, listExamSyllabuses, saveAssessmentResponse, submitAssessmentSession, submitExamAttempt } from "./api-client";
 import { finalizeExam, type ExamRuntime } from "./finalization";
 import styles from "../practice/styles.module.css";
@@ -8,9 +9,13 @@ import type { LearnerAnswer, LearnerModule, LearnerQuestion, LearnerSyllabus } f
 
 type Screen = "setup" | "taking" | "confirm" | "results";
 const DURATION_SECONDS = 30 * 60;
+const EXAM_LEAVE_MESSAGE = "You have an exam in progress. Are you sure you want to leave?";
 const messageFor = (error: unknown) => error instanceof ApiError ? error.message : "Exam submission failed. Retry without changing answers.";
 
 export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { durationSeconds?: number }) {
+  const router = useRouter();
+  const routerRef = useRef(router);
+  routerRef.current = router;
   const [syllabuses, setSyllabuses] = useState<LearnerSyllabus[] | null>(null);
   const [modules, setModules] = useState<LearnerModule[] | null>(null);
   const [syllabusId, setSyllabusId] = useState("");
@@ -59,29 +64,49 @@ export function ExamWorkspace({ durationSeconds = DURATION_SECONDS }: { duration
     return () => document.removeEventListener("keydown", trap);
   }, [screen]);
 
+  const guardActive = screen === "taking" || screen === "confirm";
   useEffect(() => {
-    if (screen !== "taking" && screen !== "confirm") return;
+    // Sentinel history entry is pushed once per guard activation (not per screen toggle between
+    // "taking" and "confirm"), otherwise every open/close of the submit dialog would bloat history.
+    if (!guardActive) return;
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
-      event.returnValue = "You have an exam in progress. Are you sure you want to leave?";
+      event.returnValue = EXAM_LEAVE_MESSAGE;
       return event.returnValue;
     };
     const blockNavigation = () => {
-      if (window.confirm("You have an exam in progress. Are you sure you want to leave?")) {
+      if (window.confirm(EXAM_LEAVE_MESSAGE)) {
         window.removeEventListener("popstate", blockNavigation);
         window.history.back();
       } else {
         window.history.pushState(null, "", window.location.href);
       }
     };
+    // Next's <Link>/router.push navigation never fires beforeunload or popstate (no document
+    // unload occurs), so it must be intercepted before Next's own click handler runs. This
+    // listener is added in the capture phase, ahead of Link's bubble-phase handler, and calls
+    // preventDefault() so Link's internal `if (event.defaultPrevented) return` bails out.
+    const interceptLinkNavigation = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as HTMLElement | null)?.closest?.("a[href]");
+      if (!(anchor instanceof HTMLAnchorElement) || (anchor.target && anchor.target !== "_self") || anchor.hasAttribute("download")) return;
+      let target: URL;
+      try { target = new URL(anchor.href, window.location.href); } catch { return; }
+      if (target.origin !== window.location.origin) return;
+      if (target.pathname === window.location.pathname && target.search === window.location.search) return;
+      event.preventDefault();
+      if (window.confirm(EXAM_LEAVE_MESSAGE)) routerRef.current.push(`${target.pathname}${target.search}${target.hash}`);
+    };
     window.addEventListener("beforeunload", warnBeforeUnload);
     window.history.pushState(null, "", window.location.href);
     window.addEventListener("popstate", blockNavigation);
+    document.addEventListener("click", interceptLinkNavigation, true);
     return () => {
       window.removeEventListener("beforeunload", warnBeforeUnload);
       window.removeEventListener("popstate", blockNavigation);
+      document.removeEventListener("click", interceptLinkNavigation, true);
     };
-  }, [screen]);
+  }, [guardActive]);
 
   async function chooseSyllabus(id: string) {
     setSyllabusId(id); setModuleId(""); setModules(null);

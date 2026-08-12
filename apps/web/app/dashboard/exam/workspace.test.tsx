@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExamWorkspace } from "./workspace";
 import type { LearnerQuestion } from "./types";
 
+const { push } = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+
 vi.mock("./api-client", () => ({
   ApiError: class ApiError extends Error {}, listExamSyllabuses: vi.fn(), listExamModules: vi.fn(), listExamQuestions: vi.fn(), createExamAttempt: vi.fn(), submitExamAttempt: vi.fn(), createAssessmentSession: undefined, saveAssessmentResponse: undefined, submitAssessmentSession: undefined,
 }));
@@ -217,5 +220,94 @@ describe("ExamWorkspace", () => {
     
     expect(removeEventListenerSpy).toHaveBeenCalledWith("beforeunload", expect.any(Function));
     expect(removeEventListenerSpy).toHaveBeenCalledWith("popstate", expect.any(Function));
+  });
+
+  it("does not push a new history entry every time the confirm dialog opens and closes", async () => {
+    const pushStateSpy = vi.spyOn(window.history, "pushState");
+    const user = userEvent.setup();
+    render(<ExamWorkspace />); await start(user);
+    expect(pushStateSpy).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Submit all" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(pushStateSpy).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Continue exam" }));
+    expect(pushStateSpy).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Submit all" }));
+    await user.click(screen.getByRole("button", { name: "Continue exam" }));
+    expect(pushStateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirms on real browser back and lets the user cancel without losing exam state", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const backSpy = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    const pushStateSpy = vi.spyOn(window.history, "pushState");
+    const user = userEvent.setup();
+    render(<ExamWorkspace />); await start(user);
+    pushStateSpy.mockClear();
+
+    act(() => { window.dispatchEvent(new PopStateEvent("popstate")); });
+    expect(confirmSpy).toHaveBeenCalledWith("You have an exam in progress. Are you sure you want to leave?");
+    expect(backSpy).not.toHaveBeenCalled();
+    expect(pushStateSpy).toHaveBeenCalledTimes(1); // guard re-armed for the next back attempt
+    expect(screen.getByText("opaque-q1")).toBeInTheDocument();
+
+    confirmSpy.mockReturnValue(true);
+    act(() => { window.dispatchEvent(new PopStateEvent("popstate")); });
+    expect(backSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("intercepts same-origin Link/SPA navigation before it initiates and confirms leaving", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    const link = document.createElement("a");
+    link.href = "/dashboard/practice";
+    link.textContent = "Practice";
+    document.body.appendChild(link);
+    render(<ExamWorkspace />); await start(user);
+
+    await user.click(link);
+    expect(confirmSpy).toHaveBeenCalledWith("You have an exam in progress. Are you sure you want to leave?");
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.getByText("opaque-q1")).toBeInTheDocument(); // still in the exam, navigation was blocked
+
+    confirmSpy.mockReturnValue(true);
+    await user.click(link);
+    expect(push).toHaveBeenCalledWith("/dashboard/practice");
+    document.body.removeChild(link);
+  });
+
+  it("lets cross-origin link navigation pass through untouched", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm");
+    const user = userEvent.setup();
+    const link = document.createElement("a");
+    link.href = "https://external.example.com/leave";
+    link.textContent = "External";
+    document.body.appendChild(link);
+    render(<ExamWorkspace />); await start(user);
+
+    const preventDefaultSpy = vi.spyOn(Event.prototype, "preventDefault");
+    await user.click(link);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    expect(preventDefaultSpy).not.toHaveBeenCalled();
+    document.body.removeChild(link);
+  });
+
+  it("does not intercept link navigation before the exam starts or after results", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm");
+    const user = userEvent.setup();
+    const link = document.createElement("a");
+    link.href = "/dashboard/practice";
+    link.textContent = "Practice";
+    document.body.appendChild(link);
+    render(<ExamWorkspace />);
+    await screen.findByLabelText("Syllabus");
+
+    await user.click(link);
+    expect(confirmSpy).not.toHaveBeenCalled();
+    document.body.removeChild(link);
   });
 });
