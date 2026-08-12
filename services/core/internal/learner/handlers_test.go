@@ -692,3 +692,15 @@ func TestAnalytics_IsLearnerOwnedAndSafe(t *testing.T) {
 		}
 	}
 }
+
+func TestAnalytics_RejectsQueryBeforeAuthentication(t *testing.T) {
+	store := &analyticsMemoryStore{memoryStore: newMemoryStore()}
+	mux := http.NewServeMux()
+	Register(mux, store, fakeVerifier{})
+	req := httptest.NewRequest(http.MethodGet, "/learner/analytics?subject=other", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !bytes.Contains(rec.Body.Bytes(), []byte("invalid_query")) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}

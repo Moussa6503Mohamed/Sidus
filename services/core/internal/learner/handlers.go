@@ -24,7 +24,14 @@ func Register(mux *http.ServeMux, store Store, v auth.Verifier, markers ...Sonne
 	mux.HandleFunc("GET /learner/modules", auth.Protect(v, auth.PermReadLearnerQuestion, h.listModules))
 	if analytics, ok := store.(AnalyticsStore); ok {
 		ah := &analyticsHandler{store: analytics}
-		mux.HandleFunc("GET /learner/analytics", auth.Protect(v, auth.PermUseLearnerAttempt, ah.get))
+		protectedAnalytics := auth.Protect(v, auth.PermUseLearnerAttempt, ah.get)
+		mux.HandleFunc("GET /learner/analytics", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.RawQuery != "" {
+				writeError(w, http.StatusBadRequest, "invalid_query", "analytics does not accept query parameters")
+				return
+			}
+			protectedAnalytics(w, r)
+		})
 	}
 	mux.HandleFunc("POST /learner/questions/{id}/attempts", auth.Protect(v, auth.PermUseLearnerAttempt, h.createAttempt))
 	mux.HandleFunc("POST /learner/attempts/{id}/submit", auth.Protect(v, auth.PermUseLearnerAttempt, h.submitAttempt))
