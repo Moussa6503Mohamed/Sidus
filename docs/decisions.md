@@ -1048,6 +1048,11 @@ in scope here; revisit when T-0034 needs Core-visible job state.
 
 ## Decision template
 
+## D-0028 — Consent-first teacher classes
+**Status:** approved
+**Decision:** Teacher class membership is always learner-accepted and revocable. Invite secrets are opaque, hashed at rest, time/use limited, and never listed again. Assignments pin learner-safe question snapshots and use automated marking unless a teacher explicitly chooses `manual_teacher`.
+**Reason:** This permits private-beta teacher coordination without silent enrollment, cross-class analytics, or a generic human marking workflow.
+
 ## D-0027 â€” Event-sourced learner analytics snapshots
 **Status:** approved
 **Decision:** Record one immutable owner-bound analytics event at submitted deterministic outcomes,

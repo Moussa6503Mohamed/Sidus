@@ -56,8 +56,10 @@ export default async function RootLayout({
                     <Link href="/dashboard/exam" className={navStyles.navlink}>
                       Exam
                     </Link>
+                    <Link href="/dashboard/assignments" className={navStyles.navlink}>Assignments</Link>
                   </>
                 )}
+                {(role === "teacher" || role === "admin") && <Link href="/dashboard/teacher" className={navStyles.navlink}>Classes</Link>}
                 {showEditorialNav && (
                   <>
                     <span className={navStyles.navGroupLabel} aria-hidden="true">

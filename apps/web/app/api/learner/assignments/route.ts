@@ -1,0 +1,1 @@
+import {NextResponse}from"next/server";import{callCoreLearner}from"@/lib/learner/core-proxy";import{learnerErrorResponse}from"@/lib/learner/http";export async function GET(){try{const x=await callCoreLearner({kind:"listLearnerAssignments"});return NextResponse.json(x.body,{status:x.status})}catch(e){return learnerErrorResponse(e)}}

@@ -45,7 +45,11 @@ export type LearnerOperation =
   | { kind: "getAssessmentResult"; id: string }
   | { kind: "requestWrittenMarking"; attemptId: string }
   | { kind: "getWrittenMarking"; attemptId: string }
-  | { kind: "getLearnerAnalytics" };
+  | { kind: "getLearnerAnalytics" }
+  | { kind: "listLearnerAssignments" }
+  | { kind: "acceptClassInvite"; token: string }
+  | { kind: "revokeClassMembership"; classId: string }
+  | { kind: "startLearnerAssignment"; id: string };
 
 export interface LearnerProxySuccess {
   status: number;
@@ -129,6 +133,15 @@ function resolveRoute(op: LearnerOperation): { method: Method; path: string; bod
 			return { method: "GET", path: `/learner/attempts/${requireValidId(op.attemptId)}/marking` };
 		case "getLearnerAnalytics":
 			return { method: "GET", path: "/learner/analytics" };
+		case "listLearnerAssignments":
+			return { method: "GET", path: "/learner/assignments" };
+		case "acceptClassInvite":
+			if (typeof op.token !== "string" || op.token.length < 20 || op.token.length > 200) throw new LearnerProxyError(400, "invalid_input", "invite is invalid");
+			return { method: "POST", path: "/learner/class-invitations/accept", body: JSON.stringify({ token: op.token }) };
+		case "revokeClassMembership":
+			return { method: "POST", path: `/learner/classes/${requireValidId(op.classId)}/revoke` };
+		case "startLearnerAssignment":
+			return { method: "POST", path: `/learner/assignments/${requireValidId(op.id)}/start` };
   }
 }
 

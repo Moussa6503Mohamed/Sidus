@@ -16,6 +16,7 @@ import (
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/curriculummap"
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/learner"
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/question"
+	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/teacher"
 	"github.com/Moussa6503Mohamed/Sidus/services/core/internal/uploadintake"
 )
 
@@ -128,6 +129,7 @@ func main() {
 			log.Println("Sonnet written marking remains pending: AI service marker not configured")
 		}
 		learner.Register(mux, learnerStore, verifier, markers...)
+		teacher.Register(mux, teacher.NewPostgresStore(db), verifier)
 		if privateRoot := strings.TrimSpace(os.Getenv("SIDUS_PRIVATE_UPLOAD_DIR")); privateRoot != "" {
 			if storage, err := uploadintake.NewLocalQuarantineStore(privateRoot); err != nil {
 				log.Printf("private upload intake disabled: %v", err)

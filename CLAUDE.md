@@ -51,6 +51,11 @@ cd services/ai && python -m pytest
 
 ## Current state
 
+- T-0036 in review: teacher-owned consent-first classes use opaque hashed invitations, explicit
+  learner acceptance/revocation, immutable assignment snapshots, and aggregate-only teacher
+  progress. Automated is the default assignment mode; `manual_teacher` is explicit and has no
+  generic reviewer queue. See `docs/teacher-classes-assignments.md`.
+
 - T-0035 released: learner-owned analytics uses immutable outcome-only snapshots for deterministic
   and accepted automated results, while pending/withheld written marking stays explicitly
   unscored. Dashboard/BFF projections contain no answers, rubrics, sources, provenance, or model

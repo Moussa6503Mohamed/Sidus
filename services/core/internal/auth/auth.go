@@ -28,6 +28,8 @@ const (
 	RoleReviewer Role = "reviewer"
 	// RoleAdmin has all content-source permissions.
 	RoleAdmin Role = "admin"
+	// RoleTeacher may manage only their own classes and assignments; it is not an editorial role.
+	RoleTeacher Role = "teacher"
 	// RoleUnknown is any missing or unrecognized role: denied by default.
 	RoleUnknown Role = ""
 )
@@ -77,61 +79,74 @@ const (
 	PermUseLearnerAttempt Permission = "learner_attempt:write"
 	// PermManagePrivateUpload is admin-only because it accepts private source bytes.
 	PermManagePrivateUpload Permission = "private_upload:manage"
+	// PermManageTeacherClasses is owner-scoped in the teacher store; the permission only admits teacher/admin routes.
+	PermManageTeacherClasses Permission = "teacher_class:manage"
+	// PermUseLearnerAssignment admits consent and assignment delivery, always additionally scoped to verified subject.
+	PermUseLearnerAssignment Permission = "learner_assignment:use"
 )
 
 // rolePermissions is the least-privilege matrix. A role absent from this map, or the
 // RoleUnknown value, has no permissions and is denied by default.
 var rolePermissions = map[Role]map[Permission]bool{
 	RoleLearner: {
-		PermReadLearnerQuestion: true,
-		PermUseLearnerAttempt:   true,
+		PermReadLearnerQuestion:  true,
+		PermUseLearnerAttempt:    true,
+		PermUseLearnerAssignment: true,
 	},
 	RoleEditor: {
-		PermReadSource:          true,
-		PermCreateSource:        true,
-		PermUpdateSource:        true,
-		PermReadCatalogue:       true,
-		PermReadCurriculumMap:   true,
-		PermCreateCurriculumMap: true,
-		PermReadQuestion:        true,
-		PermCreateQuestion:      true,
-		PermReadQuestionRubric:  true,
-		PermReadLearnerQuestion: true,
-		PermUseLearnerAttempt:   true,
+		PermReadSource:           true,
+		PermCreateSource:         true,
+		PermUpdateSource:         true,
+		PermReadCatalogue:        true,
+		PermReadCurriculumMap:    true,
+		PermCreateCurriculumMap:  true,
+		PermReadQuestion:         true,
+		PermCreateQuestion:       true,
+		PermReadQuestionRubric:   true,
+		PermReadLearnerQuestion:  true,
+		PermUseLearnerAttempt:    true,
+		PermUseLearnerAssignment: true,
 	},
 	RoleReviewer: {
-		PermReadSource:          true,
-		PermCreateSource:        true,
-		PermUpdateSource:        true,
-		PermReviewSource:        true,
-		PermReadCatalogue:       true,
-		PermReadCurriculumMap:   true,
-		PermCreateCurriculumMap: true,
-		PermVerifyCurriculumMap: true,
-		PermReadQuestion:        true,
-		PermCreateQuestion:      true,
-		PermVerifyQuestion:      true,
-		PermReadQuestionRubric:  true,
-		PermReadLearnerQuestion: true,
-		PermUseLearnerAttempt:   true,
+		PermReadSource:           true,
+		PermCreateSource:         true,
+		PermUpdateSource:         true,
+		PermReviewSource:         true,
+		PermReadCatalogue:        true,
+		PermReadCurriculumMap:    true,
+		PermCreateCurriculumMap:  true,
+		PermVerifyCurriculumMap:  true,
+		PermReadQuestion:         true,
+		PermCreateQuestion:       true,
+		PermVerifyQuestion:       true,
+		PermReadQuestionRubric:   true,
+		PermReadLearnerQuestion:  true,
+		PermUseLearnerAttempt:    true,
+		PermUseLearnerAssignment: true,
 	},
 	RoleAdmin: {
-		PermReadSource:          true,
-		PermCreateSource:        true,
-		PermUpdateSource:        true,
-		PermReviewSource:        true,
-		PermReadCatalogue:       true,
-		PermManageCatalogue:     true,
-		PermReadCurriculumMap:   true,
-		PermCreateCurriculumMap: true,
-		PermVerifyCurriculumMap: true,
-		PermReadQuestion:        true,
-		PermCreateQuestion:      true,
-		PermVerifyQuestion:      true,
-		PermReadQuestionRubric:  true,
-		PermReadLearnerQuestion: true,
-		PermUseLearnerAttempt:   true,
-		PermManagePrivateUpload: true,
+		PermReadSource:           true,
+		PermCreateSource:         true,
+		PermUpdateSource:         true,
+		PermReviewSource:         true,
+		PermReadCatalogue:        true,
+		PermManageCatalogue:      true,
+		PermReadCurriculumMap:    true,
+		PermCreateCurriculumMap:  true,
+		PermVerifyCurriculumMap:  true,
+		PermReadQuestion:         true,
+		PermCreateQuestion:       true,
+		PermVerifyQuestion:       true,
+		PermReadQuestionRubric:   true,
+		PermReadLearnerQuestion:  true,
+		PermUseLearnerAttempt:    true,
+		PermManagePrivateUpload:  true,
+		PermManageTeacherClasses: true,
+		PermUseLearnerAssignment: true,
+	},
+	RoleTeacher: {
+		PermManageTeacherClasses: true,
+		PermUseLearnerAssignment: true,
 	},
 }
 
@@ -147,6 +162,8 @@ func ParseRole(raw string) Role {
 		return RoleReviewer
 	case RoleAdmin:
 		return RoleAdmin
+	case RoleTeacher:
+		return RoleTeacher
 	default:
 		return RoleUnknown
 	}

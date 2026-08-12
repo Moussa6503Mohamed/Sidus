@@ -157,10 +157,20 @@ export interface ContentSourceEvent {
 // services/ai/app/auth.py.
 
 /** Sidus authorization roles, sourced from the verified `sidus_role` session claim. */
-export const SIDUS_ROLES = ["learner", "editor", "reviewer", "admin"] as const;
+export const SIDUS_ROLES = ["learner", "teacher", "editor", "reviewer", "admin"] as const;
 
 /** A known Sidus role. A missing/unrecognized claim is denied by default (no access). */
 export type SidusRole = (typeof SIDUS_ROLES)[number];
+
+// --- Teacher classes and assignments (T-0036) ---
+export type TeacherMarkingMode = "automated" | "manual_teacher";
+export interface TeacherClass { id: string; name: string; status: "active" | "archived"; createdAt: string; }
+export interface TeacherInvite { token: string; expiresAt: string; maxUses: number; }
+export interface TeacherRosterMember { membershipId: string; status: "active" | "revoked"; consentedAt: string; }
+export interface TeacherAssignment { id: string; classId: string; title: string; markingMode: TeacherMarkingMode; itemCount: number; startedCount: number; activeMemberCount: number; createdAt: string; }
+export interface LearnerAssignment { id: string; className: string; title: string; markingMode: TeacherMarkingMode; itemCount: number; state: "not_started" | "started" | "completed"; }
+export interface LearnerAssignmentItem { id: string; responseType: QuestionResponseType; language: string; prompt: string; options: LearnerQuestionOption[] | null; contentRevision: number; }
+export interface StartedLearnerAssignment { assignmentId: string; markingMode: TeacherMarkingMode; items: LearnerAssignmentItem[]; }
 
 /** The Clerk session claim name that carries the Sidus role. */
 export const SIDUS_ROLE_CLAIM = "sidus_role";
