@@ -22,6 +22,10 @@ func Register(mux *http.ServeMux, store Store, v auth.Verifier, markers ...Sonne
 	mux.HandleFunc("GET /learner/questions/{id}", auth.Protect(v, auth.PermReadLearnerQuestion, h.getQuestion))
 	mux.HandleFunc("GET /learner/syllabuses", auth.Protect(v, auth.PermReadLearnerQuestion, h.listSyllabuses))
 	mux.HandleFunc("GET /learner/modules", auth.Protect(v, auth.PermReadLearnerQuestion, h.listModules))
+	if analytics, ok := store.(AnalyticsStore); ok {
+		ah := &analyticsHandler{store: analytics}
+		mux.HandleFunc("GET /learner/analytics", auth.Protect(v, auth.PermUseLearnerAttempt, ah.get))
+	}
 	mux.HandleFunc("POST /learner/questions/{id}/attempts", auth.Protect(v, auth.PermUseLearnerAttempt, h.createAttempt))
 	mux.HandleFunc("POST /learner/attempts/{id}/submit", auth.Protect(v, auth.PermUseLearnerAttempt, h.submitAttempt))
 	if markingStore, ok := store.(MarkingStore); ok {
@@ -197,6 +201,22 @@ type handler struct {
 type markingHandler struct {
 	store  MarkingStore
 	marker SonnetMarker
+}
+
+type analyticsHandler struct{ store AnalyticsStore }
+
+func (h *analyticsHandler) get(w http.ResponseWriter, r *http.Request) {
+	subject, ok := learnerSubject(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
+		return
+	}
+	analytics, err := h.store.GetLearningAnalytics(r.Context(), subject)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", internalErrorMessage)
+		return
+	}
+	writeJSON(w, http.StatusOK, analytics)
 }
 
 func emptyRequestBody(r *http.Request) bool {

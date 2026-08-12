@@ -1048,6 +1048,20 @@ in scope here; revisit when T-0034 needs Core-visible job state.
 
 ## Decision template
 
+## D-0027 â€” Event-sourced learner analytics snapshots
+**Status:** approved
+**Decision:** Record one immutable owner-bound analytics event at submitted deterministic outcomes,
+and pending/terminal automated-marking boundaries. Rebuild analytics from these snapshots instead
+of live questions, rubrics, modules, sources, or marking jobs.
+**Reason:** This preserves a learner's historical totals through editorial lifecycle changes while
+keeping pending/withheld work outside scored denominators and preventing sensitive answer/rubric/
+source/model data from entering the learner analytics surface.
+**Alternatives:** Query live attempts/questions on every dashboard load — rejected because later
+editorial changes rewrite history and widen the data boundary. Persist a mutable aggregate table —
+rejected because retries/races make reconciliation less auditable. Include marking feedback/model
+trace — rejected as unnecessary private data.
+**Owner/date:** Codex, 2026-08-12 (T-0035).
+
 ```md
 ## D-XXXX — Title
 **Status:** proposed | approved | superseded

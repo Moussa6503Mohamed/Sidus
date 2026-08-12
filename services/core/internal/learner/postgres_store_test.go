@@ -821,6 +821,63 @@ func TestPostgresStore_Integration_WrittenMarkingRetriesThenTerminalIsImmutable(
 	}
 }
 
+func TestPostgresStore_Integration_LearningAnalyticsIsOwnerScopedAndOutcomeOnly(t *testing.T) {
+	f := newFixture(t)
+	questionID, _ := seedPracticeQuestion(t, f)
+	attempt, err := f.store.CreateAttempt(f.ctx, "analytics-owner", questionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.store.SubmitAttempt(f.ctx, "analytics-owner", attempt.AttemptID, "opt-b"); err != nil {
+		t.Fatal(err)
+	}
+	analytics, err := f.store.GetLearningAnalytics(f.ctx, "analytics-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analytics.ScoredItems != 1 || analytics.AwardedMarks != 2 || analytics.PossibleMarks != 2 || len(analytics.Modules) != 1 {
+		t.Fatalf("analytics=%+v", analytics)
+	}
+	other, err := f.store.GetLearningAnalytics(f.ctx, "owner-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.ScoredItems != 0 || len(other.RecentActivity) != 0 {
+		t.Fatalf("cross-owner analytics=%+v", other)
+	}
+	var eventCount int
+	if err := f.db.QueryRow(`SELECT count(*) FROM learning_analytics_events WHERE attempt_id=$1 AND event_type='deterministic_scored'`, attempt.AttemptID).Scan(&eventCount); err != nil || eventCount != 1 {
+		t.Fatalf("events=%d err=%v", eventCount, err)
+	}
+}
+
+func TestPostgresStore_Integration_LearningAnalyticsAcceptedWrittenExcludesPending(t *testing.T) {
+	f := newFixture(t)
+	questionID := seedEligibleQuestion(t, f.db, f.syllabusID, f.nodeID)
+	attempt, err := f.store.CreateAttempt(f.ctx, "analytics-written-owner", questionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.store.SubmitAttempt(f.ctx, "analytics-written-owner", attempt.AttemptID, `{"text":"opaque"}`); err != nil {
+		t.Fatal(err)
+	}
+	job, pending, _, err := f.store.RequestMarking(f.ctx, "analytics-written-owner", attempt.AttemptID)
+	if err != nil || pending.Status != MarkingPending {
+		t.Fatalf("request=%+v err=%v", pending, err)
+	}
+	accepted := MarkingOutcome{Status: MarkingAccepted, Result: &MarkingResult{CriterionMarks: []CriterionMark{{CriterionID: "c1", MarksAwarded: 1, Feedback: "opaque"}}, AwardedMarks: 1, MaxMarks: 1, Model: "fake", ModelVersion: "v1", Confidence: .9}}
+	if _, err = f.store.ApplyMarking(f.ctx, job.RequestID, accepted); err != nil {
+		t.Fatal(err)
+	}
+	analytics, err := f.store.GetLearningAnalytics(f.ctx, "analytics-written-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analytics.ScoredItems != 1 || analytics.AwardedMarks != 1 || analytics.PossibleMarks != 1 || analytics.PendingMarking != 0 || analytics.WithheldMarking != 0 {
+		t.Fatalf("analytics=%+v", analytics)
+	}
+}
+
 func assertNoAttemptOrEventForQuestion(t *testing.T, db *sql.DB, questionID string) {
 	t.Helper()
 	var attempts, events int

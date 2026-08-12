@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import styles from "./dashboard.module.css";
+import { AnalyticsDashboard } from "./analytics-dashboard";
 
 // Protected placeholder. auth.protect() forces authentication (and dynamic rendering); the
 // Clerk proxy also guards this route. No content-source data is exposed here yet.
@@ -12,7 +13,7 @@ export default async function DashboardPage() {
       <p>
         Signed in as <code className={styles.mono}>{userId}</code>.
       </p>
-      <p className={styles.muted}>Content tools will appear here as later tasks land.</p>
+      <AnalyticsDashboard />
     </main>
   );
 }

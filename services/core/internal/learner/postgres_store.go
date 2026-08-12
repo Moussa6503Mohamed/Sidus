@@ -417,10 +417,12 @@ func submitAttemptTx(ctx context.Context, tx *sql.Tx, learnerSubjectID, attemptI
 	var status AttemptStatus
 	var rubricRaw, optionsRaw []byte
 	var responseType ResponseType
+	var syllabusID, moduleID, moduleCode, moduleLabel string
 	err := tx.QueryRowContext(ctx, `
-		SELECT a.id, a.question_id, a.status, a.max_marks, rv.rubric, q.options, a.response_type
+		SELECT a.id, a.question_id, a.status, a.max_marks, rv.rubric, q.options, a.response_type, q.syllabus_id, q.curriculum_map_node_id, n.node_code, n.label
 		FROM learner_attempts a
 		JOIN questions q ON q.id = a.question_id
+		JOIN curriculum_map_nodes n ON n.id = q.curriculum_map_node_id
 		JOIN question_rubric_versions rv
 		  ON rv.id = a.canonical_rubric_version_id
 		 AND rv.question_id = a.question_id
@@ -431,7 +433,7 @@ func submitAttemptTx(ctx context.Context, tx *sql.Tx, learnerSubjectID, attemptI
 		`+licensedEligibilityPredicate+`
 		FOR UPDATE OF a
 	`, attemptID, learnerSubjectID).Scan(
-		&result.AttemptID, &result.QuestionID, &status, &result.MaxMarks, &rubricRaw, &optionsRaw, &responseType,
+		&result.AttemptID, &result.QuestionID, &status, &result.MaxMarks, &rubricRaw, &optionsRaw, &responseType, &syllabusID, &moduleID, &moduleCode, &moduleLabel,
 	)
 	if errors.Is(err, sql.ErrNoRows) || isInvalidTextRepresentation(err) {
 		return AttemptResult{}, ErrAttemptNotFound
@@ -479,6 +481,9 @@ func submitAttemptTx(ctx context.Context, tx *sql.Tx, learnerSubjectID, attemptI
 		        ARRAY['answer','resultStatus','status','isCorrect','awardedMarks','submittedAt'])
 	`, attemptID, learnerSubjectID); err != nil {
 		return AttemptResult{}, fmt.Errorf("insert learner submission event: %w", err)
+	}
+	if err := recordAnalyticsSubmissionTx(ctx, tx, learnerSubjectID, result.AttemptID, syllabusID, moduleID, moduleCode, moduleLabel, responseType, marked, result.AwardedMarks, result.MaxMarks); err != nil {
+		return AttemptResult{}, fmt.Errorf("record learning analytics: %w", err)
 	}
 	return result, nil
 }
@@ -664,6 +669,10 @@ func (p *PostgresStore) ApplyMarking(ctx context.Context, requestID string, outc
 			return MarkingProjection{}, fmt.Errorf("accept marking: %w", err)
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO written_marking_events (request_id,event_type,actor_id,changed_fields) VALUES ($1,'marking_accepted','sonnet-service',ARRAY['status','criterionMarks','awardedMarks','confidence'])`, requestID)
+		if err == nil {
+			awarded, max := outcome.Result.AwardedMarks, outcome.Result.MaxMarks
+			err = recordAnalyticsMarkingTerminalTx(ctx, tx, attemptID, "automated_marking_accepted", &awarded, &max)
+		}
 	} else if outcome.Status == MarkingWithheld || retries >= 2 {
 		reason := strings.TrimSpace(outcome.Reason)
 		if reason == "" {
@@ -675,6 +684,9 @@ func (p *PostgresStore) ApplyMarking(ctx context.Context, requestID string, outc
 		_, err = tx.ExecContext(ctx, `UPDATE written_marking_requests SET status='withheld',withheld_reason=$2,updated_at=now() WHERE id=$1`, requestID, reason)
 		if err == nil {
 			_, err = tx.ExecContext(ctx, `INSERT INTO written_marking_events (request_id,event_type,actor_id,changed_fields) VALUES ($1,'marking_withheld','sonnet-service',ARRAY['status','withheldReason'])`, requestID)
+		}
+		if err == nil {
+			err = recordAnalyticsMarkingTerminalTx(ctx, tx, attemptID, "automated_marking_withheld", nil, nil)
 		}
 	} else {
 		_, err = tx.ExecContext(ctx, `UPDATE written_marking_requests SET retry_count=retry_count+1,updated_at=now() WHERE id=$1`, requestID)

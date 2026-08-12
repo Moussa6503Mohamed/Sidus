@@ -86,6 +86,18 @@ type assertingMarker struct {
 	ids []string
 }
 
+type analyticsMemoryStore struct {
+	*memoryStore
+	value LearningAnalytics
+}
+
+func (m *analyticsMemoryStore) GetLearningAnalytics(_ context.Context, owner string) (LearningAnalytics, error) {
+	if owner != "user_learner" {
+		return LearningAnalytics{}, ErrAttemptNotFound
+	}
+	return m.value, nil
+}
+
 func (m *assertingMarker) MarkWrittenAttempt(_ context.Context, job MarkingJob) (MarkingOutcome, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -653,5 +665,30 @@ func TestMarkingPostRepeatedUsesStableRequestIDOnce(t *testing.T) {
 	defer marker.mu.Unlock()
 	if len(marker.ids) != 1 || marker.ids[0] != "stable-request-id" {
 		t.Fatalf("marker IDs=%v", marker.ids)
+	}
+}
+
+func TestAnalytics_IsLearnerOwnedAndSafe(t *testing.T) {
+	store := &analyticsMemoryStore{memoryStore: newMemoryStore(), value: LearningAnalytics{ScoredItems: 1, AwardedMarks: 1, PossibleMarks: 2, PendingMarking: 1, Modules: []AnalyticsModule{{ModuleID: "module-1", ModuleLabel: "opaque module", ScoredItems: 1, AwardedMarks: 1, PossibleMarks: 2}}}}
+	mux := http.NewServeMux()
+	Register(mux, store, fakeVerifier{})
+	denied := httptest.NewRequest(http.MethodGet, "/learner/analytics", nil)
+	denied.Header.Set("Authorization", "Bearer "+noRoleToken)
+	deniedRec := httptest.NewRecorder()
+	mux.ServeHTTP(deniedRec, denied)
+	if deniedRec.Code != http.StatusForbidden {
+		t.Fatal("unknown role must be denied")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/learner/analytics", nil)
+	req.Header.Set("Authorization", "Bearer "+learnerToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	for _, forbidden := range []string{"answer", "rubric", "source", "provenance", "model", "cost", "questionId"} {
+		if bytes.Contains(bytes.ToLower(rec.Body.Bytes()), []byte(forbidden)) {
+			t.Fatalf("analytics leaked %s: %s", forbidden, rec.Body.String())
+		}
 	}
 }

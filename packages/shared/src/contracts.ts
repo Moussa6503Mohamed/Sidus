@@ -716,3 +716,13 @@ export type LearnerWrittenMarkingStatus = "pending" | "accepted" | "withheld";
 export interface LearnerCriterionMark { criterionId: string; marksAwarded: number; feedback: string; }
 export interface LearnerWrittenMarkingResult { criterionMarks: LearnerCriterionMark[]; awardedMarks: number; maxMarks: number; model: string; modelVersion: string; costUsdMicros: number; confidence: number; }
 export interface LearnerWrittenMarking { attemptId: string; status: LearnerWrittenMarkingStatus; retryCount: number; withheldReason?: string; result?: LearnerWrittenMarkingResult; }
+
+/** Owner-only aggregate derived from immutable completed-outcome snapshots. It deliberately
+ * excludes answers, question IDs, rubrics, sources, provenance, model data and costs. */
+export interface LearnerAnalyticsSummary {
+  scoredItems: number; awardedMarks: number; possibleMarks: number;
+  pendingMarking: number; withheldMarking: number;
+  syllabuses: Array<{ syllabusId: string; scoredItems: number; awardedMarks: number; possibleMarks: number }>;
+  modules: Array<{ syllabusId: string; moduleId: string; moduleCode: string; moduleLabel: string; scoredItems: number; awardedMarks: number; possibleMarks: number }>;
+  recentActivity: Array<{ eventType: "deterministic_scored" | "pending_marking" | "automated_marking_accepted" | "automated_marking_withheld"; moduleLabel: string; awardedMarks?: number; maxMarks?: number; occurredAt: string }>;
+}

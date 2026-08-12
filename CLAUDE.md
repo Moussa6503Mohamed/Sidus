@@ -51,6 +51,11 @@ cd services/ai && python -m pytest
 
 ## Current state
 
+- T-0035 is in review: learner-owned analytics uses immutable outcome-only snapshots for
+  deterministic and accepted automated results, while pending/withheld written marking stays
+  explicitly unscored. The dashboard/BFF projection contains no answers, rubrics, sources,
+  provenance, or model traces. See `docs/learning-analytics.md`.
+
 - T-0034 released as fake-provider-only: owned, version-pinned written-response marking requests
   use immutable criterion-level results, automatic retry/withhold, and private in-memory Core-to-AI
   marking context. The Sonnet adapter stays fail-closed until a separately approved live-provider
