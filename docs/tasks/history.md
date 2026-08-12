@@ -1,5 +1,20 @@
 # Task history
 
+## T-0037 — Learner experience completion
+
+**Status:** done / released
+**Implementation commits:** `533337c`, `cf694fc`, `564cb79`
+**Release validation:** Exam Mode now guards Tutor/Test navigation with `beforeunload`, a real
+`popstate` back-button confirm, and a capture-phase same-origin `<Link>`/`router.push`
+interception (one history sentinel per guard activation, not per confirm-dialog toggle). A
+lightweight offline-safe service worker (`public/sw.js`, `sidus-shell-v3`) caches only the app
+shell, is scoped to same-origin requests, and explicitly excludes `/api` and `/dashboard`; a
+locale toggle adds an Arabic/RTL scaffold (`dir`/`lang` via cookie). Two review rounds fixed an
+unguarded Link/SPA navigation gap, duplicate history entries, and a missing same-origin check on
+the service worker's fetch handler. Final pass: web tests 380/380, typecheck clean, build clean,
+`git diff --check` clean. No live APIs, PDFs/source content, or question seeds touched. See
+`docs/handoffs/T-0037.md`.
+
 ## T-0036 — Teacher classes, consent, and assignments
 
 **Status:** done / released

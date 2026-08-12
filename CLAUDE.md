@@ -51,6 +51,13 @@ cd services/ai && python -m pytest
 
 ## Current state
 
+- T-0037 released: Exam Mode guards Tutor/Test navigation with `beforeunload`, a real popstate
+  back-button confirm, and a capture-phase same-origin `<Link>`/`router.push` interception (one
+  history sentinel per guard activation, not per confirm-dialog toggle). A lightweight offline-safe
+  service worker (`sidus-shell-v3`) caches only the app shell, is scoped to same-origin requests,
+  and explicitly excludes `/api` and `/dashboard`; a locale toggle adds an Arabic/RTL scaffold. See
+  `docs/handoffs/T-0037.md`.
+
 - T-0036 released: teacher-owned consent-first classes use opaque hashed invitations, explicit
   learner acceptance/revocation, immutable assignment snapshots, and aggregate-only teacher
   progress. Automated is the default assignment mode; `manual_teacher` is explicit and has no
