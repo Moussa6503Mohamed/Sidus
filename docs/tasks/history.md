@@ -1,5 +1,16 @@
 # Task history
 
+## T-0036 — Teacher classes, consent, and assignments
+
+**Status:** done / released
+**Implementation commits:** `3e00761`, `f9899e9`, `531d073`, `dcb9b37`
+**Release validation:** independent review approved after licensed-source eligibility and BFF
+streaming validation fixes. Classes use one-time hashed invitations plus explicit acceptance and
+revocation. Assignment snapshots are immutable; automated marking is default and `manual_teacher`
+is explicit only, with no generic reviewer queue. Teacher projections are aggregate-only. Core
+build/vet/unit, fresh 0026 migration/integration/rerun, web 365/365 plus typecheck/build,
+shared-contract, Compose, and diff checks passed. See `docs/handoffs/T-0036.md`.
+
 ## T-0035 — Learning analytics foundation
 
 **Status:** done / released

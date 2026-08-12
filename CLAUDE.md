@@ -51,7 +51,7 @@ cd services/ai && python -m pytest
 
 ## Current state
 
-- T-0036 in review: teacher-owned consent-first classes use opaque hashed invitations, explicit
+- T-0036 released: teacher-owned consent-first classes use opaque hashed invitations, explicit
   learner acceptance/revocation, immutable assignment snapshots, and aggregate-only teacher
   progress. Automated is the default assignment mode; `manual_teacher` is explicit and has no
   generic reviewer queue. See `docs/teacher-classes-assignments.md`.

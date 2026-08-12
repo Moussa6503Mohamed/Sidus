@@ -1,8 +1,8 @@
 # Active tasks
 
-## T-0036 — Teacher classes, consent, and assignments
+## Recently released: T-0036 — Teacher classes, consent, and assignments
 
-**Status:** review
+**Status:** done / released
 **Type:** Core authorization/data + learner/teacher UI + tests.
 
 ### Context
